@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import runpy
 from collections.abc import Mapping
 from importlib import metadata
+from pathlib import Path
 from typing import cast
 
-from scripts.check_licenses import audit_distributions
+ROOT = Path(__file__).resolve().parents[1]
+LICENSE_POLICY = runpy.run_path(ROOT / "scripts" / "check_licenses.py")
+audit_distributions = LICENSE_POLICY["audit_distributions"]
 
 
 class FakeDistribution:
