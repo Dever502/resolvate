@@ -269,7 +269,7 @@ jobs:
               test "$(python -c "import resolvate; print(resolvate.__version__)")" = "3.5.0"
               test -f /app/alembic.ini
               test -f /app/migrations/env.py
-              python -c "from hashlib import sha256; from pathlib import Path; assert sha256(Path(\"/app/LICENSE\").read_bytes()).hexdigest() == \"d81f7122bd70d76feebbd3634701488586b0bcc21b8bd90e1e1edf0acc4e8be7\""
+              python -c "from hashlib import sha256; from pathlib import Path; assert sha256(Path(\"/app/LICENSE\").read_bytes()).hexdigest() == \"0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0\""
               python -m resolvate.migrations
               python -c "import sqlite3; from alembic.config import Config; from alembic.script import ScriptDirectory; current = sqlite3.connect(\"/tmp/resolvate-smoke.db\").execute(\"SELECT version_num FROM alembic_version\").fetchone()[0]; assert [current] == ScriptDirectory.from_config(Config(\"/app/alembic.ini\")).get_heads()"' &
           smoke_pid=$!

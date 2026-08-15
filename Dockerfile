@@ -40,7 +40,7 @@ COPY migrations ./migrations
 USER app
 
 LABEL org.opencontainers.image.title="Resolvate" \
-      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.licenses="AGPL-3.0-only" \
       org.opencontainers.image.source="https://github.com/Dever502/resolvate" \
       org.opencontainers.image.version="3.5.0" \
       org.opencontainers.image.created="$BUILD_DATE" \
