@@ -4,6 +4,12 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cd "$root"
 
+test_mode=postgres
+if [ "${1:-}" = "--unit" ]; then
+    test_mode=unit
+    shift
+fi
+
 compose_file=compose.production.postgres.yaml
 compose_project="resolvate-pgtest-${CI_JOB_ID:-$$}"
 started_postgres=false
@@ -81,6 +87,11 @@ fi
 
 export ALLOW_POSTGRES_TEST_DATABASE_CREATION=yes
 unset DATABASE_URL
+
+if [ "$test_mode" = unit ]; then
+    sh scripts/test_unit.sh "$@"
+    exit 0
+fi
 
 workers=${POSTGRES_PYTEST_WORKERS:-4}
 

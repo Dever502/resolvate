@@ -1,4 +1,4 @@
-.PHONY: install lock run migrate migration-check license-check publication-check format-check test test-postgres lint typecheck verify production-preflight
+.PHONY: install lock run migrate migration-check postgresql-only-check license-check publication-check format-check test test-postgres lint typecheck verify production-preflight
 
 install:
 	uv sync --frozen --all-groups
@@ -15,6 +15,9 @@ migrate:
 migration-check:
 	uv run --frozen python scripts/check_migrations.py
 
+postgresql-only-check:
+	uv run --frozen python scripts/check_postgresql_only.py
+
 license-check:
 	uv run --frozen python scripts/check_licenses.py
 
@@ -25,7 +28,7 @@ format-check:
 	uv run --frozen ruff format --check .
 
 test:
-	uv run --frozen pytest
+	sh scripts/test_unit.sh
 
 test-postgres:
 	sh scripts/test_postgres.sh

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 import pytest
 
@@ -27,9 +26,9 @@ def _operator_fields() -> dict[str, object]:
 
 
 async def test_quick_response_is_created_and_updated_by_source_message(
-    tmp_path: Path,
+    postgres_database_url: str,
 ) -> None:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/quick-responses.db")
+    database = Database(postgres_database_url)
     await database.create_schema_for_tests()
     try:
         service = QuickReplyService(database)
@@ -66,9 +65,9 @@ async def test_quick_response_is_created_and_updated_by_source_message(
 
 
 async def test_pending_response_preserves_deadline_and_can_become_valid(
-    tmp_path: Path,
+    postgres_database_url: str,
 ) -> None:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/pending-response.db")
+    database = Database(postgres_database_url)
     await database.create_schema_for_tests()
     try:
         service = QuickReplyService(database)
@@ -107,9 +106,9 @@ async def test_pending_response_preserves_deadline_and_can_become_valid(
 
 
 async def test_pending_response_is_deleted_only_for_matching_deadline(
-    tmp_path: Path,
+    postgres_database_url: str,
 ) -> None:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/pending-delete.db")
+    database = Database(postgres_database_url)
     await database.create_schema_for_tests()
     try:
         service = QuickReplyService(database)
@@ -146,9 +145,9 @@ async def test_pending_response_is_deleted_only_for_matching_deadline(
 
 
 async def test_valid_response_is_soft_deleted_and_cannot_be_reactivated(
-    tmp_path: Path,
+    postgres_database_url: str,
 ) -> None:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/soft-deleted-response.db")
+    database = Database(postgres_database_url)
     await database.create_schema_for_tests()
     try:
         service = QuickReplyService(database)
@@ -208,8 +207,10 @@ async def test_valid_response_is_soft_deleted_and_cannot_be_reactivated(
         await database.dispose()
 
 
-async def test_instruction_and_legacy_cleanup_state_is_durable(tmp_path: Path) -> None:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/quick-response-settings.db")
+async def test_instruction_and_legacy_cleanup_state_is_durable(
+    postgres_database_url: str,
+) -> None:
+    database = Database(postgres_database_url)
     await database.create_schema_for_tests()
     try:
         service = QuickReplyService(database)

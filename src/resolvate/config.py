@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy import make_url
 
 MIN_INTEGRATION_SECRET_LENGTH = 32
 PLACEHOLDER_SECRETS = frozenset(
@@ -133,6 +134,20 @@ def validate_database_url_secret(variable_name: str, value: str) -> None:
         )
 
 
+def validate_runtime_database_url(variable_name: str, value: str) -> None:
+    """Require the supported asynchronous PostgreSQL driver without exposing credentials."""
+
+    try:
+        parsed = make_url(value)
+    except Exception as error:
+        raise ValueError(f"{variable_name} must be a valid SQLAlchemy URL") from error
+    if parsed.drivername != "postgresql+asyncpg":
+        raise ValueError(f"{variable_name} must use the postgresql+asyncpg driver")
+    if not parsed.database:
+        raise ValueError(f"{variable_name} must include a PostgreSQL database name")
+    validate_database_url_secret(variable_name, value)
+
+
 class Settings(BaseSettings):
     """Runtime configuration loaded from environment variables or a local .env file."""
 
@@ -148,7 +163,7 @@ class Settings(BaseSettings):
     support_group_id: int
     admin_telegram_ids: frozenset[int] = Field(default_factory=frozenset)
     data_dir: Path = Path("./data")
-    database_url: str | None = None
+    database_url: str
     migration_database_url: str | None = None
     migrations_at_startup: bool = True
     log_level: str = "INFO"
@@ -214,13 +229,10 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_runtime_settings(self) -> Self:
-        if self.database_url is None:
-            database_path = self.data_dir / "support.db"
-            self.database_url = f"sqlite+aiosqlite:///{database_path}"
-        validate_database_url_secret("DATABASE_URL", self.database_url)
+        validate_runtime_database_url("DATABASE_URL", self.database_url)
         if self.migration_database_url is None:
             self.migration_database_url = self.database_url
-        validate_database_url_secret("MIGRATION_DATABASE_URL", self.migration_database_url)
+        validate_runtime_database_url("MIGRATION_DATABASE_URL", self.migration_database_url)
         if self.remnawave_base_url is not None:
             validate_external_url("REMNAWAVE_BASE_URL", self.remnawave_base_url)
         if self.notification_webhook_url is not None:

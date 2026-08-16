@@ -111,7 +111,7 @@ def test_production_compose_accepts_safe_postgres_service_set() -> None:
         ),
         (
             lambda config: config["services"]["resolvate"]["environment"].update(
-                {"DATABASE_URL": "sqlite+aiosqlite:////app/data/support.db"}
+                {"DATABASE_URL": "mysql+aiomysql://runtime:password@database/resolvate"}
             ),
             r"postgresql\+asyncpg",
         ),

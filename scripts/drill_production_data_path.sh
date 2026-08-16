@@ -83,7 +83,7 @@ fi
 record "stop baseline and capture control data"
 compose stop resolvate
 before=$(fingerprint)
-data_operation sh "$root/scripts/backup.sh" postgres "$backup"
+data_operation sh "$root/scripts/backup.sh" "$backup"
 compose up --detach --wait resolvate
 
 record "deploy candidate and wait for container health"
@@ -101,7 +101,7 @@ PRODUCTION_DEPLOYMENT=yes \
 DEPLOY_DIR=$deploy_dir \
 RESOLVATE_ENV_FILE=$env_file \
 DEPLOYMENT_STATE_FILE=$state_file \
-    sh "$root/scripts/restore.sh" postgres "$backup" >> "$report" 2>&1
+    sh "$root/scripts/restore.sh" "$backup" >> "$report" 2>&1
 failure_status=$?
 set -e
 [ "$failure_status" -eq 97 ] || {
@@ -120,7 +120,7 @@ PRODUCTION_DEPLOYMENT=yes \
 DEPLOY_DIR=$deploy_dir \
 RESOLVATE_ENV_FILE=$env_file \
 DEPLOYMENT_STATE_FILE=$state_file \
-    sh "$root/scripts/restore.sh" postgres "$backup"
+    sh "$root/scripts/restore.sh" "$backup"
 
 record "stop application and verify restored control data"
 compose stop resolvate

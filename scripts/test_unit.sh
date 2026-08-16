@@ -1,6 +1,11 @@
 #!/bin/sh
 set -eu
 
+if [ -z "${TEST_POSTGRES_DATABASE_URL:-}" ]; then
+    exec sh "$(dirname "$0")/test_postgres.sh" --unit "$@"
+fi
+export ALLOW_POSTGRES_TEST_DATABASE_CREATION=yes
+
 workers=${PYTEST_WORKERS:-auto}
 shard_count=${PYTEST_SHARD_COUNT:-1}
 shard_index=${PYTEST_SHARD_INDEX:-0}

@@ -2,7 +2,7 @@
 set -eu
 
 usage() {
-    echo "Usage: $0 sqlite|postgres DATABASE_OUTPUT [MEDIA_OUTPUT]" >&2
+    echo "Usage: $0 DATABASE_OUTPUT [MEDIA_OUTPUT]" >&2
     exit 2
 }
 
@@ -16,10 +16,9 @@ compose() {
     fi
 }
 
-[ "$#" -ge 2 ] && [ "$#" -le 3 ] || usage
-backend=$1
-output=$2
-media_output=${3:-}
+[ "$#" -ge 1 ] && [ "$#" -le 2 ] || usage
+output=$1
+media_output=${2:-}
 output_dir=$(dirname "$output")
 mkdir -p "$output_dir"
 if [ -n "$media_output" ]; then
@@ -54,25 +53,10 @@ if [ -n "$media_output" ]; then
     application_stopped=true
 fi
 
-case "$backend" in
-    sqlite)
-        if [ -n "$media_output" ]; then
-            compose run --rm -T --no-deps resolvate \
-                python -m resolvate.operations sqlite-backup > "$temporary"
-        else
-            compose exec -T resolvate python -m resolvate.operations sqlite-backup > "$temporary"
-        fi
-        ;;
-    postgres)
-        compose exec -T postgres sh -eu -c \
-            'PGPASSWORD="$POSTGRES_RUNTIME_PASSWORD" pg_dump --format=custom --no-owner --no-acl --username="$POSTGRES_RUNTIME_USER" --dbname="$POSTGRES_DB"' \
-            > "$temporary"
-        compose exec -T postgres pg_restore --list < "$temporary" >/dev/null
-        ;;
-    *)
-        usage
-        ;;
-esac
+compose exec -T postgres sh -eu -c \
+    'PGPASSWORD="$POSTGRES_RUNTIME_PASSWORD" pg_dump --format=custom --no-owner --no-acl --username="$POSTGRES_RUNTIME_USER" --dbname="$POSTGRES_DB"' \
+    > "$temporary"
+compose exec -T postgres pg_restore --list < "$temporary" >/dev/null
 
 if [ -n "$media_output" ]; then
     compose run --rm -T --no-deps resolvate \

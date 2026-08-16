@@ -51,7 +51,7 @@ def run_postgres_restore(
         ),
     }
     return subprocess.run(
-        ["sh", "scripts/restore.sh", "postgres", str(backup)],
+        ["sh", "scripts/restore.sh", str(backup)],
         cwd=project_root,
         env=environment,
         check=False,
@@ -60,7 +60,7 @@ def run_postgres_restore(
     )
 
 
-def test_failed_postgres_restore_leaves_application_stopped(tmp_path: Path) -> None:
+def test_failed_restore_leaves_application_stopped(tmp_path: Path) -> None:
     project_root = Path(__file__).resolve().parents[1]
     result = run_postgres_restore(project_root, tmp_path, fail_restore=True)
     log = (tmp_path / "docker.log").read_text(encoding="utf-8")
@@ -71,7 +71,7 @@ def test_failed_postgres_restore_leaves_application_stopped(tmp_path: Path) -> N
     assert "Resolvate remains stopped" in result.stderr
 
 
-def test_successful_postgres_restore_starts_application_after_restore(tmp_path: Path) -> None:
+def test_successful_restore_starts_application_after_restore(tmp_path: Path) -> None:
     project_root = Path(__file__).resolve().parents[1]
     result = run_postgres_restore(project_root, tmp_path, fail_restore=False)
     log = (tmp_path / "docker.log").read_text(encoding="utf-8")

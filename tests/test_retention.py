@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from pathlib import Path
 
 import pytest
 from sqlalchemy import select
@@ -25,8 +24,8 @@ from resolvate.services import TicketService
 
 
 @pytest.fixture
-async def ticket_service(tmp_path: Path) -> TicketService:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/support.db")
+async def ticket_service(postgres_database_url: str) -> TicketService:
+    database = Database(postgres_database_url)
     await database.create_schema_for_tests()
     yield TicketService(database)
     await database.dispose()
@@ -198,7 +197,7 @@ async def assert_retention_policy(
     assert "sub.example" not in str(sensitive_message.content)
 
 
-async def test_retention_prunes_only_expired_successful_or_cancelled_sqlite_work(
+async def test_retention_prunes_only_expired_terminal_work_from_orm_schema(
     ticket_service: TicketService,
 ) -> None:
     await assert_retention_policy(ticket_service)

@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 from logging.config import fileConfig
-from typing import Any
 
 from alembic import context
-from sqlalchemy import engine_from_config, event, pool
+from sqlalchemy import engine_from_config, pool
 
 import resolvate.web_models  # noqa: F401
-from resolvate.database import configure_sqlite_connection
 from resolvate.migrations import resolve_migration_database_url
 from resolvate.models import Base
 
@@ -20,18 +18,6 @@ if config.config_file_name is not None and not config.attributes.get("skip_loggi
 database_url = resolve_migration_database_url(config)
 
 target_metadata = Base.metadata
-
-
-def _configure_sqlite_migration_connection(dbapi_connection: Any, connection_record: Any) -> None:
-    configure_sqlite_connection(dbapi_connection, connection_record)
-    cursor = dbapi_connection.cursor()
-    try:
-        # Alembic batch mode recreates parent tables on SQLite. Enforcing
-        # ON DELETE while the old parent is dropped would cascade-delete
-        # child rows even though the migration is only changing the schema.
-        cursor.execute("PRAGMA foreign_keys=OFF")
-    finally:
-        cursor.close()
 
 
 def run_migrations_offline() -> None:
@@ -53,20 +39,15 @@ def run_migrations_online() -> None:
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
-    is_sqlite = connectable.dialect.name == "sqlite"
-    if is_sqlite:
-        event.listen(connectable, "connect", _configure_sqlite_migration_connection)
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            compare_type=True,
+            compare_server_default=True,
+        )
         with context.begin_transaction():
             context.run_migrations()
-            if is_sqlite:
-                violations = connection.exec_driver_sql("PRAGMA foreign_key_check").fetchall()
-                if violations:
-                    tables = sorted({str(row[0]) for row in violations})
-                    raise RuntimeError(
-                        "SQLite migration created foreign-key violations in: " + ", ".join(tables)
-                    )
 
 
 if context.is_offline_mode():

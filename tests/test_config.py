@@ -8,25 +8,36 @@ from pydantic import SecretStr, ValidationError
 from resolvate.config import Settings
 
 STRONG_SECRET = "0123456789abcdef0123456789abcdef"
+RUNTIME_DATABASE_URL = "postgresql+asyncpg://resolvate:runtime-password-123@postgres:5432/resolvate"
 
 
 def settings(**overrides: object) -> Settings:
     values: dict[str, object] = {
         "support_bot_token": SecretStr("test-token"),
         "support_group_id": -100123,
+        "database_url": RUNTIME_DATABASE_URL,
     }
     values.update(overrides)
     return Settings(**values)  # type: ignore[arg-type]
 
 
-def test_data_dir_controls_default_sqlite_database_url(tmp_path: Path) -> None:
+def test_database_url_is_required(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DATABASE_URL")
+    with pytest.raises(ValidationError, match="database_url"):
+        Settings(
+            support_bot_token=SecretStr("test-token"),
+            support_group_id=-100123,
+        )
+
+
+def test_data_dir_does_not_change_database_target(tmp_path: Path) -> None:
     data_dir = tmp_path / "runtime"
     configured = settings(data_dir=data_dir)
 
-    assert configured.database_url == f"sqlite+aiosqlite:///{data_dir / 'support.db'}"
+    assert configured.database_url == RUNTIME_DATABASE_URL
 
 
-def test_database_url_override_wins_over_data_dir(tmp_path: Path) -> None:
+def test_database_url_can_be_configured_independently_from_data_dir(tmp_path: Path) -> None:
     configured = settings(
         data_dir=tmp_path / "runtime",
         database_url="postgresql+asyncpg://user:0123456789abcdef@postgres:5432/support",
@@ -38,18 +49,17 @@ def test_database_url_override_wins_over_data_dir(tmp_path: Path) -> None:
     )
 
 
-def test_migration_database_url_defaults_to_runtime_database_url(tmp_path: Path) -> None:
-    configured = settings(data_dir=tmp_path)
+def test_migration_database_url_defaults_to_runtime_database_url() -> None:
+    configured = settings()
 
     assert configured.migration_database_url == configured.database_url
 
 
-def test_migration_database_url_can_use_a_separate_role(tmp_path: Path) -> None:
+def test_migration_database_url_can_use_a_separate_role() -> None:
     runtime_url = "postgresql+asyncpg://runtime:runtime-password-123@db/resolvate"
     migration_url = "postgresql+asyncpg://migrator:migration-password-123@db/resolvate"
 
     configured = settings(
-        data_dir=tmp_path,
         database_url=runtime_url,
         migration_database_url=migration_url,
     )
@@ -294,3 +304,16 @@ def test_postgres_database_url_accepts_non_placeholder_password() -> None:
     assert configured.database_url == (
         "postgresql+asyncpg://resolvate:0123456789abcdef@postgres:5432/resolvate"
     )
+
+
+@pytest.mark.parametrize(
+    "database_url",
+    (
+        "postgresql+psycopg://resolvate:0123456789abcdef@postgres/resolvate",
+        "mysql+aiomysql://resolvate:0123456789abcdef@database/resolvate",
+        "not-a-database-url",
+    ),
+)
+def test_runtime_database_url_requires_async_postgresql(database_url: str) -> None:
+    with pytest.raises(ValidationError, match="DATABASE_URL"):
+        settings(database_url=database_url)

@@ -109,8 +109,9 @@ async def _wait_until_started(api_server: ApiServer, task: asyncio.Task[None]) -
 
 async def test_real_uvicorn_reverse_proxy_security_and_graceful_shutdown(
     tmp_path: Path,
+    postgres_database_url: str,
 ) -> None:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/network.db")
+    database = Database(postgres_database_url)
     await database.create_schema_for_tests()
     service = TicketService(database)
     ticket = await service.open_or_reopen(
@@ -126,6 +127,7 @@ async def test_real_uvicorn_reverse_proxy_security_and_graceful_shutdown(
     settings = Settings(
         support_bot_token=SecretStr("test-token"),
         support_group_id=-100123,
+        database_url=postgres_database_url,
         api_enabled=True,
         api_admin_token=SecretStr(API_TOKEN),
         api_host="127.0.0.1",

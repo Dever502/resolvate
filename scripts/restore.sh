@@ -2,7 +2,7 @@
 set -eu
 
 usage() {
-    echo "Usage: CONFIRM_RESTORE=yes $0 sqlite|postgres DATABASE_INPUT [MEDIA_INPUT]" >&2
+    echo "Usage: CONFIRM_RESTORE=yes $0 DATABASE_INPUT [MEDIA_INPUT]" >&2
     exit 2
 }
 
@@ -16,14 +16,13 @@ compose() {
     fi
 }
 
-[ "$#" -ge 2 ] && [ "$#" -le 3 ] || usage
+[ "$#" -ge 1 ] && [ "$#" -le 2 ] || usage
 [ "${CONFIRM_RESTORE:-}" = "yes" ] || {
     echo "Restore is destructive; set CONFIRM_RESTORE=yes" >&2
     exit 2
 }
-backend=$1
-input=$2
-media_input=${3:-}
+input=$1
+media_input=${2:-}
 [ -s "$input" ] || {
     echo "Backup does not exist or is empty: $input" >&2
     exit 1
@@ -37,18 +36,7 @@ if [ -n "$media_input" ]; then
         python -m resolvate.media_archive validate < "$media_input"
 fi
 
-case "$backend" in
-    sqlite)
-        compose run --rm -T --no-deps resolvate \
-            python -m resolvate.operations sqlite-validate < "$input"
-        ;;
-    postgres)
-        compose exec -T postgres pg_restore --list < "$input" >/dev/null
-        ;;
-    *)
-        usage
-        ;;
-esac
+compose exec -T postgres pg_restore --list < "$input" >/dev/null
 
 application_stopped=false
 restore_exit() {
@@ -76,28 +64,18 @@ if [ "${RESOLVATE_RESTORE_FAILURE_INJECTION:-}" = "after_stop" ]; then
     exit 97
 fi
 
-case "$backend" in
-    sqlite)
-        compose run --rm -T --no-deps resolvate \
-            python -m resolvate.operations sqlite-restore < "$input"
-        ;;
-    postgres)
-        compose exec -T postgres sh -eu -c \
-            'PGPASSWORD="$POSTGRES_MIGRATION_PASSWORD" pg_restore --clean --if-exists --exit-on-error --no-owner --no-acl --username="$POSTGRES_MIGRATION_USER" --dbname="$POSTGRES_DB"' \
-            < "$input"
-        ;;
-esac
+compose exec -T postgres sh -eu -c \
+    'PGPASSWORD="$POSTGRES_MIGRATION_PASSWORD" pg_restore --clean --if-exists --exit-on-error --no-owner --no-acl --username="$POSTGRES_MIGRATION_USER" --dbname="$POSTGRES_DB"' \
+    < "$input"
 
 if [ -n "$media_input" ]; then
     compose run --rm -T --no-deps resolvate \
         python -m resolvate.media_archive restore < "$media_input"
 fi
 
-if [ "$backend" = "postgres" ]; then
-    # The restored archive may be older than the running image. Remove the successful
-    # one-shot container so Compose must execute migrations again before Resolvate.
-    compose rm --force --stop postgres-migrate
-fi
+# The restored archive may be older than the running image. Remove the successful
+# one-shot container so Compose must execute migrations again before Resolvate.
+compose rm --force --stop postgres-migrate
 compose up --detach --wait resolvate
 application_stopped=false
 trap - EXIT HUP INT TERM

@@ -6,7 +6,6 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import (
-    JSON,
     BigInteger,
     Boolean,
     DateTime,
@@ -18,6 +17,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, validates
 
 _TRUE_SERVER_DEFAULT = text("true")
@@ -172,7 +172,7 @@ class TicketMessage(Base):
     direction: Mapped[Direction] = mapped_column(String(32), nullable=False)
     channel: Mapped[str] = mapped_column(String(32), default="telegram", nullable=False)
     content: Mapped[str | None] = mapped_column(Text)
-    media: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    media: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     suppressed: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false"), nullable=False
     )
@@ -212,7 +212,7 @@ class DeliveryOutbox(Base):
     )
     idempotency_key: Mapped[str] = mapped_column(String(512), unique=True, nullable=False)
     direction: Mapped[Direction] = mapped_column(String(32), nullable=False)
-    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     status: Mapped[DeliveryStatus] = mapped_column(
         String(32), default=DeliveryStatus.PENDING, nullable=False
     )
@@ -254,7 +254,7 @@ class NotificationOutbox(Base):
     destination: Mapped[str] = mapped_column(String(64), nullable=False)
     recipient_identity_provider: Mapped[str] = mapped_column(String(32), nullable=False)
     recipient_identity_value: Mapped[str] = mapped_column(String(320), nullable=False)
-    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     status: Mapped[NotificationStatus] = mapped_column(
         String(32), default=NotificationStatus.PENDING, nullable=False
     )
@@ -288,7 +288,7 @@ class InboundUpdate(Base):
     ordering_key: Mapped[str] = mapped_column(
         String(64), nullable=False, server_default="legacy:global"
     )
-    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     status: Mapped[WorkStatus] = mapped_column(
         String(32), default=WorkStatus.PENDING, nullable=False
     )
@@ -323,7 +323,7 @@ class ReconciliationOutbox(Base):
     operator_action_id: Mapped[str | None] = mapped_column(
         ForeignKey("operator_actions.id", ondelete="CASCADE"), unique=True
     )
-    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     status: Mapped[WorkStatus] = mapped_column(
         String(32), default=WorkStatus.PENDING, nullable=False
     )
@@ -352,7 +352,6 @@ class OperatorAction(Base):
             "uq_operator_actions_unresolved_ticket",
             "ticket_id",
             unique=True,
-            sqlite_where=text("result IN ('started', 'unknown') AND action LIKE 'remnawave_%'"),
             postgresql_where=text("result IN ('started', 'unknown') AND action LIKE 'remnawave_%'"),
         ),
     )
@@ -362,7 +361,7 @@ class OperatorAction(Base):
     operator_telegram_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     action: Mapped[str] = mapped_column(String(64), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(512), unique=True, nullable=False)
-    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
     result: Mapped[str | None] = mapped_column(String(64))
     trace_id: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -423,7 +422,7 @@ class QuickResponse(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     text: Mapped[str] = mapped_column(Text, nullable=False)
-    tags: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    tags: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
     created_by_telegram_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     created_by_display_name: Mapped[str | None] = mapped_column(String(255))
     created_by_username: Mapped[str | None] = mapped_column(String(255))

@@ -1,59 +1,54 @@
 from __future__ import annotations
 
-import asyncio
-from pathlib import Path
-from tempfile import TemporaryDirectory
+from io import StringIO
 
-from sqlalchemy import inspect
-from sqlalchemy.ext.asyncio import create_async_engine
+from alembic import command
+from alembic.script import ScriptDirectory
 
-from resolvate.migrations import upgrade_database
+import resolvate.web_models  # noqa: F401
+from resolvate.migrations import build_alembic_config
 from resolvate.models import Base
 
+CHECK_DATABASE_URL = "postgresql+psycopg://migration-check@localhost/resolvate"
 
-async def check_migrations() -> None:
-    with TemporaryDirectory(prefix="resolvate-migrations-") as directory:
-        database_path = Path(directory) / "support.db"
-        database_url = f"sqlite+aiosqlite:///{database_path}"
-        await upgrade_database(database_url)
 
-        engine = create_async_engine(database_url)
-        try:
-            async with engine.connect() as connection:
+def check_migrations() -> None:
+    """Compile PostgreSQL DDL offline and ensure it covers the current ORM schema."""
 
-                def inspect_schema(sync_connection: object) -> tuple[list[str], set[str]]:
-                    inspector = inspect(sync_connection)
-                    table_names = inspector.get_table_names()
-                    index_names = {
-                        index["name"]
-                        for table_name in table_names
-                        for index in inspector.get_indexes(table_name)
-                        if index["name"] is not None
-                    }
-                    return table_names, index_names
+    output = StringIO()
+    config = build_alembic_config(CHECK_DATABASE_URL)
+    config.output_buffer = output
+    script = ScriptDirectory.from_config(config)
+    heads = script.get_heads()
+    revisions = list(script.walk_revisions())
+    if len(heads) != 1 or len(revisions) != 1 or revisions[0].down_revision is not None:
+        raise RuntimeError("Resolvate must have one clean PostgreSQL baseline migration")
 
-                table_names, actual_indexes = await connection.run_sync(inspect_schema)
-                actual_tables = set(table_names)
-        finally:
-            await engine.dispose()
+    command.upgrade(config, "head", sql=True)
+    ddl = output.getvalue().casefold()
+    expected_tables = set(Base.metadata.tables)
+    missing_tables = {
+        table_name
+        for table_name in expected_tables
+        if f"create table {table_name.casefold()}" not in ddl
+    }
+    if missing_tables:
+        names = ", ".join(sorted(missing_tables))
+        raise RuntimeError(f"Alembic schema is missing ORM tables: {names}")
 
-        expected_tables = set(Base.metadata.tables)
-        missing_tables = expected_tables - actual_tables
-        if missing_tables:
-            names = ", ".join(sorted(missing_tables))
-            raise RuntimeError(f"Alembic schema is missing ORM tables: {names}")
-
-        expected_indexes = {
-            index.name
-            for table in Base.metadata.tables.values()
-            for index in table.indexes
-            if index.name is not None
-        }
-        missing_indexes = expected_indexes - actual_indexes
-        if missing_indexes:
-            names = ", ".join(sorted(missing_indexes))
-            raise RuntimeError(f"Alembic schema is missing ORM indexes: {names}")
+    expected_indexes = {
+        index.name
+        for table in Base.metadata.tables.values()
+        for index in table.indexes
+        if index.name is not None
+    }
+    missing_indexes = {
+        index_name for index_name in expected_indexes if f"index {index_name.casefold()}" not in ddl
+    }
+    if missing_indexes:
+        names = ", ".join(sorted(missing_indexes))
+        raise RuntimeError(f"Alembic schema is missing ORM indexes: {names}")
 
 
 if __name__ == "__main__":
-    asyncio.run(check_migrations())
+    check_migrations()

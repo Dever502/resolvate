@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 
 import pytest
 from sqlalchemy import event, select
@@ -27,8 +26,8 @@ from resolvate.services import TicketService
 
 
 @pytest.fixture
-async def ticket_service(tmp_path: Path) -> TicketService:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/support.db")
+async def ticket_service(postgres_database_url: str) -> TicketService:
+    database = Database(postgres_database_url)
     await database.create_schema_for_tests()
     yield TicketService(database)
     await database.dispose()
@@ -101,7 +100,7 @@ async def test_message_updates_ticket_last_activity(ticket_service: TicketServic
     )
 
     refreshed = await ticket_service.get_ticket(ticket.id)
-    assert refreshed.last_activity_at > before.replace(tzinfo=None)
+    assert refreshed.last_activity_at > before
 
 
 async def test_ticket_listing_eager_loads_users_and_identities(

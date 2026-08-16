@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from datetime import timedelta
-from pathlib import Path
 
 import pytest
 
@@ -12,8 +11,8 @@ from resolvate.services import DeliveryJob, TicketService
 
 
 @pytest.fixture
-async def ticket_service(tmp_path: Path) -> AsyncIterator[TicketService]:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/support.db")
+async def ticket_service(postgres_database_url: str) -> AsyncIterator[TicketService]:
+    database = Database(postgres_database_url)
     await database.create_schema_for_tests()
     try:
         yield TicketService(database)
@@ -158,8 +157,10 @@ async def test_late_worker_cannot_overwrite_released_and_reclaimed_delivery(
     assert delivered.payload == {}
 
 
-async def test_restart_recovers_persisted_stale_delivery_claim(tmp_path: Path) -> None:
-    database_url = f"sqlite+aiosqlite:///{tmp_path}/restart.db"
+async def test_restart_recovers_persisted_stale_delivery_claim(
+    postgres_database_url: str,
+) -> None:
+    database_url = postgres_database_url
     first_database = Database(database_url)
     await first_database.create_schema_for_tests()
     first_service = TicketService(first_database)
@@ -185,9 +186,9 @@ async def test_restart_recovers_persisted_stale_delivery_claim(tmp_path: Path) -
 
 
 async def test_shutdown_release_preserves_fifo_and_attempt_budget_across_restart(
-    tmp_path: Path,
+    postgres_database_url: str,
 ) -> None:
-    database_url = f"sqlite+aiosqlite:///{tmp_path}/shutdown-release.db"
+    database_url = postgres_database_url
     first_database = Database(database_url)
     await first_database.create_schema_for_tests()
     first_service = TicketService(first_database)

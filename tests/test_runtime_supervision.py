@@ -210,11 +210,8 @@ async def test_shutdown_waits_for_handlers_api_and_workers_before_resources(
     assert events[-3:] == ["bot_close", "http_close", "database_dispose"]
 
 
-@pytest.mark.parametrize(
-    "compose_file", ("compose.production.sqlite.yaml", "compose.production.postgres.yaml")
-)
-def test_compose_allows_shutdown_to_outlive_soft_deadline(compose_file: str) -> None:
-    content = Path(compose_file).read_text()
+def test_compose_allows_shutdown_to_outlive_soft_deadline() -> None:
+    content = Path("compose.production.postgres.yaml").read_text()
 
     assert "stop_grace_period: 90s" in content
 

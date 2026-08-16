@@ -52,6 +52,20 @@ jobs:
     name: Unit tests (shard ${{ matrix.shard }})
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16.14-alpine3.22@sha256:786dab398303b8ce7cb76b407bb21ef2e4dfbbbd4c6abcf3d29b3130467ffdbc
+        env:
+          POSTGRES_DB: resolvate_test
+          POSTGRES_USER: resolvate_test
+          POSTGRES_PASSWORD: resolvate-test-only-password
+        options: >-
+          --health-cmd "pg_isready -U resolvate_test -d resolvate_test"
+          --health-interval 1s
+          --health-timeout 5s
+          --health-retries 60
+        ports:
+          - 5432:5432
     strategy:
       fail-fast: false
       matrix:
@@ -59,6 +73,8 @@ jobs:
           - 0
           - 1
     env:
+      TEST_POSTGRES_DATABASE_URL: postgresql+asyncpg://resolvate_test:resolvate-test-only-password@127.0.0.1:5432/resolvate_test
+      ALLOW_POSTGRES_TEST_DATABASE_CREATION: "yes"
       PYTEST_WORKERS: "4"
       PYTEST_SHARD_COUNT: "2"
       PYTEST_SHARD_INDEX: ${{ matrix.shard }}
@@ -189,6 +205,18 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16.14-alpine3.22@sha256:786dab398303b8ce7cb76b407bb21ef2e4dfbbbd4c6abcf3d29b3130467ffdbc
+        env:
+          POSTGRES_DB: resolvate_image_test
+          POSTGRES_USER: resolvate_image_test
+          POSTGRES_PASSWORD: resolvate-image-test-only-password
+        options: >-
+          --health-cmd "pg_isready -U resolvate_image_test -d resolvate_image_test"
+          --health-interval 1s
+          --health-timeout 5s
+          --health-retries 60
     permissions:
       contents: read
     outputs:
@@ -250,6 +278,7 @@ jobs:
         shell: bash
         env:
           IMAGE_TAG: ${{ steps.metadata.outputs.image_tag }}
+          POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
         run: |
           set -uo pipefail
           smoke_status=0
@@ -258,10 +287,17 @@ jobs:
           runner_uid=$(id -u)
           runner_gid=$(id -g)
 
+          docker network create --internal resolvate-smoke-network >/dev/null
+          docker network connect --alias postgres-smoke \
+            resolvate-smoke-network "$POSTGRES_CONTAINER_ID"
+
           docker run --rm \
-            --network none \
+            --network resolvate-smoke-network \
+            --cap-drop ALL \
+            --read-only \
+            --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m \
             --security-opt no-new-privileges \
-            --env MIGRATION_DATABASE_URL=sqlite+aiosqlite:////tmp/resolvate-smoke.db \
+            --env MIGRATION_DATABASE_URL=postgresql+asyncpg://resolvate_image_test:resolvate-image-test-only-password@postgres-smoke:5432/resolvate_image_test \
             --entrypoint sh \
             "$IMAGE_TAG" \
             -c 'set -eu
@@ -271,7 +307,7 @@ jobs:
               test -f /app/migrations/env.py
               python -c "from hashlib import sha256; from pathlib import Path; assert sha256(Path(\"/app/LICENSE\").read_bytes()).hexdigest() == \"0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0\""
               python -m resolvate.migrations
-              python -c "import sqlite3; from alembic.config import Config; from alembic.script import ScriptDirectory; current = sqlite3.connect(\"/tmp/resolvate-smoke.db\").execute(\"SELECT version_num FROM alembic_version\").fetchone()[0]; assert [current] == ScriptDirectory.from_config(Config(\"/app/alembic.ini\")).get_heads()"' &
+              python -c "from alembic.config import Config; from alembic.script import ScriptDirectory; from sqlalchemy import create_engine, text; engine = create_engine(\"postgresql+psycopg://resolvate_image_test:resolvate-image-test-only-password@postgres-smoke:5432/resolvate_image_test\"); current = engine.connect().execute(text(\"SELECT version_num FROM alembic_version\")).scalar_one(); engine.dispose(); assert [current] == ScriptDirectory.from_config(Config(\"/app/alembic.ini\")).get_heads()"' &
           smoke_pid=$!
 
           docker run --rm \
@@ -298,6 +334,9 @@ jobs:
           wait "$smoke_pid" || smoke_status=$?
           wait "$trivy_pid" || trivy_status=$?
           wait "$syft_pid" || syft_status=$?
+          docker network disconnect --force \
+            resolvate-smoke-network "$POSTGRES_CONTAINER_ID" >/dev/null 2>&1 || true
+          docker network rm resolvate-smoke-network >/dev/null 2>&1 || true
           if (( smoke_status != 0 || trivy_status != 0 || syft_status != 0 )); then
             printf 'Candidate verification failed: smoke=%s trivy=%s syft=%s\n' \
               "$smoke_status" "$trivy_status" "$syft_status" >&2

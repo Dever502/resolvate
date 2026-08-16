@@ -15,7 +15,6 @@ from resolvate.api_idempotency import (
     load_api_replay,
 )
 from resolvate.audit import record_event
-from resolvate.database import retry_sqlite_locks
 from resolvate.durable_work import (
     enqueue_topic_reconciliation,
     enqueue_topic_reconciliations,
@@ -44,7 +43,6 @@ from resolvate.web_models import TicketLifecycleEvent
 
 
 class TicketLifecycleService(TicketTopicService):
-    @retry_sqlite_locks
     async def close(
         self,
         *,
@@ -195,7 +193,6 @@ class TicketLifecycleService(TicketTopicService):
         )
         return True
 
-    @retry_sqlite_locks
     async def enqueue_rating(
         self,
         *,
@@ -283,7 +280,6 @@ class TicketLifecycleService(TicketTopicService):
                 raise
             return True
 
-    @retry_sqlite_locks
     async def close_all(
         self, *, operator_telegram_id: int, idempotency_key: str
     ) -> list[TicketView]:
@@ -383,7 +379,6 @@ class TicketLifecycleService(TicketTopicService):
             )
         return views
 
-    @retry_sqlite_locks
     async def block_ticket(
         self,
         *,
@@ -474,7 +469,6 @@ class TicketLifecycleService(TicketTopicService):
         )
         return changed
 
-    @retry_sqlite_locks
     async def unblock_ticket(
         self,
         *,
@@ -551,7 +545,6 @@ class TicketLifecycleService(TicketTopicService):
         )
         return changed
 
-    @retry_sqlite_locks
     async def block(
         self,
         *,
@@ -619,7 +612,6 @@ class TicketLifecycleService(TicketTopicService):
         )
         return entry is None
 
-    @retry_sqlite_locks
     async def unblock(
         self,
         *,
@@ -692,7 +684,6 @@ class TicketLifecycleService(TicketTopicService):
             tickets = list((await session.scalars(statement)).all())
             return [self._loaded_ticket_view(ticket) for ticket in tickets]
 
-    @retry_sqlite_locks
     async def reopen(
         self,
         *,

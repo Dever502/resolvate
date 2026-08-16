@@ -73,7 +73,6 @@ def test_deploy_records_current_and_rollback_images_after_health(tmp_path: Path)
     assert result.returncode == 0
     assert f"APP_IMAGE={CANDIDATE_DIGEST}" in (deploy_dir / "deployment.env").read_text()
     assert f"APP_IMAGE={BASELINE_IMAGE}" in (deploy_dir / "rollback.env").read_text()
-    assert "compose.production.sqlite.yaml" not in log
     assert "compose.production.postgres.yaml" in log
     assert "--remove-orphans" not in log
 

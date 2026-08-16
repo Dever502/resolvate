@@ -107,9 +107,10 @@ async def attach_topic(service: TicketService, ticket_id: str, topic_id: int) ->
 
 async def test_topic_not_modified_completes_reconciliation_without_error(
     tmp_path: Path,
+    postgres_database_url: str,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/topic-already-current.db")
+    database = Database(postgres_database_url)
     await database.create_schema_for_tests()
     try:
         service = TicketService(database)
@@ -139,9 +140,10 @@ async def test_topic_not_modified_completes_reconciliation_without_error(
 
 async def test_restart_recovers_unclaimed_waiting_delivery_after_partial_success(
     tmp_path: Path,
+    postgres_database_url: str,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    database_url = f"sqlite+aiosqlite:///{tmp_path}/waiting-topic-restart.db"
+    database_url = postgres_database_url
     first_database = Database(database_url)
     await first_database.create_schema_for_tests()
     first_service = TicketService(first_database)
@@ -204,8 +206,11 @@ async def test_restart_recovers_unclaimed_waiting_delivery_after_partial_success
         await restarted_database.dispose()
 
 
-async def test_restart_never_retries_unknown_topic_creation_outcome(tmp_path: Path) -> None:
-    database_url = f"sqlite+aiosqlite:///{tmp_path}/unknown-topic-restart.db"
+async def test_restart_never_retries_unknown_topic_creation_outcome(
+    tmp_path: Path,
+    postgres_database_url: str,
+) -> None:
+    database_url = postgres_database_url
     first_database = Database(database_url)
     await first_database.create_schema_for_tests()
     first_service = TicketService(first_database)
@@ -245,8 +250,9 @@ async def test_restart_never_retries_unknown_topic_creation_outcome(tmp_path: Pa
 
 async def test_restart_recovers_closed_waiting_delivery_without_reopening(
     tmp_path: Path,
+    postgres_database_url: str,
 ) -> None:
-    database_url = f"sqlite+aiosqlite:///{tmp_path}/closed-waiting-topic-restart.db"
+    database_url = postgres_database_url
     first_database = Database(database_url)
     await first_database.create_schema_for_tests()
     first_service = TicketService(first_database)
@@ -302,8 +308,9 @@ async def test_restart_recovers_closed_waiting_delivery_without_reopening(
 
 async def test_deleted_topic_recovery_delivers_closed_ticket_queue_without_reopening(
     tmp_path: Path,
+    postgres_database_url: str,
 ) -> None:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/closed-topic-recovery.db")
+    database = Database(postgres_database_url)
     await database.create_schema_for_tests()
     try:
         service = TicketService(database)

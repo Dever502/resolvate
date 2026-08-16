@@ -8,7 +8,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from resolvate.audit import record_event
-from resolvate.database import retry_sqlite_locks
 from resolvate.durable_work import enqueue_topic_reconciliation
 from resolvate.models import (
     DeliveryOutbox,
@@ -67,7 +66,6 @@ class TicketIngressService(TicketServiceBase):
             ),
         )
 
-    @retry_sqlite_locks
     async def accept_customer_message(
         self,
         *,
@@ -196,7 +194,6 @@ class TicketIngressService(TicketServiceBase):
             record_event("ticket_opened", ticket_id=view.id)
         return CustomerMessageResult(True, False, view, reopened)
 
-    @retry_sqlite_locks
     async def accept_operator_reply(
         self,
         *,

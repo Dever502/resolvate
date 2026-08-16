@@ -35,9 +35,9 @@ WEB_RATE_TOKEN = "abcdef0123456789abcdef0123456789"
 
 @pytest.fixture
 async def api_context(
-    tmp_path: Path,
+    postgres_database_url: str,
 ) -> AsyncIterator[tuple[Any, Database, TicketService, TicketView]]:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/support.db")
+    database = Database(postgres_database_url)
     await database.create_schema_for_tests()
     ticket_service = TicketService(database)
     ticket = await ticket_service.open_or_reopen(
@@ -49,6 +49,7 @@ async def api_context(
     settings = Settings(
         support_bot_token=SecretStr("test-token"),
         support_group_id=-100123,
+        database_url=postgres_database_url,
         api_enabled=True,
         api_admin_token=SecretStr(API_TOKEN),
     )
@@ -167,12 +168,23 @@ async def test_api_message_failure_rolls_back_and_surfaces_retryable_error(
         await session.execute(
             text(
                 f"""
+                CREATE FUNCTION fail_atomic_api_delivery() RETURNS trigger AS $trigger$
+                BEGIN
+                    IF NEW.idempotency_key = '{delivery_key}' THEN
+                        RAISE EXCEPTION 'forced atomic API failure';
+                    END IF;
+                    RETURN NEW;
+                END;
+                $trigger$ LANGUAGE plpgsql
+                """
+            )
+        )
+        await session.execute(
+            text(
+                """
                 CREATE TRIGGER fail_atomic_api_delivery
                 BEFORE INSERT ON delivery_outbox
-                WHEN NEW.idempotency_key = '{delivery_key}'
-                BEGIN
-                    SELECT RAISE(ABORT, 'forced atomic API failure');
-                END
+                FOR EACH ROW EXECUTE FUNCTION fail_atomic_api_delivery()
                 """
             )
         )

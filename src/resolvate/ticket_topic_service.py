@@ -10,7 +10,6 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
 from resolvate.audit import record_event
-from resolvate.database import retry_sqlite_locks
 from resolvate.models import (
     DeliveryOutbox,
     DeliveryStatus,
@@ -31,7 +30,6 @@ from resolvate.ticket_service_base import TicketServiceBase
 
 
 class TicketTopicService(TicketServiceBase):
-    @retry_sqlite_locks
     async def open_or_reopen(
         self,
         *,
@@ -92,7 +90,6 @@ class TicketTopicService(TicketServiceBase):
                 reopened=reopened,
             )
 
-    @retry_sqlite_locks
     async def attach_topic(self, ticket_id: str, topic_id: int, *, token: str) -> TicketView:
         async with self.database.session() as session:
             ticket = await session.get(Ticket, ticket_id)

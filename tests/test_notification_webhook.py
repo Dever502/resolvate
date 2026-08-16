@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from datetime import UTC, datetime
-from pathlib import Path
 
 import httpx
 import pytest
@@ -118,8 +117,10 @@ async def test_worker_uses_bounded_notification_batch_during_shutdown() -> None:
     assert service.limits == [4]
 
 
-async def test_notification_claims_preserve_order_within_ticket(tmp_path: Path) -> None:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/notification-order.db")
+async def test_notification_claims_preserve_order_within_ticket(
+    postgres_database_url: str,
+) -> None:
+    database = Database(postgres_database_url)
     await database.create_schema_for_tests()
     try:
         ticket_service = TicketService(database)
@@ -193,7 +194,7 @@ async def test_notification_webhook_posts_signed_payload() -> None:
 
 @pytest.mark.asyncio
 async def test_webhook_redelivers_same_event_after_local_ack_failure(
-    tmp_path: Path,
+    postgres_database_url: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     bodies: list[bytes] = []
@@ -204,7 +205,7 @@ async def test_webhook_redelivers_same_event_after_local_ack_failure(
         event_ids.append(request.headers["X-Support-Event-Id"])
         return httpx.Response(204)
 
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/support.db")
+    database = Database(postgres_database_url)
     await database.create_schema_for_tests()
     try:
         ticket_service = TicketService(database)

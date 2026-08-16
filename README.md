@@ -16,7 +16,7 @@ Resolvate — система технической поддержки с Telegr
 - закрытие и повторное открытие обращений, оценки, блокировка и внутренние заметки;
 - единый список администраторов с доступом ко всем командам;
 - durable очередь доставки с повторами и восстановлением после сбоев;
-- SQLite для простого запуска и PostgreSQL для production-инсталляции;
+- PostgreSQL 16 с раздельными least-privilege ролями для миграций и приложения;
 - независимые Web Support API и Operator API;
 - healthcheck, readiness, Prometheus-метрики, JSON-логи и backup/restore;
 - полноценная интеграция с Remnawave 2.8.x: подписка, продление, перевыпуск ссылки и ключей,
@@ -56,26 +56,25 @@ Backend сайта ───── Web API ──────┘
    SUPPORT_GROUP_ID=replace-with-forum-group-id
    ADMIN_TELEGRAM_IDS=replace-with-admin-id
    DATA_DIR=./data
+   POSTGRES_ADMIN_PASSWORD=replace-with-random-password-1
+   POSTGRES_MIGRATION_PASSWORD=replace-with-random-password-2
+   POSTGRES_RUNTIME_PASSWORD=replace-with-random-password-3
    ```
 
    Для поддержки сайта дополнительно включите `WEB_API_ENABLED`, задайте отдельный
    `WEB_API_TOKEN` и выберите `WEB_IDENTITY_MODE`. Браузер к этому API не обращается: запросы
    выполняет только backend сайта через HTTPS reverse proxy.
 
-3. Запустите SQLite-вариант:
+   Пароли должны быть разными, URL-safe и длиной не менее 16 символов.
+
+3. Запустите Resolvate:
 
    ```bash
-   ./scripts/start.sh sqlite
+   ./scripts/start.sh
    ```
 
 Скрипт скачивает image `v3.5.0`, закрепляет фактически полученный digest, проверяет Compose и ждёт
-успешного healthcheck. Для PostgreSQL задайте в `.env` три разных пароля и запустите:
-
-```bash
-./scripts/start.sh postgres
-```
-
-Полная конфигурация PostgreSQL и разделение migration/runtime ролей описаны в
+успешного healthcheck. Конфигурация PostgreSQL и разделение migration/runtime ролей описаны в
 [руководстве по эксплуатации](docs/OPERATIONS.md).
 
 Скрипт — только прозрачная обёртка. Прямой запуск Compose остаётся доступен:
@@ -83,7 +82,7 @@ Backend сайта ───── Web API ──────┘
 ```bash
 export APP_IMAGE='ghcr.io/dever502/resolvate@sha256:<digest>'
 export RESOLVATE_ENV_FILE="$PWD/.env"
-docker compose --env-file .env -f compose.production.sqlite.yaml up --detach --wait
+docker compose --env-file .env -f compose.production.postgres.yaml up --detach --wait
 ```
 
 ## Container image
@@ -92,7 +91,7 @@ docker compose --env-file .env -f compose.production.sqlite.yaml up --detach --w
 version tag в immutable digest. Для явной установки и rollback также можно передать digest:
 
 ```bash
-./scripts/start.sh postgres 'ghcr.io/dever502/resolvate@sha256:<digest>'
+./scripts/start.sh 'ghcr.io/dever502/resolvate@sha256:<digest>'
 ```
 
 PyPI-пакет и wheel для релиза не публикуются.

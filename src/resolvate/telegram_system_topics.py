@@ -6,7 +6,7 @@ import logging
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
 
-from resolvate.database import Database, retry_sqlite_locks
+from resolvate.database import Database
 from resolvate.telegram_errors import is_missing_topic_error
 from resolvate.telegram_limits import TelegramRateLimiter
 from resolvate.web_models import SystemSetting
@@ -69,7 +69,6 @@ class TelegramSystemTopicService:
             return None
         return topic_id if topic_id > 0 else None
 
-    @retry_sqlite_locks
     async def _save_topic_id(self, topic_kind: str, topic_id: int) -> None:
         async with self.database.session() as session:
             key = self._setting_key(topic_kind)

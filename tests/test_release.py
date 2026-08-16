@@ -32,6 +32,8 @@ def test_ci_keeps_verification_socketless_and_excludes_private_cd() -> None:
     assert tests["strategy"]["fail-fast"] is False
     assert tests["strategy"]["matrix"] == {"shard": [0, 1]}
     assert tests["env"]["PYTEST_WORKERS"] == "4"
+    assert "postgres" in tests["services"]
+    assert tests["env"]["TEST_POSTGRES_DATABASE_URL"].startswith("postgresql+asyncpg://")
 
     coverage = jobs["coverage"]
     assert coverage["needs"] == ["tests"]
@@ -174,6 +176,10 @@ def test_ci_build_scan_sbom_and_evidence_share_one_immutable_image() -> None:
     assert 'wait "$syft_pid"' in reports["run"]
     assert "smoke_status != 0 || trivy_status != 0 || syft_status != 0" in reports["run"]
     assert reports["run"].count("--security-opt no-new-privileges") == 3
+    assert "docker network create --internal resolvate-smoke-network" in reports["run"]
+    assert "--network resolvate-smoke-network" in reports["run"]
+    assert "--cap-drop ALL" in reports["run"]
+    assert "--read-only" in reports["run"]
     assert reports["run"].count('--volume "$PWD:/work:ro"') == 2
     assert '--volume "$PWD/.trivy-cache:/cache"' in reports["run"]
     assert "--cache-dir /cache" in reports["run"]
@@ -264,7 +270,7 @@ def test_public_documentation_is_curated() -> None:
 
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "> Версия: `v3.5.0`." in readme
-    assert "./scripts/start.sh sqlite" in readme
+    assert "./scripts/start.sh" in readme
     assert "## Ограничения" not in readme
     assert "## Разработка" not in readme
     assert "Официальный способ поставки — container image" in readme
@@ -296,6 +302,7 @@ def test_alerts_cover_recorded_remnawave_failure_outcomes() -> None:
 def test_verification_enforces_coverage_threshold() -> None:
     ci, _ = _ci()
     verify = (ROOT / "scripts/verify.sh").read_text(encoding="utf-8")
+    quality = (ROOT / "scripts/check_quality.sh").read_text(encoding="utf-8")
     unit_tests = (ROOT / "scripts/test_unit.sh").read_text(encoding="utf-8")
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
@@ -303,6 +310,7 @@ def test_verification_enforces_coverage_threshold() -> None:
     assert "pytest-xdist" in pyproject
     assert "scripts/check_quality.sh" in verify
     assert "scripts/test_unit.sh" in verify
+    assert "scripts/check_postgresql_only.py" in quality
     assert '-n "$workers"' in unit_tests
     assert "--dist load" in unit_tests
     assert '-m "not postgres"' in unit_tests

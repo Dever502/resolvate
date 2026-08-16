@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, call
 
@@ -117,9 +116,9 @@ def _harness(service: QuickReplyService, bot: SimpleNamespace) -> QuickReplyHarn
 
 
 async def test_valid_quick_response_is_saved_unchanged(
-    tmp_path: Path,
+    postgres_database_url: str,
 ) -> None:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/valid-quick-response.db")
+    database = Database(postgres_database_url)
     await database.create_schema_for_tests()
     harness = QuickReplyHarness()
     try:
@@ -158,9 +157,9 @@ async def test_valid_quick_response_is_saved_unchanged(
 
 
 async def test_numeric_hashtags_are_valid_without_telegram_entities(
-    tmp_path: Path,
+    postgres_database_url: str,
 ) -> None:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/numeric-hashtags.db")
+    database = Database(postgres_database_url)
     await database.create_schema_for_tests()
     harness = QuickReplyHarness()
     try:
@@ -186,9 +185,9 @@ async def test_numeric_hashtags_are_valid_without_telegram_entities(
 
 
 async def test_existing_separate_save_reply_is_replaced_by_one_canonical_message(
-    tmp_path: Path,
+    postgres_database_url: str,
 ) -> None:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/legacy-save-reply.db")
+    database = Database(postgres_database_url)
     await database.create_schema_for_tests()
     harness = QuickReplyHarness()
     try:
@@ -244,9 +243,9 @@ async def test_existing_separate_save_reply_is_replaced_by_one_canonical_message
 
 
 async def test_invalid_response_gets_exact_warning_and_edit_makes_it_valid(
-    tmp_path: Path,
+    postgres_database_url: str,
 ) -> None:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/corrected-quick-response.db")
+    database = Database(postgres_database_url)
     await database.create_schema_for_tests()
     harness = QuickReplyHarness()
     try:
@@ -309,8 +308,11 @@ async def test_invalid_response_gets_exact_warning_and_edit_makes_it_valid(
         "Ответ #___",
     ],
 )
-async def test_malformed_hashtag_is_rejected(text: str, tmp_path: Path) -> None:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/malformed-hashtag.db")
+async def test_malformed_hashtag_is_rejected(
+    text: str,
+    postgres_database_url: str,
+) -> None:
+    database = Database(postgres_database_url)
     await database.create_schema_for_tests()
     harness = QuickReplyHarness()
     try:
@@ -339,14 +341,14 @@ async def test_malformed_hashtag_is_rejected(text: str, tmp_path: Path) -> None:
 
 
 async def test_invalid_response_and_warning_are_deleted_after_deadline(
-    tmp_path: Path,
+    postgres_database_url: str,
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
         "resolvate.telegram_quick_replies.QUICK_RESPONSE_DELETE_DELAY_SECONDS",
         0,
     )
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/expired-quick-response.db")
+    database = Database(postgres_database_url)
     await database.create_schema_for_tests()
     harness = QuickReplyHarness()
     try:
@@ -375,9 +377,9 @@ async def test_invalid_response_and_warning_are_deleted_after_deadline(
 
 
 async def test_message_outside_quick_response_topic_is_not_consumed(
-    tmp_path: Path,
+    postgres_database_url: str,
 ) -> None:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/other-topic.db")
+    database = Database(postgres_database_url)
     await database.create_schema_for_tests()
     harness = QuickReplyHarness()
     try:
@@ -397,9 +399,9 @@ async def test_message_outside_quick_response_topic_is_not_consumed(
 
 
 async def test_delete_button_soft_deletes_response_without_confirmation(
-    tmp_path: Path,
+    postgres_database_url: str,
 ) -> None:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/delete-quick-response.db")
+    database = Database(postgres_database_url)
     await database.create_schema_for_tests()
     harness = QuickReplyHarness()
     try:
@@ -454,8 +456,10 @@ async def test_delete_button_soft_deletes_response_without_confirmation(
         await database.dispose()
 
 
-async def test_failed_telegram_delete_is_retried_from_tombstone(tmp_path: Path) -> None:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/retry-delete.db")
+async def test_failed_telegram_delete_is_retried_from_tombstone(
+    postgres_database_url: str,
+) -> None:
+    database = Database(postgres_database_url)
     await database.create_schema_for_tests()
     harness = QuickReplyHarness()
     try:
@@ -511,8 +515,10 @@ async def test_failed_telegram_delete_is_retried_from_tombstone(tmp_path: Path) 
         await database.dispose()
 
 
-async def test_unauthorized_operator_cannot_delete_quick_response(tmp_path: Path) -> None:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/unauthorized-delete.db")
+async def test_unauthorized_operator_cannot_delete_quick_response(
+    postgres_database_url: str,
+) -> None:
+    database = Database(postgres_database_url)
     await database.create_schema_for_tests()
     harness = QuickReplyHarness()
     try:
@@ -552,9 +558,9 @@ async def test_unauthorized_operator_cannot_delete_quick_response(tmp_path: Path
 
 
 async def test_instruction_is_plain_pinned_message_without_buttons(
-    tmp_path: Path,
+    postgres_database_url: str,
 ) -> None:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/quick-response-instruction.db")
+    database = Database(postgres_database_url)
     await database.create_schema_for_tests()
     harness = QuickReplyHarness()
     try:
@@ -582,9 +588,9 @@ async def test_instruction_is_plain_pinned_message_without_buttons(
 
 
 async def test_deleted_topic_is_recreated_and_valid_responses_are_restored(
-    tmp_path: Path,
+    postgres_database_url: str,
 ) -> None:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/quick-response-recovery.db")
+    database = Database(postgres_database_url)
     await database.create_schema_for_tests()
     harness = QuickReplyHarness()
     try:
@@ -649,9 +655,9 @@ async def test_deleted_topic_is_recreated_and_valid_responses_are_restored(
 
 
 async def test_topic_recovered_before_adapter_start_restores_responses(
-    tmp_path: Path,
+    postgres_database_url: str,
 ) -> None:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/pre-recovered-topic.db")
+    database = Database(postgres_database_url)
     await database.create_schema_for_tests()
     harness = QuickReplyHarness()
     try:
@@ -693,9 +699,9 @@ async def test_topic_recovered_before_adapter_start_restores_responses(
 
 
 async def test_manually_deleted_active_response_is_restored_after_restart(
-    tmp_path: Path,
+    postgres_database_url: str,
 ) -> None:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/restore-deleted-message.db")
+    database = Database(postgres_database_url)
     await database.create_schema_for_tests()
     harness = QuickReplyHarness()
     try:
@@ -746,8 +752,10 @@ async def test_manually_deleted_active_response_is_restored_after_restart(
         await database.dispose()
 
 
-async def test_pending_expirations_are_restored_after_restart(tmp_path: Path) -> None:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/restart-expiration.db")
+async def test_pending_expirations_are_restored_after_restart(
+    postgres_database_url: str,
+) -> None:
+    database = Database(postgres_database_url)
     await database.create_schema_for_tests()
     harness = QuickReplyHarness()
     try:

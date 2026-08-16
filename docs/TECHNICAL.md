@@ -7,7 +7,7 @@
 
 Система связывает Telegram-чат или backend сайта с темой закрытой Telegram Forum-группы. Web API,
 Operator API, Remnawave и notification webhook включаются независимо. Поддерживается один процесс;
-база — SQLite или PostgreSQL.
+единственная поддерживаемая база — PostgreSQL 16.
 
 ```text
 Telegram updates ──> Telegram adapter ──┐
@@ -85,10 +85,8 @@ waiting_topic ──> pending ──> processing ──> delivered
 хранятся 7 дней, завершённые outbox и reconciliation записи — 30 дней; failed-записи
 сохраняются для диагностики. История тикетов этим процессом не удаляется.
 
-Схема развивается только Alembic-миграциями. SQLite использует foreign keys, WAL,
-`busy_timeout=5000` и ограниченные повторы конфликтов записи.
-
-Production PostgreSQL разделяет bootstrap, migration и runtime credentials. Provisioning создаёт
+Схема развивается только Alembic-миграциями и использует PostgreSQL-native типы, включая JSONB.
+PostgreSQL разделяет bootstrap, migration и runtime credentials. Provisioning создаёт
 least-privilege роли, `postgres-migrate` применяет Alembic, а приложение получает только
 `CONNECT`, `USAGE`, DML и необходимые права sequences. Поддержка нескольких экземпляров
 приложения отсутствует. Внутри единственного процесса независимые тикеты обрабатываются ограниченно

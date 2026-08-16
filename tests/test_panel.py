@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 import pytest
 from sqlalchemy import select
@@ -473,8 +472,8 @@ def test_revoke_link_notification_escapes_subscription_url() -> None:
 
 
 @pytest.fixture
-async def database(tmp_path: Path) -> Database:
-    db = Database(f"sqlite+aiosqlite:///{tmp_path}/support.db")
+async def database(postgres_database_url: str) -> Database:
+    db = Database(postgres_database_url)
     await db.create_schema_for_tests()
     async with db.session() as session:
         session.add(User(id=1, display_name="Test user", username="test"))

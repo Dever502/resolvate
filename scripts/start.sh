@@ -2,23 +2,12 @@
 set -eu
 
 usage() {
-    echo "Usage: $0 sqlite|postgres [REGISTRY_IMAGE]" >&2
+    echo "Usage: $0 [REGISTRY_IMAGE]" >&2
     exit 2
 }
 
-[ "$#" -ge 1 ] && [ "$#" -le 2 ] || usage
-mode=$1
-case "$mode" in
-    sqlite)
-        manifest=compose.production.sqlite.yaml
-        ;;
-    postgres)
-        manifest=compose.production.postgres.yaml
-        ;;
-    *)
-        usage
-        ;;
-esac
+[ "$#" -le 1 ] || usage
+manifest=compose.production.postgres.yaml
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 env_file=${RESOLVATE_ENV_FILE:-${root}/.env}
@@ -40,7 +29,7 @@ docker compose version >/dev/null 2>&1 || {
 }
 
 default_image=ghcr.io/dever502/resolvate:v3.5.0
-requested_image=${2:-${APP_IMAGE:-$default_image}}
+requested_image=${1:-${APP_IMAGE:-$default_image}}
 docker pull "$requested_image"
 resolved_image=$(docker image inspect --format '{{index .RepoDigests 0}}' "$requested_image")
 case "$resolved_image" in
@@ -74,16 +63,12 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-if [ "$mode" = postgres ]; then
-    umask 077
-    rendered=$(mktemp "${TMPDIR:-/tmp}/resolvate-compose.XXXXXX.json")
-    compose config --format json > "$rendered"
-    docker run --rm -i "$APP_IMAGE" python -m resolvate.production < "$rendered"
-else
-    compose config --quiet
-fi
+umask 077
+rendered=$(mktemp "${TMPDIR:-/tmp}/resolvate-compose.XXXXXX.json")
+compose config --format json > "$rendered"
+docker run --rm -i "$APP_IMAGE" python -m resolvate.production < "$rendered"
 
 compose pull
 compose up --detach --wait
 compose ps
-echo "Resolvate started with $mode using immutable image $APP_IMAGE"
+echo "Resolvate started using PostgreSQL and immutable image $APP_IMAGE"

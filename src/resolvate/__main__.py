@@ -5,7 +5,6 @@ import logging
 import sys
 from functools import partial
 from ipaddress import ip_address
-from pathlib import Path
 
 import httpx
 from aiogram import Bot, Dispatcher
@@ -51,12 +50,6 @@ from resolvate.trace import TraceMiddleware
 from resolvate.user_message_limits import UserMessageRateLimiter
 
 logger = logging.getLogger(__name__)
-
-
-def _ensure_sqlite_directory(database_url: str) -> None:
-    prefix = "sqlite+aiosqlite:///"
-    if database_url.startswith(prefix):
-        Path(database_url.removeprefix(prefix)).parent.mkdir(parents=True, exist_ok=True)
 
 
 def _telegram_value(value: object) -> str:
@@ -156,10 +149,7 @@ async def validate_support_group(bot: Bot, support_group_id: int) -> None:
 async def run() -> None:
     settings = get_settings()
     configure_logging(settings.log_level)
-    assert settings.database_url is not None
     assert settings.migration_database_url is not None
-    _ensure_sqlite_directory(settings.database_url)
-    _ensure_sqlite_directory(settings.migration_database_url)
     validate_api_settings(settings)
     validate_operator_access(settings)
     if settings.migrations_at_startup:

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -36,8 +35,10 @@ class RecordingTopicBot:
         return SimpleNamespace(message_thread_id=self._next_topic_id)
 
 
-async def test_ratings_topic_is_created_once_persisted_and_recovered(tmp_path: Path) -> None:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/system-topics.db")
+async def test_ratings_topic_is_created_once_persisted_and_recovered(
+    postgres_database_url: str,
+) -> None:
+    database = Database(postgres_database_url)
     await database.create_schema_for_tests()
     try:
         bot = RecordingTopicBot()
@@ -78,8 +79,10 @@ async def test_ratings_topic_is_created_once_persisted_and_recovered(tmp_path: P
         await database.dispose()
 
 
-async def test_quick_replies_topic_is_created_with_durable_id(tmp_path: Path) -> None:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/quick-replies-topic.db")
+async def test_quick_replies_topic_is_created_with_durable_id(
+    postgres_database_url: str,
+) -> None:
+    database = Database(postgres_database_url)
     await database.create_schema_for_tests()
     try:
         bot = RecordingTopicBot()
@@ -104,8 +107,8 @@ async def test_quick_replies_topic_is_created_with_durable_id(tmp_path: Path) ->
         await database.dispose()
 
 
-async def test_unknown_system_topic_is_rejected(tmp_path: Path) -> None:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/unknown-system-topic.db")
+async def test_unknown_system_topic_is_rejected(postgres_database_url: str) -> None:
+    database = Database(postgres_database_url)
     await database.create_schema_for_tests()
     try:
         service = TelegramSystemTopicService(

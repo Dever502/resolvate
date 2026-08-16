@@ -16,7 +16,6 @@ from resolvate.api_idempotency import (
     api_action_payload,
     load_api_replay_response,
 )
-from resolvate.database import retry_sqlite_locks
 from resolvate.durable_work import enqueue_topic_reconciliation
 from resolvate.media_storage import StoredMedia
 from resolvate.models import (
@@ -338,7 +337,6 @@ class WebSupportService(TicketServiceBase):
     ) -> WebMessageResult | None:
         return await self._load_replay(command)
 
-    @retry_sqlite_locks
     async def accept_message(
         self,
         *,
@@ -624,7 +622,6 @@ class WebSupportService(TicketServiceBase):
                 raise TicketNotFoundError(media_id)
             return media
 
-    @retry_sqlite_locks
     async def submit_rating(
         self,
         *,

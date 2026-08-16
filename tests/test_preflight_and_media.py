@@ -1204,7 +1204,5 @@ def test_migration_url_conversion_supports_async_postgres() -> None:
         synchronous_database_url("postgresql+asyncpg://user:pass@postgres:5432/support")
         == "postgresql+psycopg://user:pass@postgres:5432/support"
     )
-    assert (
-        synchronous_database_url("sqlite+aiosqlite:///./data/support.db")
-        == "sqlite:///./data/support.db"
-    )
+    with pytest.raises(ValueError, match="postgresql"):
+        synchronous_database_url("mysql+pymysql://user:pass@database/support")

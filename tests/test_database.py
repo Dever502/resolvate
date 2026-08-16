@@ -1,74 +1,51 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 from sqlalchemy import text
-from sqlalchemy.exc import OperationalError
 
 from resolvate.database import Database
 from resolvate.runtime_defaults import POSTGRES_POOL_SIZE
 
 
-async def test_sqlite_connections_enable_safety_pragmas(tmp_path: Path) -> None:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/support.db")
+async def test_postgres_connection_uses_expected_database_and_safe_engine_options(
+    postgres_database_url: str,
+) -> None:
+    database = Database(postgres_database_url)
     try:
         assert database.engine.sync_engine.hide_parameters is True
+        assert database.engine.pool.size() == POSTGRES_POOL_SIZE
         async with database.engine.connect() as connection:
-            foreign_keys = await connection.scalar(text("PRAGMA foreign_keys"))
-            journal_mode = await connection.scalar(text("PRAGMA journal_mode"))
-            busy_timeout = await connection.scalar(text("PRAGMA busy_timeout"))
+            name = await connection.scalar(text("SELECT current_database()"))
     finally:
         await database.dispose()
 
-    assert foreign_keys == 1
-    assert journal_mode == "wal"
-    assert busy_timeout == 5000
+    assert isinstance(name, str)
+    assert name.startswith("sbtest_")
 
 
-async def test_sqlite_lock_retry_is_bounded(tmp_path: Path) -> None:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/support.db")
-    attempts = 0
-
-    async def temporarily_locked() -> str:
-        nonlocal attempts
-        attempts += 1
-        if attempts < 3:
-            raise OperationalError("SELECT 1", {}, Exception("database is locked"))
-        return "completed"
-
-    try:
-        result = await database.retry_sqlite_locks(temporarily_locked)
-    finally:
-        await database.dispose()
-
-    assert result == "completed"
-    assert attempts == 3
+@pytest.mark.parametrize(
+    "database_url",
+    (
+        "mysql+aiomysql://user:password@database.invalid/resolvate",
+        "postgresql+psycopg://user:password@database.invalid/resolvate",
+        "not-a-database-url",
+    ),
+)
+def test_database_rejects_unsupported_or_malformed_urls(database_url: str) -> None:
+    with pytest.raises(ValueError, match="DATABASE_URL"):
+        Database(database_url)
 
 
-async def test_sqlite_lock_retry_does_not_mask_other_database_errors(tmp_path: Path) -> None:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path}/support.db")
-    attempts = 0
-
-    async def invalid_query() -> None:
-        nonlocal attempts
-        attempts += 1
-        raise OperationalError("SELECT invalid", {}, Exception("syntax error"))
-
-    try:
-        with pytest.raises(OperationalError):
-            await database.retry_sqlite_locks(invalid_query)
-    finally:
-        await database.dispose()
-
-    assert attempts == 1
+def test_database_requires_explicit_database_name() -> None:
+    with pytest.raises(ValueError, match="database name"):
+        Database("postgresql+asyncpg://user:password@database.invalid")
 
 
-def test_postgres_engine_uses_bounded_runtime_pool() -> None:
-    database = Database("postgresql+asyncpg://user:password@localhost/resolvate")
+def test_postgres_engine_uses_bounded_runtime_pool_without_connecting() -> None:
+    database = Database("postgresql+asyncpg://user:password@database.invalid/resolvate")
     try:
         assert database.engine.sync_engine.hide_parameters is True
         assert database.engine.pool.size() == POSTGRES_POOL_SIZE
     finally:
-        # Engine construction does not open a connection; avoid requiring an event loop here.
+        # Engine construction does not open a connection; this test remains synchronous.
         database.engine.sync_engine.dispose(close=False)

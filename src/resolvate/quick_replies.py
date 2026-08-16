@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
-from resolvate.database import Database, retry_sqlite_locks
+from resolvate.database import Database
 from resolvate.models import QuickResponse
 from resolvate.web_models import SystemSetting
 
@@ -107,7 +107,6 @@ class QuickReplyService:
             response = await session.get(QuickResponse, response_id)
         return _view(response) if response is not None else None
 
-    @retry_sqlite_locks
     async def save_valid(
         self,
         *,
@@ -131,7 +130,6 @@ class QuickReplyService:
             invalid_until=None,
         )
 
-    @retry_sqlite_locks
     async def save_pending_deletion(
         self,
         *,
@@ -220,7 +218,6 @@ class QuickReplyService:
                 return _view(response)
         raise RuntimeError("unreachable quick response upsert state")
 
-    @retry_sqlite_locks
     async def attach_warning(self, response_id: int, warning_message_id: int) -> bool:
         async with self.database.session() as session:
             response = await session.get(QuickResponse, response_id)
@@ -232,7 +229,6 @@ class QuickReplyService:
             await session.commit()
             return True
 
-    @retry_sqlite_locks
     async def clear_warning(self, response_id: int, warning_message_id: int) -> bool:
         async with self.database.session() as session:
             response = await session.get(QuickResponse, response_id)
@@ -284,7 +280,6 @@ class QuickReplyService:
             )
         return [_view(response) for response in responses]
 
-    @retry_sqlite_locks
     async def soft_delete_valid(
         self,
         response_id: int,
@@ -306,7 +301,6 @@ class QuickReplyService:
             await session.commit()
             return _view(response)
 
-    @retry_sqlite_locks
     async def clear_deleted_publication(
         self,
         response_id: int,
@@ -325,7 +319,6 @@ class QuickReplyService:
             await session.commit()
             return True
 
-    @retry_sqlite_locks
     async def delete_if_still_pending(
         self,
         response_id: int,
@@ -345,7 +338,6 @@ class QuickReplyService:
             await session.commit()
             return view
 
-    @retry_sqlite_locks
     async def discard_all_pending(self) -> list[QuickResponseView]:
         async with self.database.session() as session:
             responses = list(
@@ -367,7 +359,6 @@ class QuickReplyService:
                 await session.commit()
             return views
 
-    @retry_sqlite_locks
     async def record_publication(self, response_id: int, message_id: int) -> None:
         async with self.database.session() as session:
             response = await session.get(QuickResponse, response_id)
@@ -376,7 +367,6 @@ class QuickReplyService:
             response.published_message_id = message_id
             await session.commit()
 
-    @retry_sqlite_locks
     async def complete_publication(self, response_id: int, message_id: int) -> bool:
         async with self.database.session() as session:
             response = await session.get(QuickResponse, response_id)
@@ -416,7 +406,6 @@ class QuickReplyService:
             return None
         return message_id if message_id > 0 else None
 
-    @retry_sqlite_locks
     async def save_instruction_message_id(
         self,
         support_group_id: int,
@@ -475,7 +464,6 @@ class QuickReplyService:
                 message_ids.add(message_id)
         return sorted(message_ids)
 
-    @retry_sqlite_locks
     async def finish_legacy_cleanup(self, support_group_id: int) -> None:
         prefix = "telegram_quick_reply_legacy:"
         async with self.database.session() as session:

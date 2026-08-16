@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -27,18 +25,10 @@ from resolvate.telegram_statistics import (
 from resolvate.web_models import TicketLifecycleEvent
 
 
-def _database(
-    tmp_path: Path,
-    migrated_sqlite_database_url: Callable[[Path], str],
-) -> Database:
-    return Database(migrated_sqlite_database_url(tmp_path / "statistics.db"))
-
-
 async def test_statistics_are_channel_aware_and_exclude_ratings_from_inbound(
-    tmp_path: Path,
-    migrated_sqlite_database_url: Callable[[Path], str],
+    migrated_postgres_database_url: str,
 ) -> None:
-    database = _database(tmp_path, migrated_sqlite_database_url)
+    database = Database(migrated_postgres_database_url)
     now = datetime.now(UTC)
     try:
         async with database.session() as session:
@@ -175,10 +165,9 @@ class DashboardHarness(TelegramStatisticsDashboard):
 
 
 async def test_dashboard_persists_one_message_and_reuses_it(
-    tmp_path: Path,
-    migrated_sqlite_database_url: Callable[[Path], str],
+    migrated_postgres_database_url: str,
 ) -> None:
-    database = _database(tmp_path, migrated_sqlite_database_url)
+    database = Database(migrated_postgres_database_url)
     bot = SimpleNamespace(
         send_message=AsyncMock(return_value=SimpleNamespace(message_id=501)),
         edit_message_text=AsyncMock(),
@@ -186,6 +175,7 @@ async def test_dashboard_persists_one_message_and_reuses_it(
     settings = Settings(
         support_bot_token=SecretStr("test-token"),
         support_group_id=-100123,
+        database_url=migrated_postgres_database_url,
         admin_telegram_ids={42},
     )
     dashboard = DashboardHarness()

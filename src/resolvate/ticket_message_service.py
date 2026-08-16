@@ -14,7 +14,6 @@ from resolvate.api_idempotency import (
     load_api_replay_response,
 )
 from resolvate.audit import record_event
-from resolvate.database import retry_sqlite_locks
 from resolvate.durable_work import enqueue_topic_reconciliation
 from resolvate.models import (
     DeliveryOutbox,
@@ -215,7 +214,6 @@ class TicketMessageService(TicketServiceBase):
             )
         return notes
 
-    @retry_sqlite_locks
     async def enqueue_copy(
         self,
         *,
@@ -271,7 +269,6 @@ class TicketMessageService(TicketServiceBase):
                 ),
             )
 
-    @retry_sqlite_locks
     async def enqueue_text(
         self,
         *,
@@ -313,7 +310,6 @@ class TicketMessageService(TicketServiceBase):
                 payload=payload,
             )
 
-    @retry_sqlite_locks
     async def send_operator_message(
         self,
         *,
@@ -405,9 +401,8 @@ class TicketMessageService(TicketServiceBase):
                 )
                 reopened = cast(CursorResult[object], reopen_result).rowcount == 1
             if not reopened:
-                # SQLite ignores FOR UPDATE. If another distinct command won
-                # the conditional reopen, this transaction still owns its
-                # message but must not claim the reopen audit transition.
+                # If another command won the conditional reopen, this transaction
+                # still owns its message but must not claim the audit transition.
                 if was_closed:
                     await session.refresh(ticket)
                 ticket.last_activity_at = transition_at
@@ -510,7 +505,6 @@ class TicketMessageService(TicketServiceBase):
             ticket=committed_view,
         )
 
-    @retry_sqlite_locks
     async def enqueue_notification(
         self,
         *,

@@ -29,17 +29,6 @@ ADMIN_TELEGRAM_IDS=replace-with-admin-id
 DATA_DIR=./data
 ```
 
-### SQLite
-
-```bash
-./scripts/start.sh sqlite
-```
-
-SQLite и heartbeat хранятся в volume `resolvate_data`. Удаление контейнера данные не удаляет;
-удаление volume — удаляет.
-
-### PostgreSQL
-
 Добавьте три разных URL-safe пароля длиной не менее 16 символов:
 
 Имена ролей фиксированы: `postgres`, `resolvate_migrator` и `resolvate_runtime`.
@@ -52,14 +41,14 @@ POSTGRES_RUNTIME_PASSWORD=replace-with-random-password-3
 ```
 
 ```bash
-./scripts/start.sh postgres
+./scripts/start.sh
 ```
 
 `postgres-provision` создаёт least-privilege роли, `postgres-migrate` применяет Alembic, затем
 запускается приложение без migration credential. Поддерживается один экземпляр приложения.
 
 `start.sh` скачивает release image, закрепляет его digest, проверяет Compose и ждёт healthcheck.
-Другой image можно передать вторым аргументом.
+Другой image можно передать единственным необязательным аргументом.
 
 ## Конфигурация
 
@@ -70,8 +59,8 @@ POSTGRES_RUNTIME_PASSWORD=replace-with-random-password-3
 | `SUPPORT_BOT_TOKEN` | обязательна | токен Telegram-бота |
 | `SUPPORT_GROUP_ID` | обязательна | ID закрытой Forum-группы |
 | `ADMIN_TELEGRAM_IDS` | обязательна без API | ID администраторов через запятую; доступ ко всем командам |
-| `DATA_DIR` | `./data` | SQLite, Web-фото и heartbeat-файлы |
-| `DATABASE_URL` | SQLite в `DATA_DIR` | async SQLAlchemy URL |
+| `DATA_DIR` | `./data` | Web-фото и heartbeat-файлы |
+| `DATABASE_URL` | обязательна вне Compose | PostgreSQL URL с драйвером `postgresql+asyncpg` |
 | `MIGRATION_DATABASE_URL` | `DATABASE_URL` | отдельный URL для миграций |
 | `MIGRATIONS_AT_STARTUP` | `true` | PostgreSQL Compose меняет на `false` |
 | `LOG_LEVEL` | `INFO` | уровень логирования |
@@ -294,34 +283,21 @@ HTTP endpoints доступны при включённом Operator API или 
 ## Backup и восстановление
 
 Храните зашифрованные копии вне Docker volumes и регулярно проверяйте restore на отдельном
-стенде. Backup содержит пользовательские данные. При включённом Web API передавайте третий путь:
+стенде. Backup содержит пользовательские данные. При включённом Web API передавайте второй путь:
 скрипт кратко остановит единственный writer и создаст согласованную пару БД + media archive.
-
-### SQLite
-
-Перед запуском экспортируйте `APP_IMAGE` и `RESOLVATE_ENV_FILE` так же, как для Compose.
-
-```bash
-COMPOSE_FILE=compose.production.sqlite.yaml \
-  ./scripts/backup.sh sqlite /srv/backups/support.db /srv/backups/support-media.tar.gz
-CONFIRM_RESTORE=yes COMPOSE_FILE=compose.production.sqlite.yaml \
-  ./scripts/restore.sh sqlite /srv/backups/support.db /srv/backups/support-media.tar.gz
-```
-
-Двухаргументный DB-only backup сохраняет прежнее online-поведение. Трёхаргументный backup
-останавливает приложение на время согласованного снимка. Restore заранее проверяет оба архива.
-
-### PostgreSQL
 
 ```bash
 PRODUCTION_DEPLOYMENT=yes DEPLOY_DIR=/opt/resolvate \
-  sh scripts/backup.sh postgres /srv/backups/support.dump /srv/backups/support-media.tar.gz
+  sh scripts/backup.sh /srv/backups/support.dump /srv/backups/support-media.tar.gz
 CONFIRM_RESTORE=yes PRODUCTION_DEPLOYMENT=yes DEPLOY_DIR=/opt/resolvate \
-  sh scripts/restore.sh postgres /srv/backups/support.dump /srv/backups/support-media.tar.gz
+  sh scripts/restore.sh /srv/backups/support.dump /srv/backups/support-media.tar.gz
 ```
 
 Archive проверяется до остановки. Restore работает через migration role, повторно применяет
 миграции и ждёт healthcheck. После ошибки проверьте БД и запускайте приложение вручную.
+DB-only backup принимает один путь и не останавливает приложение. При передаче media archive
+приложение останавливается на время создания согласованной пары. Restore заранее проверяет все
+переданные архивы.
 
 Перед обновлением всегда создавайте backup. Не запускайте старый image поверх новой схемы без
 явно поддерживаемого downgrade.
