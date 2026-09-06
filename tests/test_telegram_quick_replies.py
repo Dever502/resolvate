@@ -7,30 +7,234 @@ from unittest.mock import AsyncMock, call
 
 import pytest
 from aiogram.enums import ChatType, MessageEntityType
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
 from aiogram.methods import DeleteMessage, EditMessageText
 from aiogram.types import Chat, Message, MessageEntity, User
 from pydantic import SecretStr
+from sqlalchemy import event
 
 from resolvate.authorization import AuthorizationService
 from resolvate.config import Settings
 from resolvate.database import Database
+from resolvate.models import QuickResponse
 from resolvate.quick_replies import (
     QUICK_RESPONSE_DELETED,
     QUICK_RESPONSE_PENDING_DELETION,
     QUICK_RESPONSE_PUBLICATION_FORMAT_VERSION,
+    QUICK_RESPONSE_TEXT_MAX_LENGTH,
     QUICK_RESPONSE_VALID,
     QuickReplyService,
     render_quick_response,
 )
 from resolvate.telegram_quick_replies import (
     QUICK_RESPONSE_DELETE_CALLBACK_PREFIX,
+    QUICK_RESPONSE_DELETED_TEXT,
     QUICK_RESPONSE_INSTRUCTION_TEXT,
+    QUICK_RESPONSE_LENGTH_WARNING_TEXT,
     QUICK_RESPONSE_WARNING_TEXT,
     QuickResponseTopicRefreshWorker,
     TelegramQuickReplyHandlers,
     quick_response_delete_keyboard,
 )
+
+
+@pytest.mark.parametrize(
+    "text", ["а" * 4090, "а" * 4096, "😀" * 2045], ids=["long", "maximum", "emoji"]
+)
+async def test_long_reply_warns_preserves_deadline_and_accepts_correction(
+    postgres_database_url: str, text: str
+) -> None:
+    database = Database(postgres_database_url)
+    await database.create_schema_for_tests()
+    service = QuickReplyService(database)
+    bot = _bot()
+    harness = _harness(service, bot)
+    try:
+        message = _message(text=text)
+        assert await harness.handle_quick_reply_topic_message(message)
+        message.reply.assert_awaited_once_with(QUICK_RESPONSE_LENGTH_WARNING_TEXT, parse_mode=None)
+        bot.send_message.assert_not_awaited()
+        pending = await service.get_by_source(source_chat_id=-100123, source_message_id=301)
+        assert pending is not None and pending.state == QUICK_RESPONSE_PENDING_DELETION
+        assert pending.text == text
+        deadline = pending.invalid_until
+
+        # Further invalid edits, including a change of reason, keep the original deadline.
+        message.text = "а" * 4091
+        await harness.handle_quick_reply_topic_message(message)
+        message.text = "Ответ #1 #2 #3 #4 #5 #6"
+        await harness.handle_quick_reply_topic_message(message)
+        current = await service.get(pending.id)
+        assert current is not None and current.invalid_until == deadline
+        bot.edit_message_text.assert_awaited_with(
+            chat_id=-100123,
+            message_id=901,
+            text=QUICK_RESPONSE_WARNING_TEXT,
+            parse_mode=None,
+            reply_markup=None,
+        )
+
+        message.text = "😀" * 2044
+        await harness.handle_quick_reply_topic_message(message)
+        saved = await service.get(pending.id)
+        assert saved is not None and saved.state == QUICK_RESPONSE_VALID
+        assert saved.invalid_until is None and saved.warning_message_id is None
+        assert saved.id not in harness._quick_response_tasks
+        assert bot.send_message.await_args.kwargs["text"] == render_quick_response(message.text)
+    finally:
+        await harness.shutdown_quick_reply_runtime()
+        await database.dispose()
+
+
+async def test_maximum_length_reply_is_published(postgres_database_url: str) -> None:
+    database = Database(postgres_database_url)
+    await database.create_schema_for_tests()
+    harness = _harness(QuickReplyService(database), _bot())
+    try:
+        message = _message(text="а" * QUICK_RESPONSE_TEXT_MAX_LENGTH)
+        await harness.handle_quick_reply_topic_message(message)
+        message.reply.assert_not_awaited()
+        assert len(harness.bot.send_message.await_args.kwargs["text"]) == 4096
+    finally:
+        await harness.shutdown_quick_reply_runtime()
+        await database.dispose()
+
+
+@pytest.mark.parametrize(
+    "edit_error",
+    [None, "message is not modified", "message to edit not found", "temporary failure"],
+)
+async def test_old_deleted_reply_is_replaced_or_retried(
+    postgres_database_url: str, edit_error: str | None
+) -> None:
+    database = Database(postgres_database_url)
+    await database.create_schema_for_tests()
+    service = QuickReplyService(database)
+    bot = _bot()
+    harness = _harness(service, bot)
+    try:
+        await harness.handle_quick_reply_topic_message(_message(text="Старый ответ #VPN"))
+        saved = await service.get_by_source(source_chat_id=-100123, source_message_id=301)
+        assert saved is not None
+        bot.delete_message.reset_mock()
+        bot.delete_message.side_effect = TelegramBadRequest(
+            method=DeleteMessage(chat_id=-100123, message_id=501),
+            message="Bad Request: message can't be deleted",
+        )
+        if edit_error is not None:
+            error_class = (
+                TelegramNetworkError if edit_error == "temporary failure" else TelegramBadRequest
+            )
+            bot.edit_message_text.side_effect = error_class(
+                method=EditMessageText(chat_id=-100123, message_id=501, text="deleted"),
+                message=edit_error,
+            )
+        callback = SimpleNamespace(
+            data=f"{QUICK_RESPONSE_DELETE_CALLBACK_PREFIX}:{saved.id}",
+            from_user=User(id=7, is_bot=False, first_name="Operator"),
+            message=Message(
+                message_id=501,
+                date=datetime(2020, 1, 1, tzinfo=UTC),
+                chat=Chat(id=-100123, type=ChatType.SUPERGROUP),
+                message_thread_id=777,
+                text=render_quick_response(saved.text),
+            ),
+            answer=AsyncMock(),
+        )
+        await harness.handle_quick_response_delete_callback(callback)
+        bot.edit_message_text.assert_awaited_once_with(
+            chat_id=-100123,
+            message_id=501,
+            text=QUICK_RESPONSE_DELETED_TEXT,
+            parse_mode=None,
+            reply_markup=None,
+        )
+        deleted = await service.get(saved.id)
+        assert deleted is not None and deleted.state == QUICK_RESPONSE_DELETED
+        if edit_error == "temporary failure":
+            assert deleted.published_message_id == 501
+            assert callback.answer.await_args.kwargs["show_alert"] is True
+            bot.edit_message_text.side_effect = None
+            await harness._cleanup_deleted_publications()
+        else:
+            assert deleted.published_message_id is None
+            callback.answer.assert_awaited_once_with("Быстрый ответ удалён.", show_alert=False)
+        assert await service.list_deleted_with_publication() == []
+        attempts = bot.delete_message.await_count
+        await harness._cleanup_deleted_publications()
+        await harness._restore_valid_responses(all_responses=True)
+        assert bot.delete_message.await_count == attempts
+        assert bot.send_message.await_count == 1  # Only the original publication.
+    finally:
+        await harness.shutdown_quick_reply_runtime()
+        await database.dispose()
+
+
+async def test_idle_catalogue_uses_one_query_and_full_scan_is_paginated(
+    postgres_database_url: str,
+) -> None:
+    database = Database(postgres_database_url)
+    await database.create_schema_for_tests()
+    service = QuickReplyService(database)
+    harness = _harness(service, _bot())
+    try:
+        async with database.session() as session:
+            session.add_all(
+                QuickResponse(
+                    text=f"Ответ {i}",
+                    tags=[],
+                    created_by_telegram_id=7,
+                    source_chat_id=-100123,
+                    source_message_id=1000 + i,
+                    published_message_id=2000 + i,
+                    publication_format_version=QUICK_RESPONSE_PUBLICATION_FORMAT_VERSION,
+                    state=QUICK_RESPONSE_VALID,
+                )
+                for i in range(205)
+            )
+            await session.commit()
+        queries: list[str] = []
+
+        def capture(connection, cursor, statement, parameters, context, executemany):
+            queries.append(statement)
+
+        event.listen(database.engine.sync_engine, "before_cursor_execute", capture)
+        try:
+            await harness._restore_valid_responses(all_responses=False)
+        finally:
+            event.remove(database.engine.sync_engine, "before_cursor_execute", capture)
+        assert len(queries) == 1
+        harness.bot.send_message.assert_not_awaited()
+        harness._publish_valid_response = AsyncMock()
+        await harness._restore_valid_responses(all_responses=False, verify_existing=True)
+        published_ids = [
+            item.args[0].id for item in harness._publish_valid_response.await_args_list
+        ]
+        assert len(published_ids) == 205 and len(set(published_ids)) == 205
+
+        # A selected record deleted before its lock is acquired must not be republished.
+        candidate = (await service.list_valid())[0]
+        original_query = service.list_publication_candidates
+
+        async def delete_after_selection(**kwargs):
+            batch = await original_query(**kwargs)
+            if kwargs["after_id"] == 0:
+                await service.soft_delete_valid(
+                    candidate.id,
+                    published_message_id=candidate.published_message_id,
+                    operator_telegram_id=7,
+                )
+            return batch
+
+        service.list_publication_candidates = delete_after_selection
+        harness._publish_valid_response.reset_mock()
+        await harness._restore_valid_responses(all_responses=True)
+        assert candidate.id not in [
+            item.args[0].id for item in harness._publish_valid_response.await_args_list
+        ]
+    finally:
+        await harness.shutdown_quick_reply_runtime()
+        await database.dispose()
 
 
 class FakeLimiter:
@@ -475,9 +679,9 @@ async def test_failed_telegram_delete_is_retried_from_tombstone(
         )
         await service.record_publication(saved.id, 501)
         assert await service.complete_publication(saved.id, 501) is True
-        rejected_delete = TelegramBadRequest(
+        rejected_delete = TelegramNetworkError(
             method=DeleteMessage(chat_id=-100123, message_id=501),
-            message="Bad Request: message cannot be deleted",
+            message="Connection timed out",
         )
         bot = _bot()
         bot.delete_message = AsyncMock(side_effect=rejected_delete)
@@ -502,6 +706,10 @@ async def test_failed_telegram_delete_is_retried_from_tombstone(
         assert tombstone is not None
         assert tombstone.state == QUICK_RESPONSE_DELETED
         assert tombstone.published_message_id == 501
+        callback.answer.assert_awaited_once_with(
+            "Ответ исключён из каталога. Очистка сообщения будет повторена.", show_alert=True
+        )
+        bot.edit_message_text.assert_not_awaited()
 
         bot.delete_message = AsyncMock()
         await harness._cleanup_deleted_publications()

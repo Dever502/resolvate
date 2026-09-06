@@ -302,7 +302,7 @@ jobs:
             "$IMAGE_TAG" \
             -c 'set -eu
               cd /app
-              test "$(python -c "import resolvate; print(resolvate.__version__)")" = "3.5.0"
+              test "$(python -c "import resolvate; print(resolvate.__version__)")" = "4.0.0"
               test -f /app/alembic.ini
               test -f /app/migrations/env.py
               python -c "from hashlib import sha256; from pathlib import Path; assert sha256(Path(\"/app/LICENSE\").read_bytes()).hexdigest() == \"0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0\""

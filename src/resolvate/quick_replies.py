@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from resolvate.database import Database
@@ -167,10 +167,17 @@ class QuickReplyService:
         state: str,
         invalid_until: datetime | None,
     ) -> QuickResponseView:
-        if not text.strip() or utf16_code_units(text) > QUICK_RESPONSE_TEXT_MAX_LENGTH:
-            raise ValueError("invalid quick response text")
         if state not in {QUICK_RESPONSE_VALID, QUICK_RESPONSE_PENDING_DELETION}:
             raise ValueError("invalid quick response state")
+        # Invalid incoming messages must still be persisted for warning/deadline recovery.
+        # Telegram accepts up to 4096 characters; supplementary characters use two units.
+        if not text.strip() or len(text) > 4096:
+            raise ValueError("invalid quick response text")
+        if (
+            state == QUICK_RESPONSE_VALID
+            and utf16_code_units(text) > QUICK_RESPONSE_TEXT_MAX_LENGTH
+        ):
+            raise ValueError("invalid quick response text")
 
         for attempt in range(2):
             async with self.database.session() as session:
@@ -264,7 +271,29 @@ class QuickReplyService:
             )
         return [_view(response) for response in responses]
 
-    async def list_deleted_with_publication(self) -> list[QuickResponseView]:
+    async def list_publication_candidates(
+        self, *, after_id: int = 0, limit: int = 100, include_complete: bool = False
+    ) -> list[QuickResponseView]:
+        statement = select(QuickResponse).where(
+            QuickResponse.state == QUICK_RESPONSE_VALID,
+            QuickResponse.id > after_id,
+        )
+        if not include_complete:
+            statement = statement.where(
+                or_(
+                    QuickResponse.published_message_id.is_(None),
+                    QuickResponse.publication_format_version
+                    < QUICK_RESPONSE_PUBLICATION_FORMAT_VERSION,
+                    QuickResponse.warning_message_id.is_not(None),
+                )
+            )
+        async with self.database.session() as session:
+            responses = await session.scalars(statement.order_by(QuickResponse.id).limit(limit))
+            return [_view(response) for response in responses]
+
+    async def list_deleted_with_publication(
+        self, *, after_id: int = 0, limit: int = 100
+    ) -> list[QuickResponseView]:
         async with self.database.session() as session:
             responses = list(
                 (
@@ -273,8 +302,10 @@ class QuickReplyService:
                         .where(
                             QuickResponse.state == QUICK_RESPONSE_DELETED,
                             QuickResponse.published_message_id.is_not(None),
+                            QuickResponse.id > after_id,
                         )
                         .order_by(QuickResponse.id)
+                        .limit(limit)
                     )
                 ).all()
             )

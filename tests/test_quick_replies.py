@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from resolvate.database import Database
+from resolvate.models import QuickResponse
 from resolvate.quick_replies import (
     QUICK_RESPONSE_DELETED,
     QUICK_RESPONSE_PENDING_DELETION,
@@ -23,6 +24,49 @@ def _operator_fields() -> dict[str, object]:
         "operator_username": "operator",
         "source_chat_id": -100123,
     }
+
+
+async def test_publication_candidates_filter_and_paginate_pending_work(
+    postgres_database_url: str,
+) -> None:
+    database = Database(postgres_database_url)
+    await database.create_schema_for_tests()
+    service = QuickReplyService(database)
+    try:
+        async with database.session() as session:
+            records = [
+                QuickResponse(
+                    text=f"Ответ {i}",
+                    tags=[],
+                    created_by_telegram_id=7,
+                    source_chat_id=-100123,
+                    source_message_id=300 + i,
+                    published_message_id=500 + i,
+                    publication_format_version=QUICK_RESPONSE_PUBLICATION_FORMAT_VERSION,
+                    state=QUICK_RESPONSE_VALID,
+                )
+                for i in range(6)
+            ]
+            records[1].published_message_id = None
+            records[2].publication_format_version = 0
+            records[3].warning_message_id = 900
+            records[4].state = QUICK_RESPONSE_DELETED
+            records[5].state = QUICK_RESPONSE_PENDING_DELETION
+            session.add_all(records)
+            await session.commit()
+        first = await service.list_publication_candidates(limit=2)
+        second = await service.list_publication_candidates(after_id=first[-1].id, limit=2)
+        assert [item.id for item in first + second] == [record.id for record in records[1:4]]
+        assert await service.list_publication_candidates(after_id=second[-1].id) == []
+        assert [
+            item.id for item in await service.list_publication_candidates(include_complete=True)
+        ] == [record.id for record in records[:4]]
+        assert [item.id for item in await service.list_deleted_with_publication(limit=1)] == [
+            records[4].id
+        ]
+        assert await service.list_deleted_with_publication(after_id=records[4].id) == []
+    finally:
+        await database.dispose()
 
 
 async def test_quick_response_is_created_and_updated_by_source_message(

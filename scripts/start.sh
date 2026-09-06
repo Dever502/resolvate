@@ -28,7 +28,7 @@ docker compose version >/dev/null 2>&1 || {
     exit 1
 }
 
-default_image=ghcr.io/dever502/resolvate:v3.5.0
+default_image=ghcr.io/dever502/resolvate:v4.0.0
 requested_image=${1:-${APP_IMAGE:-$default_image}}
 docker pull "$requested_image"
 resolved_image=$(docker image inspect --format '{{index .RepoDigests 0}}' "$requested_image")

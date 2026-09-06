@@ -14,7 +14,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 COPY src ./src
 RUN uv sync --frozen --no-dev --no-editable && \
-    /app/.venv/bin/python -c "import resolvate; assert resolvate.__version__ == '3.5.0'"
+    /app/.venv/bin/python -c "import resolvate; assert resolvate.__version__ == '4.0.0'"
 
 FROM python:3.12.13-alpine3.24@sha256:6d43704baacd1bfbe7c295d7f13079d5d8104ed33568873133f8fc69980419df AS runtime
 
@@ -42,7 +42,7 @@ USER app
 LABEL org.opencontainers.image.title="Resolvate" \
       org.opencontainers.image.licenses="AGPL-3.0-only" \
       org.opencontainers.image.source="https://github.com/Dever502/resolvate" \
-      org.opencontainers.image.version="3.5.0" \
+      org.opencontainers.image.version="4.0.0" \
       org.opencontainers.image.created="$BUILD_DATE" \
       org.opencontainers.image.revision="$VCS_REF"
 

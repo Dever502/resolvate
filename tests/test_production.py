@@ -81,7 +81,7 @@ def test_immutable_image_references_are_accepted(image: str) -> None:
     "image",
     [
         "resolvate:latest",
-        "resolvate:3.5.0",
+        "resolvate:4.0.0",
         "registry.example/resolvate:" + "b" * 40,
         "resolvate@sha256:not-a-digest",
     ],
