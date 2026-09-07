@@ -239,6 +239,19 @@ def test_runtime_and_postgres_images_are_digest_pinned() -> None:
         )
 
 
+def test_image_security_floors_apply_to_builder_and_runtime() -> None:
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    builder, runtime = dockerfile.split(" AS builder", maxsplit=1)[1].split(
+        "FROM python:", maxsplit=1
+    )
+    for stage in (builder, runtime):
+        assert "RUN apk add --no-cache --upgrade" in stage
+        assert "'libcrypto3>=3.5.8-r0'" in stage
+        assert "'libssl3>=3.5.8-r0'" in stage
+        assert "'libuuid>=2.42.3-r1'" in stage
+        assert "--allow-untrusted" not in stage
+
+
 def test_public_start_script_is_transparent_and_pins_the_pulled_image() -> None:
     path = ROOT / "scripts" / "start.sh"
     text = path.read_text(encoding="utf-8")
