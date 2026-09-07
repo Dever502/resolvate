@@ -15,6 +15,7 @@ from resolvate.durable_work import DurableWorkRepository
 from resolvate.runtime_health import RuntimeHealth
 from resolvate.runtime_supervision import wait_for_event
 from resolvate.telegram_limits import TelegramRateLimiter
+from resolvate.telegram_poll_progress import TelegramPollProgress
 from resolvate.user_message_limits import UserMessageRateLimiter
 
 logger = logging.getLogger(__name__)
@@ -49,12 +50,14 @@ class DurableTelegramIngressMiddleware(BaseMiddleware):
         bot: Bot,
         inbound_limiter: UserMessageRateLimiter,
         outbound_limiter: TelegramRateLimiter,
+        poll_progress: TelegramPollProgress | None = None,
     ) -> None:
         self.repository = repository
         self.wake_worker = wake_worker
         self.bot = bot
         self.inbound_limiter = inbound_limiter
         self.outbound_limiter = outbound_limiter
+        self.poll_progress = poll_progress
 
     async def __call__(
         self,
@@ -77,6 +80,8 @@ class DurableTelegramIngressMiddleware(BaseMiddleware):
                 await self._reject_rate_limited_message(
                     message, decision.retry_after_seconds, decision.notify_client
                 )
+                if self.poll_progress is not None:
+                    self.poll_progress.admitted(event.update_id)
                 return None
         payload = event.model_dump(mode="json", exclude_none=True)
         await self.repository.enqueue_inbound_update(
@@ -84,6 +89,8 @@ class DurableTelegramIngressMiddleware(BaseMiddleware):
             payload,
             ordering_key=update_ordering_key(event),
         )
+        if self.poll_progress is not None:
+            self.poll_progress.admitted(event.update_id)
         self.wake_worker()
         return None
 

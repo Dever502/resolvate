@@ -25,6 +25,11 @@ from resolvate.models import (
     WorkStatus,
     utcnow,
 )
+from resolvate.rotation_gate import (
+    ingress_is_switching,
+    lock_rotation_gate,
+    ticket_is_switching,
+)
 
 MAX_RECONCILIATION_ATTEMPTS = 20
 
@@ -170,6 +175,7 @@ class DurableWorkRepository:
         if not ordering_key or len(ordering_key) > 64:
             raise ValueError("ordering_key must contain 1 to 64 characters")
         async with self.database.session() as session:
+            await lock_rotation_gate(session)
             if await session.get(InboundUpdate, telegram_update_id) is not None:
                 return False
             session.add(
@@ -206,11 +212,13 @@ class DurableWorkRepository:
                 candidate.status == WorkStatus.PENDING,
                 candidate.next_attempt_at <= now,
                 ~has_earlier_unfinished,
+                ~ingress_is_switching(candidate.ordering_key),
             )
             .order_by(candidate.telegram_update_id)
             .limit(1)
         )
         async with self.database.session() as session:
+            await lock_rotation_gate(session)
             result = await session.execute(
                 update(InboundUpdate)
                 .where(
@@ -438,11 +446,13 @@ class DurableWorkRepository:
                     ),
                 ),
                 or_(candidate.ticket_id.is_(None), ~has_earlier_unfinished),
+                ~ticket_is_switching(candidate.ticket_id),
             )
             .order_by(candidate.created_at, candidate.id)
             .limit(limit)
         )
         async with self.database.session() as session:
+            await lock_rotation_gate(session)
             result = await session.execute(
                 update(ReconciliationOutbox)
                 .where(

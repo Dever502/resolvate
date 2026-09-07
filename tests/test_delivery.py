@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.methods import CopyMessage, SendMessage
@@ -65,6 +66,21 @@ class BotMustNotSend:
 
     async def send_message(self, **kwargs: object) -> None:
         raise AssertionError("blocked delivery reached Telegram send_message")
+
+
+class SnapshotBot:
+    def __init__(self) -> None:
+        self.methods: list[Any] = []
+
+    async def copy_message(self, **kwargs: object) -> None:
+        raise TelegramBadRequest(
+            method=CopyMessage(chat_id=1, from_chat_id=2, message_id=3),
+            message="message to copy not found",
+        )
+
+    async def __call__(self, method: Any) -> SimpleNamespace:
+        self.methods.append(method)
+        return SimpleNamespace(message_id=789)
 
 
 class FakeLimiter:
@@ -135,6 +151,51 @@ def settings(data_dir: Path | None = None) -> Settings:
         support_group_id=-100123,
         data_dir=data_dir or Path("./data"),
     )
+
+
+async def test_deleted_source_can_be_delivered_from_durable_snapshot(tmp_path: Path) -> None:
+    service = FakeTicketService()
+    bot = SnapshotBot()
+    snapshot = {
+        "message_id": 5,
+        "date": 1700000000,
+        "chat": {"id": 123, "type": "private"},
+        "text": "<reply>",
+        "entities": [{"type": "bold", "offset": 0, "length": 7}],
+    }
+    source = AsyncMock(return_value=snapshot)
+    worker = delivery_worker(tmp_path, service=service, bot=bot, source_snapshot=source)
+    await worker._deliver(delivery_job())
+    source.assert_awaited_once_with(123, 5)
+    assert len(bot.methods) == 1
+    method = bot.methods[0]
+    assert method.__api_method__ == "sendMessage"
+    assert method.text == "<reply>" and method.parse_mode is None
+    assert method.entities[0].type == "bold"
+    assert method.message_thread_id == 900
+    assert service.delivered_calls == [("delivery-1", "claim-1", 789)]
+    assert not service.retry_calls
+
+
+async def test_snapshot_voice_preserves_caption_and_never_uses_old_buttons(tmp_path: Path) -> None:
+    service = FakeTicketService()
+    bot = SnapshotBot()
+    worker = delivery_worker(tmp_path, service=service, bot=bot)
+    payload = {
+        "target_chat_id": -100123,
+        "snapshot": {
+            "message_id": 5,
+            "date": 1700000000,
+            "chat": {"id": 123, "type": "private"},
+            "voice": {"file_id": "voice", "file_unique_id": "unique", "duration": 3},
+            "caption": "Explanation",
+            "reply_markup": {"inline_keyboard": [[{"text": "Old", "callback_data": "old"}]]},
+        },
+    }
+    assert await worker._send_snapshot(payload, 20) == 789
+    assert bot.methods[0].__api_method__ == "sendVoice"
+    assert bot.methods[0].caption == "Explanation"
+    assert bot.methods[0].reply_markup is None
 
 
 def delivery_job() -> DeliveryJob:

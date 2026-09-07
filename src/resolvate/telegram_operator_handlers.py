@@ -183,6 +183,10 @@ class TelegramOperatorHandlers(
             )
             await self._handle_orphan_topic_command(message, command)
             return
+        if self.topic_archive is not None and ticket.topic_id is None:
+            ticket = await self._ensure_topic(ticket, reconcile_missing=True)
+            if ticket.topic_id is None:
+                raise RuntimeError("returned operator message awaits a replacement topic")
         logger.info(
             "Received operator topic message",
             extra={
@@ -393,6 +397,18 @@ class TelegramOperatorHandlers(
         if result.blocked:
             await message.reply("⛔ Пользователь заблокирован. Сообщение не отправлено.")
             return
+        if self.topic_archive is not None and ticket.topic_id != message.message_thread_id:
+            from resolvate.telegram_transcript import message_snapshot
+            from resolvate.topic_rotation import TopicRotationRepository
+
+            await TopicRotationRepository(self.topic_archive).enqueue_operator_mirror(
+                ticket_id=ticket.id,
+                source_chat_id=message.chat.id,
+                source_message_id=message.message_id,
+                source_topic_id=message.message_thread_id,
+                author=message.from_user.full_name,
+                snapshot=message_snapshot(message),
+            )
         queued = result.changed
         if result.ticket is not None:
             ticket = result.ticket

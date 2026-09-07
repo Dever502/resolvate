@@ -4,6 +4,7 @@ import uuid
 from typing import cast
 
 from sqlalchemy import case, exists, select, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
@@ -17,6 +18,7 @@ from resolvate.models import (
     Ticket,
     TicketChannel,
     TicketStatus,
+    TopicArchive,
     User,
     utcnow,
 )
@@ -90,7 +92,14 @@ class TicketTopicService(TicketServiceBase):
                 reopened=reopened,
             )
 
-    async def attach_topic(self, ticket_id: str, topic_id: int, *, token: str) -> TicketView:
+    async def attach_topic(
+        self,
+        ticket_id: str,
+        topic_id: int,
+        *,
+        token: str,
+        archive_chat_id: int | None = None,
+    ) -> TicketView:
         async with self.database.session() as session:
             ticket = await session.get(Ticket, ticket_id)
             if ticket is None:
@@ -134,6 +143,18 @@ class TicketTopicService(TicketServiceBase):
                     return await self._ticket_view(session, current)
                 raise TopicProvisioningConflictError(ticket_id)
 
+            if archive_chat_id is not None:
+                # Publish the journal and the binding together, before any queued copy can run.
+                await session.execute(
+                    insert(TopicArchive)
+                    .values(
+                        ticket_id=ticket_id,
+                        chat_id=archive_chat_id,
+                        topic_id=topic_id,
+                        complete=True,
+                    )
+                    .on_conflict_do_nothing(constraint="uq_topic_archives_telegram")
+                )
             waiting_deliveries = list(
                 (
                     await session.scalars(
@@ -359,4 +380,14 @@ class TicketTopicService(TicketServiceBase):
                 .options(selectinload(Ticket.user).selectinload(User.identities))
                 .where(Ticket.topic_id == topic_id)
             )
+            if ticket is None:
+                ticket = await session.scalar(
+                    select(Ticket)
+                    .join(TopicArchive, TopicArchive.ticket_id == Ticket.id)
+                    .where(
+                        TopicArchive.topic_id == topic_id,
+                        TopicArchive.state.in_(("retiring", "archived", "archived_pending")),
+                    )
+                    .limit(1)
+                )
             return await self._ticket_view(session, ticket) if ticket else None

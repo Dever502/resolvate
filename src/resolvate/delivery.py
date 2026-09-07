@@ -6,10 +6,11 @@ import time
 from collections.abc import Awaitable, Callable
 from html import escape
 from pathlib import Path
+from typing import Any
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramRetryAfter
-from aiogram.types import FSInputFile, InlineKeyboardMarkup
+from aiogram.types import FSInputFile, InlineKeyboardMarkup, Message
 
 from resolvate.audit import record_event
 from resolvate.config import Settings
@@ -55,6 +56,7 @@ class DeliveryWorker:
         resolve_system_topic: Callable[[str], Awaitable[int]] | None = None,
         recover_system_topic: Callable[[str, int], Awaitable[int]] | None = None,
         prepare_reopened_customer_topic: Callable[[str], Awaitable[None]] | None = None,
+        source_snapshot: Callable[[int, int], Awaitable[dict[str, Any] | None]] | None = None,
         runtime_health: RuntimeHealth | None = None,
         stale_recovery_interval_seconds: float = 60.0,
         stale_delivery_after_seconds: int = 300,
@@ -77,6 +79,7 @@ class DeliveryWorker:
         self.resolve_system_topic = resolve_system_topic
         self.recover_system_topic = recover_system_topic
         self.prepare_reopened_customer_topic = prepare_reopened_customer_topic
+        self.source_snapshot = source_snapshot
         self.runtime_health = runtime_health
         self.stale_recovery_interval_seconds = stale_recovery_interval_seconds
         self.stale_delivery_after_seconds = stale_delivery_after_seconds
@@ -317,14 +320,33 @@ class DeliveryWorker:
                     message_thread_id=target_thread_id,
                 )
                 delivered_message_id = sent_message.message_id
+            elif payload.get("kind") == "snapshot":
+                delivered_message_id = await self._send_snapshot(payload, target_thread_id)
             else:
-                copied_message = await self.bot.copy_message(
-                    chat_id=_payload_int(payload, "target_chat_id"),
-                    from_chat_id=_payload_int(payload, "source_chat_id"),
-                    message_id=_payload_int(payload, "source_message_id"),
-                    message_thread_id=target_thread_id,
-                )
-                delivered_message_id = copied_message.message_id
+                try:
+                    copied_message = await self.bot.copy_message(
+                        chat_id=_payload_int(payload, "target_chat_id"),
+                        from_chat_id=_payload_int(payload, "source_chat_id"),
+                        message_id=_payload_int(payload, "source_message_id"),
+                        message_thread_id=target_thread_id,
+                    )
+                    delivered_message_id = copied_message.message_id
+                except TelegramBadRequest as error:
+                    if (
+                        self.source_snapshot is None
+                        or "message to copy not found" not in str(error).lower()
+                    ):
+                        raise
+                    snapshot = await self.source_snapshot(
+                        _payload_int(payload, "source_chat_id"),
+                        _payload_int(payload, "source_message_id"),
+                    )
+                    if snapshot is None:
+                        raise
+                    await self.limiter.wait()
+                    delivered_message_id = await self._send_snapshot(
+                        {**payload, "snapshot": snapshot}, target_thread_id
+                    )
         except TelegramRetryAfter as error:
             retry_after = float(error.retry_after)
             await self.limiter.defer(retry_after)
@@ -536,6 +558,29 @@ class DeliveryWorker:
                     "delivered_message_id": delivered_message_id,
                 },
             )
+
+    async def _send_snapshot(self, payload: dict[str, object], topic_id: int | None) -> int:
+        snapshot = payload.get("snapshot")
+        if not isinstance(snapshot, dict):
+            raise ValueError("snapshot delivery requires a persisted Telegram message")
+        message = Message.model_validate(snapshot, context={"bot": self.bot})
+        # Do not reissue old inline controls or forward from the deleted source topic.
+        message = message.model_copy(update={"reply_markup": None})
+        method = message.send_copy(
+            chat_id=_payload_int(payload, "target_chat_id"),
+            message_thread_id=topic_id,
+        )
+        if message.voice is not None and message.caption is not None:
+            method = method.model_copy(
+                update={
+                    "caption": message.caption,
+                    "caption_entities": message.caption_entities,
+                }
+            )
+        if method.__api_method__ == "forwardMessage":
+            raise ValueError("this message type cannot be reconstructed independently")
+        result = await self.bot(method)
+        return result.message_id
 
     async def _alert(self, job: DeliveryJob, reason: str) -> None:
         record_event("delivery_failed", ticket_id=job.ticket_id, delivery_id=job.id)

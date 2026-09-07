@@ -27,6 +27,7 @@ from resolvate.telegram_formatting import (
 )
 from resolvate.telegram_limits import TelegramRateLimiter
 from resolvate.telegram_locks import TicketLockPool
+from resolvate.topic_archive import TopicArchiveRepository
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ class TelegramTopicManager:
     panel_service: PanelService | None
     limiter: TelegramRateLimiter
     _ticket_locks: TicketLockPool
+    topic_archive: TopicArchiveRepository | None = None
 
     async def _refresh_reopened_ticket_context(self, ticket: TicketView) -> None:
         await self._sync_ticket_topic(ticket)
@@ -132,6 +134,12 @@ class TelegramTopicManager:
         ):
             ticket = await self.ticket_service.get_ticket(ticket_id)
             if ticket.topic_id is None:
+                if (
+                    ticket.status.value == "closed"
+                    and self.topic_archive is not None
+                    and await self.topic_archive.has_history(ticket.id)
+                ):
+                    return True
                 ticket = await self._ensure_topic(ticket, reconcile_missing=True)
             if ticket.topic_id is None:
                 return False
@@ -355,12 +363,24 @@ class TelegramTopicManager:
                     "topic_id": topic.message_thread_id,
                 },
             )
-            ticket = await self.ticket_service.attach_topic(
-                ticket.id,
-                topic.message_thread_id,
-                token=token,
-            )
+            if self.topic_archive is not None:
+                ticket = await self.ticket_service.attach_topic(
+                    ticket.id,
+                    topic.message_thread_id,
+                    token=token,
+                    archive_chat_id=self.settings.support_group_id,
+                )
+            else:
+                ticket = await self.ticket_service.attach_topic(
+                    ticket.id,
+                    topic.message_thread_id,
+                    token=token,
+                )
             topic_attached = True
+            if self.topic_archive is not None:
+                await self.topic_archive.register_topic(
+                    ticket_id=ticket.id, topic_id=topic.message_thread_id, complete=True
+                )
             logger.info(
                 "Attached support topic to ticket",
                 extra={
@@ -446,6 +466,11 @@ class TelegramTopicManager:
         )
 
     async def _customer_card(self, ticket: TicketView) -> str:
+        history = (
+            "\n\nℹ️ Клиент уже обращался. Предыдущая переписка архивирована."
+            if self.topic_archive is not None and await self.topic_archive.has_history(ticket.id)
+            else ""
+        )
         if ticket.telegram_user_id is None:
             email = ticket.email or "—"
             identity = f"Email: <code>{escape(email)}</code>\nИсточник: <code>Web</code>"
@@ -455,7 +480,7 @@ class TelegramTopicManager:
             "👤 <b>Клиент</b>\n\n"
             f"<b>{customer_identity(ticket)}</b>\n"
             f"{identity}\n\n"
-            f"{await self._subscription_block(ticket)}"
+            f"{await self._subscription_block(ticket)}{history}"
         )
 
     async def _subscription_block(self, ticket: TicketView) -> str:

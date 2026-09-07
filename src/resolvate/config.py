@@ -186,6 +186,40 @@ class Settings(BaseSettings):
     notification_webhook_enabled: bool = False
     notification_webhook_url: str | None = None
     notification_webhook_secret: SecretStr | None = None
+    ai_enabled: bool = False
+    topic_rotation_enabled: bool = True
+    topic_rotation_message_limit: int | None = Field(default=None, ge=1)
+    topic_rotation_topic_limit: int | None = Field(default=None, ge=3)
+    topic_rotation_topic_reserve: int | None = Field(default=None, ge=1)
+    topic_rotation_delay_seconds: int = Field(default=300, ge=1)
+    archive_retention_days: int = Field(default=60, ge=1)
+    archive_media_compress_after_days: int = Field(default=14, ge=1)
+    archive_media_retention_days: int = Field(default=30, ge=1)
+    summary_inactivity_retention_days: int = Field(default=180, ge=1)
+    media_budget_bytes: int = Field(default=20 * 1024**3, ge=1)
+    archive_budget_bytes: int = Field(default=2 * 1024**3, ge=1)
+    storage_reserve_bytes: int = Field(default=3 * 1024**3, ge=1)
+    rotation_admin_telegram_id: int | None = Field(default=None, gt=0)
+
+    @property
+    def rotation_message_limit(self) -> int:
+        return self.topic_rotation_message_limit or (2000 if self.ai_enabled else 2500)
+
+    @property
+    def rotation_topic_limit(self) -> int:
+        return self.topic_rotation_topic_limit or (200 if self.ai_enabled else 250)
+
+    @property
+    def rotation_topic_reserve(self) -> int:
+        return self.topic_rotation_topic_reserve or (20 if self.ai_enabled else 25)
+
+    @property
+    def rotation_cleanup_trigger(self) -> int:
+        return self.rotation_topic_limit - self.rotation_topic_reserve
+
+    @property
+    def rotation_cleanup_target(self) -> int:
+        return self.rotation_topic_limit - 2 * self.rotation_topic_reserve
 
     @field_validator("admin_telegram_ids", mode="before")
     @classmethod
@@ -229,6 +263,23 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_runtime_settings(self) -> Self:
+        if self.rotation_cleanup_target < 1:
+            raise ValueError(
+                "TOPIC_ROTATION_TOPIC_LIMIT must exceed twice TOPIC_ROTATION_TOPIC_RESERVE"
+            )
+        if not (
+            self.archive_media_compress_after_days
+            < self.archive_media_retention_days
+            <= self.archive_retention_days
+        ):
+            raise ValueError(
+                "Archive media compression must precede media and transcript expiration"
+            )
+        if (
+            self.rotation_admin_telegram_id is not None
+            and self.rotation_admin_telegram_id not in self.admin_telegram_ids
+        ):
+            raise ValueError("ROTATION_ADMIN_TELEGRAM_ID must belong to ADMIN_TELEGRAM_IDS")
         validate_runtime_database_url("DATABASE_URL", self.database_url)
         if self.migration_database_url is None:
             self.migration_database_url = self.database_url

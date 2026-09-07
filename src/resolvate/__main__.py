@@ -12,9 +12,11 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramAPIError
 from pydantic import ValidationError
+from sqlalchemy import select
 
 from resolvate.api import create_app
 from resolvate.api_server import ApiServer
+from resolvate.archive_media_storage import ArchiveMediaStorage
 from resolvate.config import Settings, get_settings
 from resolvate.database import Database
 from resolvate.delivery import DeliveryWorker
@@ -23,6 +25,7 @@ from resolvate.heartbeat import Heartbeat
 from resolvate.logging_config import configure_logging
 from resolvate.metrics import MetricsRegistry
 from resolvate.migrations import upgrade_database
+from resolvate.models import Ticket
 from resolvate.notification_webhook import NotificationWebhookWorker
 from resolvate.panel import PanelService
 from resolvate.quick_replies import QuickReplyService
@@ -37,15 +40,20 @@ from resolvate.runtime_health import RuntimeHealth
 from resolvate.runtime_supervision import shutdown_runtime, supervise_ingress
 from resolvate.services import TicketService
 from resolvate.telegram_adapter import TelegramSupportAdapter
+from resolvate.telegram_archive_media import TelegramArchiveMedia
 from resolvate.telegram_ingress import DurableTelegramIngressMiddleware, TelegramIngressWorker
 from resolvate.telegram_lifecycle import create_polling_task
 from resolvate.telegram_limits import TelegramRateLimiter
+from resolvate.telegram_poll_progress import TelegramPollProgress
 from resolvate.telegram_quick_replies import QuickResponseTopicRefreshWorker
+from resolvate.telegram_rotation import TopicRotationWorker
 from resolvate.telegram_statistics import StatisticsDashboardRefreshWorker
 from resolvate.telegram_system_topics import (
     QUICK_REPLIES_TOPIC,
     TelegramSystemTopicService,
 )
+from resolvate.telegram_transcript import TranscriptIngressMiddleware, TranscriptRequestMiddleware
+from resolvate.topic_archive import TopicArchiveRepository
 from resolvate.trace import TraceMiddleware
 from resolvate.user_message_limits import UserMessageRateLimiter
 
@@ -239,6 +247,24 @@ async def run() -> None:
         quick_replies_topic_id,
     )
     quick_reply_service = QuickReplyService(database)
+    topic_archive = TopicArchiveRepository(database, settings)
+    archive_media = TelegramArchiveMedia(
+        topic_archive,
+        bot,
+        ArchiveMediaStorage(settings.data_dir, reserve_bytes=settings.storage_reserve_bytes),
+    )
+    topic_archive.prepare_media = archive_media.prepare_archive
+    async with database.session() as session:
+        legacy_topics = (
+            await session.execute(
+                select(Ticket.id, Ticket.topic_id).where(Ticket.topic_id.is_not(None))
+            )
+        ).all()
+    for ticket_id, topic_id in legacy_topics:
+        await topic_archive.register_topic(ticket_id=ticket_id, topic_id=topic_id)
+    bot.session.middleware(TranscriptRequestMiddleware(topic_archive))
+    poll_progress = TelegramPollProgress()
+    bot.session.middleware(poll_progress)
     dispatcher = Dispatcher()
     ingress_worker = TelegramIngressWorker(
         bot=bot, dispatcher=dispatcher, repository=durable_work, runtime_health=runtime_health
@@ -251,6 +277,7 @@ async def run() -> None:
             bot=bot,
             inbound_limiter=user_message_limiter,
             outbound_limiter=limiter,
+            poll_progress=poll_progress,
         )
     )
     adapter = TelegramSupportAdapter(
@@ -262,6 +289,9 @@ async def run() -> None:
         quick_reply_service=quick_reply_service,
         quick_replies_topic_id=quick_replies_topic_id,
     )
+    adapter.topic_archive = topic_archive
+    adapter.router.message.outer_middleware(TranscriptIngressMiddleware(topic_archive))
+    adapter.router.edited_message.outer_middleware(TranscriptIngressMiddleware(topic_archive))
     adapter.recover_quick_replies_topic = partial(system_topics.recover, QUICK_REPLIES_TOPIC)
     dispatcher.include_router(adapter.router)
     await adapter.recover_waiting_topics_after_restart()
@@ -302,6 +332,7 @@ async def run() -> None:
         resolve_system_topic=system_topics.ensure,
         recover_system_topic=system_topics.recover,
         prepare_reopened_customer_topic=adapter.prepare_reopened_customer_topic,
+        source_snapshot=topic_archive.source_message,
         runtime_health=runtime_health,
     )
     notification_worker: NotificationWebhookWorker | None = None
@@ -318,6 +349,16 @@ async def run() -> None:
         notification_worker_task = asyncio.create_task(
             notification_worker.run(), name="notification-webhook-worker"
         )
+    rotation_worker = TopicRotationWorker(
+        archives=topic_archive,
+        bot=bot,
+        tickets=ticket_service,
+        media=archive_media,
+        limiter=limiter,
+        customer_card=adapter._customer_card,
+        poll_progress=poll_progress,
+    )
+    rotation_task = asyncio.create_task(rotation_worker.run(), name="topic-rotation-worker")
     heartbeat = Heartbeat(settings.data_dir / "heartbeat", progress_probe=runtime_health.is_ready)
     ingress_worker_task = asyncio.create_task(ingress_worker.run(), name="telegram-ingress-worker")
     reconciliation_worker_task = asyncio.create_task(
@@ -348,6 +389,7 @@ async def run() -> None:
             api_task=api_task,
             request_api_stop=(api_server.request_stop if api_server is not None else None),
             worker_tasks=(
+                rotation_task,
                 ingress_worker_task,
                 reconciliation_worker_task,
                 worker_task,
@@ -357,6 +399,7 @@ async def run() -> None:
                 *((notification_worker_task,) if notification_worker_task is not None else ()),
             ),
             stop_workers=(
+                rotation_worker.stop,
                 ingress_worker.stop,
                 reconciliation_worker.stop,
                 delivery_worker.stop,

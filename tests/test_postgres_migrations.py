@@ -18,7 +18,7 @@ from resolvate.models import Base
 
 pytestmark = pytest.mark.postgres
 
-HEAD_REVISION = "0001_postgresql_initial"
+HEAD_REVISION = "0002_topic_archives"
 EXPECTED_QUERY_INDEXES = {
     "ix_tickets_status_updated",
     "ix_tickets_status_last_activity",
@@ -65,13 +65,16 @@ async def _metadata_differences(database_url: str) -> list[object]:
         await engine.dispose()
 
 
-def test_repository_has_one_clean_postgresql_baseline() -> None:
+def test_repository_has_one_head_above_postgresql_baseline() -> None:
     scripts = ScriptDirectory.from_config(
         build_alembic_config("postgresql+asyncpg://user:password@database/resolvate")
     )
 
     assert scripts.get_heads() == [HEAD_REVISION]
-    assert [revision.revision for revision in scripts.walk_revisions()] == [HEAD_REVISION]
+    assert [revision.revision for revision in scripts.walk_revisions()] == [
+        HEAD_REVISION,
+        "0001_postgresql_initial",
+    ]
 
 
 async def test_fresh_upgrade_exactly_matches_orm_metadata(

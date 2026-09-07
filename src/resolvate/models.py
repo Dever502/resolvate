@@ -272,6 +272,7 @@ class NotificationOutbox(Base):
 class InboundUpdate(Base):
     __tablename__ = "inbound_updates"
     __table_args__ = (
+        Index("ix_inbound_updates_payload", "payload", postgresql_using="gin"),
         Index("ix_inbound_updates_claim", "status", "next_attempt_at", "telegram_update_id"),
         Index("ix_inbound_updates_stale", "status", "claimed_at"),
         Index(
@@ -444,3 +445,96 @@ class QuickResponse(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
+
+
+class TopicArchive(Base):
+    """One physical Telegram topic; its identity survives replacement and deletion."""
+
+    __tablename__ = "topic_archives"
+    __table_args__ = (
+        UniqueConstraint("chat_id", "topic_id", name="uq_topic_archives_telegram"),
+        Index("ix_topic_archives_state_due", "state", "next_attempt_at"),
+        Index("ix_topic_archives_ticket", "ticket_id", "created_at"),
+        Index("ix_topic_archives_retention", "state", "archived_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    ticket_id: Mapped[str] = mapped_column(ForeignKey("tickets.id", ondelete="RESTRICT"))
+    chat_id: Mapped[int] = mapped_column(BigInteger)
+    topic_id: Mapped[int] = mapped_column(BigInteger)
+    state: Mapped[str] = mapped_column(String(24), default="live")
+    complete: Mapped[bool] = mapped_column(Boolean, default=False)
+    message_count: Mapped[int] = mapped_column(BigInteger, default=0)
+    revision: Mapped[int] = mapped_column(BigInteger, default=0)
+    pending_writes: Mapped[int] = mapped_column(Integer, default=0)
+    prepared_revision: Mapped[int | None] = mapped_column(BigInteger)
+    prepared_close_cycle: Mapped[int | None] = mapped_column(Integer)
+    replacement_topic_id: Mapped[int | None] = mapped_column(BigInteger)
+    replacement_token: Mapped[str | None] = mapped_column(String(36))
+    setup_message_id: Mapped[int | None] = mapped_column(BigInteger)
+    cutover_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    mode: Mapped[str | None] = mapped_column(String(24))
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class TranscriptMedia(Base):
+    __tablename__ = "transcript_media"
+    __table_args__ = (Index("ix_transcript_media_state", "state", "created_at"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    file_unique_id: Mapped[str] = mapped_column(String(255), unique=True)
+    file_id: Mapped[str] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(String(32))
+    filename: Mapped[str | None] = mapped_column(String(255))
+    state: Mapped[str] = mapped_column(String(24), default="pending")
+    declared_size: Mapped[int | None] = mapped_column(BigInteger)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    storage_path: Mapped[str | None] = mapped_column(String(512))
+    sha256: Mapped[str | None] = mapped_column(String(64))
+    compressed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class TranscriptMessage(Base):
+    __tablename__ = "transcript_messages"
+    __table_args__ = (
+        UniqueConstraint("archive_id", "message_id", name="uq_transcript_message"),
+        Index("ix_transcript_messages_media", "media_id", "archive_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    archive_id: Mapped[str] = mapped_column(ForeignKey("topic_archives.id", ondelete="CASCADE"))
+    message_id: Mapped[int] = mapped_column(BigInteger)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    media_id: Mapped[str | None] = mapped_column(
+        ForeignKey("transcript_media.id", ondelete="RESTRICT")
+    )
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class CustomerSummary(Base):
+    __tablename__ = "customer_summaries"
+
+    ticket_id: Mapped[str] = mapped_column(
+        ForeignKey("tickets.id", ondelete="CASCADE"), primary_key=True
+    )
+    text: Mapped[str] = mapped_column(Text)
+    through_archive_id: Mapped[str] = mapped_column(String(36))
+    through_revision: Mapped[int] = mapped_column(BigInteger)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class OperationalNotice(Base):
+    __tablename__ = "operational_notices"
+
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    severity: Mapped[str] = mapped_column(String(16))
+    text: Mapped[str] = mapped_column(Text)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    next_delivery_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

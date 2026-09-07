@@ -18,6 +18,7 @@ from resolvate.models import (
     NotificationStatus,
     utcnow,
 )
+from resolvate.rotation_gate import lock_rotation_gate, ticket_is_switching
 from resolvate.service_types import DeliveryJob, NotificationJob
 
 
@@ -241,11 +242,13 @@ class OutboxRepository:
                 candidate.status == DeliveryStatus.PENDING,
                 candidate.next_attempt_at <= now,
                 ~has_earlier_unfinished,
+                ~ticket_is_switching(candidate.ticket_id),
             )
             .order_by(candidate.created_at, candidate.id)
             .limit(limit)
         )
         async with self.database.session() as session:
+            await lock_rotation_gate(session)
             result = await session.execute(
                 update(DeliveryOutbox)
                 .where(

@@ -21,8 +21,8 @@ def check_migrations() -> None:
     script = ScriptDirectory.from_config(config)
     heads = script.get_heads()
     revisions = list(script.walk_revisions())
-    if len(heads) != 1 or len(revisions) != 1 or revisions[0].down_revision is not None:
-        raise RuntimeError("Resolvate must have one clean PostgreSQL baseline migration")
+    if len(heads) != 1 or not revisions or script.get_bases() != ["0001_postgresql_initial"]:
+        raise RuntimeError("Resolvate must have one migration head above its PostgreSQL baseline")
 
     command.upgrade(config, "head", sql=True)
     ddl = output.getvalue().casefold()

@@ -13,7 +13,7 @@ from resolvate.migrations import (
     upgrade_database,
 )
 
-HEAD_REVISION = "0001_postgresql_initial"
+HEAD_REVISION = "0002_topic_archives"
 
 
 async def current_revision(database_url: str) -> str:
