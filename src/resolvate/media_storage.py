@@ -11,6 +11,8 @@ from typing import BinaryIO, Protocol
 from PIL import Image, UnidentifiedImageError
 from starlette.datastructures import UploadFile
 
+from resolvate.archive_media_storage import ArchiveMediaStorage
+
 MAX_WEB_PHOTO_BYTES = 10 * 1024 * 1024
 UPLOAD_CHUNK_BYTES = 64 * 1024
 ALLOWED_PHOTO_MIME_TYPES = frozenset({"image/jpeg", "image/png", "image/webp"})
@@ -96,7 +98,8 @@ def _decoded_photo_mime(path: Path) -> str:
 
 
 class LocalMediaStorage:
-    def __init__(self, data_dir: Path) -> None:
+    def __init__(self, data_dir: Path, *, capacity: ArchiveMediaStorage | None = None) -> None:
+        self.capacity = capacity
         self.data_dir = data_dir.resolve()
         self.root = self.data_dir / "web-media"
         self.temp_root = self.root / "tmp"
@@ -173,6 +176,15 @@ class LocalMediaStorage:
         )
 
     async def save_upload(self, upload: UploadFile) -> StoredMedia:
+        if self.capacity is not None:
+            try:
+                async with self.capacity.reserve(MAX_WEB_PHOTO_BYTES):
+                    return await self._save_upload(upload)
+            finally:
+                await upload.close()
+        return await self._save_upload(upload)
+
+    async def _save_upload(self, upload: UploadFile) -> StoredMedia:
         await asyncio.to_thread(self._prepare)
         media_id = str(uuid.uuid4())
         temp_path = self.temp_root / f"{media_id}.upload"
@@ -208,6 +220,12 @@ class LocalMediaStorage:
             await upload.close()
 
     async def save_telegram_photo(self, bot: TelegramDownloader, *, file_id: str) -> StoredMedia:
+        if self.capacity is not None:
+            async with self.capacity.reserve(MAX_WEB_PHOTO_BYTES):
+                return await self._save_telegram_photo(bot, file_id=file_id)
+        return await self._save_telegram_photo(bot, file_id=file_id)
+
+    async def _save_telegram_photo(self, bot: TelegramDownloader, *, file_id: str) -> StoredMedia:
         await asyncio.to_thread(self._prepare)
         media_id = str(uuid.uuid4())
         temp_path = self.temp_root / f"{media_id}.telegram"

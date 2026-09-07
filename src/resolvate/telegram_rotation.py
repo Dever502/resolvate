@@ -91,6 +91,7 @@ class TopicRotationWorker:
             if self._stopped.is_set():
                 return
             await self.advance(archive_id)
+        await self._resolve_notices()
         if not self.archives.settings.topic_rotation_enabled:
             return
         count = await self.archives.count_topics()
@@ -112,10 +113,42 @@ class TopicRotationWorker:
                 "rotation_capacity_exceeded",
                 "Лимит топиков превышен: безопасная очистка пока невозможна. Приём продолжается.",
             )
+        elif count < self.archives.settings.rotation_topic_limit:
+            await self.archives.notice(
+                "rotation_capacity_exceeded", "Лимит топиков соблюдается.", active=False
+            )
         if candidates:
             archive_id = candidates[0]
             if await self.archives.prepare(archive_id, capacity=cleaning):
                 await self.advance(archive_id)
+
+    async def _resolve_notices(self) -> None:
+        async with self.archives.database.session() as session:
+            rows = (
+                await session.execute(
+                    select(TopicArchive.state, TopicArchive.error_code).where(
+                        TopicArchive.state != "archived"
+                    )
+                )
+            ).all()
+        errors = {row.error_code for row in rows if row.error_code}
+        if any(
+            row.state == "uncertain" and row.error_code != "setup_outcome_unknown" for row in rows
+        ):
+            errors.add("creation_outcome_unknown")
+        for key, codes in {
+            "archive_media_unavailable": {"media_unavailable", "late_media_unavailable"},
+            "rotation_summary_unavailable": {"summary_unavailable"},
+            "rotation_step_failed": {
+                "telegram_or_storage_error",
+                "creation_outcome_unknown",
+                "setup_outcome_unknown",
+            },
+            "rotation_creation_uncertain": {"creation_outcome_unknown"},
+            "rotation_setup_uncertain": {"setup_outcome_unknown"},
+        }.items():
+            if not errors.intersection(codes):
+                await self.archives.notice(key, "Препятствие для ротации устранено.", active=False)
 
     async def advance(self, archive_id: str) -> None:
         archive = await self.repository.get(archive_id)

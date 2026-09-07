@@ -28,7 +28,8 @@ FROM python:3.12.13-alpine3.24@sha256:6d43704baacd1bfbe7c295d7f13079d5d8104ed335
 RUN apk add --no-cache --upgrade \
     'libcrypto3>=3.5.8-r0' \
     'libssl3>=3.5.8-r0' \
-    'libuuid>=2.42.3-r1'
+    'libuuid>=2.42.3-r1' \
+    ffmpeg
 
 ARG BUILD_DATE=unknown
 ARG VCS_REF=unknown

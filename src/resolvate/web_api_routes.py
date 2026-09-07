@@ -12,6 +12,7 @@ from starlette.types import Message
 
 from resolvate.api_idempotency import api_idempotency_command
 from resolvate.api_schemas import IdempotencyKey, TicketId
+from resolvate.archive_media_storage import ArchiveStorageFull
 from resolvate.config import Settings
 from resolvate.media_storage import (
     MAX_WEB_PHOTO_BYTES,
@@ -256,6 +257,12 @@ def register_web_routes(
                 if replay is None:
                     raise
                 result = replay
+        except ArchiveStorageFull as error:
+            raise HTTPException(
+                status_code=503,
+                detail="Attachment was not saved: insufficient storage. Please retry later.",
+                headers={"Retry-After": "60"},
+            ) from error
         except (ValueError, MediaValidationError) as error:
             if stored_media is not None:
                 await media_storage.delete(stored_media)

@@ -199,7 +199,6 @@ class Settings(BaseSettings):
     media_budget_bytes: int = Field(default=20 * 1024**3, ge=1)
     archive_budget_bytes: int = Field(default=2 * 1024**3, ge=1)
     storage_reserve_bytes: int = Field(default=3 * 1024**3, ge=1)
-    rotation_admin_telegram_id: int | None = Field(default=None, gt=0)
 
     @property
     def rotation_message_limit(self) -> int:
@@ -275,11 +274,6 @@ class Settings(BaseSettings):
             raise ValueError(
                 "Archive media compression must precede media and transcript expiration"
             )
-        if (
-            self.rotation_admin_telegram_id is not None
-            and self.rotation_admin_telegram_id not in self.admin_telegram_ids
-        ):
-            raise ValueError("ROTATION_ADMIN_TELEGRAM_ID must belong to ADMIN_TELEGRAM_IDS")
         validate_runtime_database_url("DATABASE_URL", self.database_url)
         if self.migration_database_url is None:
             self.migration_database_url = self.database_url

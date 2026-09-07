@@ -74,6 +74,21 @@ class ArchiveMediaStorage:
             async with self._lock:
                 self._reserved -= size
 
+    def usage(self) -> tuple[int, int]:
+        """Include Web and Telegram originals, derivatives and temporary files."""
+        total = 0
+        for root in (self.root, self.data_dir / "web-media"):
+            for directory, subdirs, files in os.walk(root, followlinks=False):
+                subdirs[:] = [name for name in subdirs if not (Path(directory) / name).is_symlink()]
+                for name in files:
+                    path = Path(directory) / name
+                    try:
+                        if not path.is_symlink():
+                            total += path.stat().st_size
+                    except FileNotFoundError:
+                        continue
+        return total, shutil.disk_usage(self.data_dir).free
+
     def resolve(self, relative: str) -> Path:
         path = (self.data_dir / relative).resolve()
         if not path.is_relative_to(self.root.resolve()) or path == self.root.resolve():

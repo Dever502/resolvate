@@ -70,7 +70,6 @@ def test_retention_and_budget_defaults() -> None:
         {"media_budget_bytes": 0},
         {"archive_budget_bytes": 0},
         {"storage_reserve_bytes": 0},
-        {"rotation_admin_telegram_id": 123},
     ],
 )
 def test_invalid_rotation_settings_are_rejected(overrides: dict[str, object]) -> None:
@@ -78,8 +77,9 @@ def test_invalid_rotation_settings_are_rejected(overrides: dict[str, object]) ->
         configured(**overrides)
 
 
-def test_notification_recipient_must_be_an_administrator() -> None:
-    assert configured(admin_telegram_ids={123}, rotation_admin_telegram_id=123)
+def test_notifications_do_not_require_a_separate_recipient() -> None:
+    assert "rotation_admin_telegram_id" not in Settings.model_fields
+    assert configured(admin_telegram_ids=set()).support_group_id
 
 
 def test_environment_is_read_only_when_settings_are_constructed(

@@ -536,5 +536,7 @@ class OperationalNotice(Base):
     severity: Mapped[str] = mapped_column(String(16))
     text: Mapped[str] = mapped_column(Text)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    delivered_active: Mapped[bool | None] = mapped_column(Boolean)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     next_delivery_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

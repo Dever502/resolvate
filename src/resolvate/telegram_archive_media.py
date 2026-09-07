@@ -138,12 +138,18 @@ class TelegramArchiveMedia:
             max_bytes=CLOUD_DOWNLOAD_LIMIT_BYTES,
             expected_bytes=size,
         )
-        async with self.repository.database.session() as session:
+        async with self.repository.media_lock, self.repository.database.session() as session:
             current = await session.get(TranscriptMedia, row.id, with_for_update=True)
             assert current is not None
+            if current.storage_path != row.storage_path or current.state != row.state:
+                # Cleanup/publication won the race; retry against the new metadata.
+                await asyncio.to_thread(self.storage.resolve(saved.path).unlink, missing_ok=True)
+                raise ValueError("archive media changed during download")
             current.state = "stored"
             current.declared_size = size
             current.storage_path = saved.path
             current.size_bytes = saved.size_bytes
             current.sha256 = saved.sha256
+            current.compressed_at = None
+            current.deleted_at = None
             await session.commit()

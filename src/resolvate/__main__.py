@@ -16,6 +16,7 @@ from sqlalchemy import select
 
 from resolvate.api import create_app
 from resolvate.api_server import ApiServer
+from resolvate.archive_maintenance import ArchiveMaintenance
 from resolvate.archive_media_storage import ArchiveMediaStorage
 from resolvate.config import Settings, get_settings
 from resolvate.database import Database
@@ -23,10 +24,12 @@ from resolvate.delivery import DeliveryWorker
 from resolvate.durable_work import DurableWorkRepository
 from resolvate.heartbeat import Heartbeat
 from resolvate.logging_config import configure_logging
+from resolvate.media_storage import LocalMediaStorage
 from resolvate.metrics import MetricsRegistry
 from resolvate.migrations import upgrade_database
 from resolvate.models import Ticket
 from resolvate.notification_webhook import NotificationWebhookWorker
+from resolvate.operational_notices import OperationalNoticeRepository
 from resolvate.panel import PanelService
 from resolvate.quick_replies import QuickReplyService
 from resolvate.reconciliation import ReconciliationWorker
@@ -44,6 +47,7 @@ from resolvate.telegram_archive_media import TelegramArchiveMedia
 from resolvate.telegram_ingress import DurableTelegramIngressMiddleware, TelegramIngressWorker
 from resolvate.telegram_lifecycle import create_polling_task
 from resolvate.telegram_limits import TelegramRateLimiter
+from resolvate.telegram_notices import GeneralNoticeWorker
 from resolvate.telegram_poll_progress import TelegramPollProgress
 from resolvate.telegram_quick_replies import QuickResponseTopicRefreshWorker
 from resolvate.telegram_rotation import TopicRotationWorker
@@ -248,10 +252,14 @@ async def run() -> None:
     )
     quick_reply_service = QuickReplyService(database)
     topic_archive = TopicArchiveRepository(database, settings)
+    archive_storage = ArchiveMediaStorage(
+        settings.data_dir, reserve_bytes=settings.storage_reserve_bytes
+    )
+    web_media_storage = LocalMediaStorage(settings.data_dir, capacity=archive_storage)
     archive_media = TelegramArchiveMedia(
         topic_archive,
         bot,
-        ArchiveMediaStorage(settings.data_dir, reserve_bytes=settings.storage_reserve_bytes),
+        archive_storage,
     )
     topic_archive.prepare_media = archive_media.prepare_archive
     async with database.session() as session:
@@ -288,6 +296,7 @@ async def run() -> None:
         panel_service=panel_service,
         quick_reply_service=quick_reply_service,
         quick_replies_topic_id=quick_replies_topic_id,
+        media_storage=web_media_storage,
     )
     adapter.topic_archive = topic_archive
     adapter.router.message.outer_middleware(TranscriptIngressMiddleware(topic_archive))
@@ -310,6 +319,7 @@ async def run() -> None:
                 runtime_health=runtime_health,
                 metrics=metrics,
                 user_message_limiter=user_message_limiter,
+                media_storage=web_media_storage,
             ),
             settings,
             runtime_health,
@@ -359,6 +369,12 @@ async def run() -> None:
         poll_progress=poll_progress,
     )
     rotation_task = asyncio.create_task(rotation_worker.run(), name="topic-rotation-worker")
+    maintenance = ArchiveMaintenance(topic_archive, archive_storage)
+    maintenance_task = asyncio.create_task(maintenance.run(), name="archive-maintenance-worker")
+    general_notices = GeneralNoticeWorker(
+        OperationalNoticeRepository(database), bot, settings.support_group_id, limiter
+    )
+    general_notices_task = asyncio.create_task(general_notices.run(), name="general-notice-worker")
     heartbeat = Heartbeat(settings.data_dir / "heartbeat", progress_probe=runtime_health.is_ready)
     ingress_worker_task = asyncio.create_task(ingress_worker.run(), name="telegram-ingress-worker")
     reconciliation_worker_task = asyncio.create_task(
@@ -389,6 +405,8 @@ async def run() -> None:
             api_task=api_task,
             request_api_stop=(api_server.request_stop if api_server is not None else None),
             worker_tasks=(
+                general_notices_task,
+                maintenance_task,
                 rotation_task,
                 ingress_worker_task,
                 reconciliation_worker_task,
@@ -399,6 +417,8 @@ async def run() -> None:
                 *((notification_worker_task,) if notification_worker_task is not None else ()),
             ),
             stop_workers=(
+                general_notices.stop,
+                maintenance.stop,
                 rotation_worker.stop,
                 ingress_worker.stop,
                 reconciliation_worker.stop,

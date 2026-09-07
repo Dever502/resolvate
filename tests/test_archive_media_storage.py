@@ -1,4 +1,5 @@
 import asyncio
+import io
 from pathlib import Path
 from typing import BinaryIO
 
@@ -70,3 +71,19 @@ async def test_disk_reserve_prevents_admission(tmp_path: Path) -> None:
     with pytest.raises(ArchiveStorageFull):
         await storage.download(Downloader(b"x"), file_id="file", max_bytes=1)
     assert storage._reserved == 0
+
+
+async def test_web_upload_uses_shared_disk_reserve_and_closes_rejected_upload(
+    tmp_path: Path,
+) -> None:
+    from starlette.datastructures import UploadFile
+
+    from resolvate.media_storage import LocalMediaStorage
+
+    capacity = ArchiveMediaStorage(tmp_path, reserve_bytes=2**60)
+    source = io.BytesIO(b"photo")
+    upload = UploadFile(source, filename="photo.png")
+    with pytest.raises(ArchiveStorageFull):
+        await LocalMediaStorage(tmp_path, capacity=capacity).save_upload(upload)
+    assert source.closed
+    assert not await asyncio.to_thread(files, tmp_path / "web-media", "*")

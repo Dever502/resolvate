@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
@@ -27,6 +28,7 @@ from resolvate.models import (
     WorkStatus,
     utcnow,
 )
+from resolvate.operational_notices import EVENT_NOTICE_KEYS
 from resolvate.rotation_gate import SWITCHING_STATES, ingress_matches_archive, lock_rotation_gate
 
 
@@ -39,6 +41,8 @@ class TopicArchiveRepository:
         self.database = database
         self.settings = settings
         self.prepare_media: Callable[[str], Awaitable[bool]] | None = None
+        # Single runtime process: serialize short journal/file publication decisions.
+        self.media_lock = asyncio.Lock()
 
     async def source_message(self, chat_id: int, message_id: int) -> dict[str, Any] | None:
         async with self.database.session() as session:
@@ -168,7 +172,7 @@ class TopicArchiveRepository:
         attachment: dict[str, Any] | None = None,
     ) -> bool:
         """Record once by physical message ID; edits advance revision, not the count."""
-        async with self.database.session() as session:
+        async with self.media_lock, self.database.session() as session:
             archive = await session.scalar(
                 select(TopicArchive)
                 .where(
@@ -178,6 +182,14 @@ class TopicArchiveRepository:
                 .with_for_update()
             )
             if archive is None:
+                return False
+            if (
+                archive.state == "archived"
+                and archive.archived_at is not None
+                and archive.archived_at
+                <= utcnow() - timedelta(days=self.settings.archive_retention_days)
+            ):
+                # A delayed edit must not recreate an expired transcript.
                 return False
             old = await session.scalar(
                 select(TranscriptMessage).where(
@@ -291,6 +303,8 @@ class TopicArchiveRepository:
             assert current is not None
             if current.severity != severity or current.active != active:
                 current.next_delivery_at = now
+                if key in EVENT_NOTICE_KEYS and current.delivered_at is not None:
+                    current.next_delivery_at = max(now, current.delivered_at + timedelta(hours=1))
             current.text = message
             current.active = active
             current.severity = severity
