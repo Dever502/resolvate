@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from resolvate.models import Base, TicketChannel, utcnow
@@ -13,7 +13,7 @@ class MediaAsset(Base):
     __tablename__ = "media_assets"
     __table_args__ = (
         Index("ix_media_assets_ticket_created", "ticket_id", "created_at"),
-        UniqueConstraint("storage_path", name="uq_media_asset_storage_path"),
+        Index("ix_media_assets_storage_path", "storage_path"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))

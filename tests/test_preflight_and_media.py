@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -16,7 +17,7 @@ from resolvate.__main__ import (
 )
 from resolvate.authorization import AuthorizationService
 from resolvate.config import Settings
-from resolvate.media_storage import StoredMedia
+from resolvate.media_storage import LocalMediaStorage, StoredMedia
 from resolvate.models import TicketChannel, TicketStatus
 from resolvate.panel import PanelActionResult
 from resolvate.service_types import (
@@ -906,7 +907,7 @@ async def test_operator_reply_reopen_sends_operator_notice_and_customer_card() -
 
     class FakeMessage:
         forum_topic_edited = None
-        from_user = SimpleNamespace(id=2, is_bot=False)
+        from_user = SimpleNamespace(id=2, is_bot=False, full_name="Test Operator")
         message_thread_id = 777
         chat = SimpleNamespace(id=-100123)
         message_id = 52
@@ -937,6 +938,8 @@ async def test_operator_reply_reopen_sends_operator_notice_and_customer_card() -
     adapter.ticket_service = FakeTicketService()  # type: ignore[assignment]
     adapter._send_ticket_reopened_notice = send_reopened_notice  # type: ignore[method-assign]
     adapter._send_reopened_ticket_customer_card = send_customer_card  # type: ignore[method-assign]
+    adapter.media_storage = LocalMediaStorage(Path("/tmp/unused-console-text-test"))
+    adapter.bot = SimpleNamespace()  # type: ignore[assignment]
 
     await adapter.handle_group_message(FakeMessage())  # type: ignore[arg-type]
 
@@ -1038,6 +1041,8 @@ async def test_private_message_is_persisted_before_topic_provisioning() -> None:
     )
     adapter._ticket_locks = TicketLockPool()
     adapter._ensure_topic = fail_topic_provisioning  # type: ignore[method-assign]
+    adapter.media_storage = LocalMediaStorage(Path("/tmp/unused-console-text-test"))
+    adapter.bot = SimpleNamespace()  # type: ignore[assignment]
     message = FakeMessage()
 
     await adapter.handle_private_message(message)  # type: ignore[arg-type]

@@ -476,7 +476,8 @@ class WebSupportService(TicketServiceBase):
                     )
                 if not suppressed:
                     delivery_payload: dict[str, object] = {
-                        "kind": "send_photo" if media is not None else "send_text",
+                        "canonical_message_id": message_id,
+                        "kind": media.delivery_kind if media is not None else "send_text",
                         "target_chat_id": target_chat_id,
                         "target_thread_id": ticket.topic_id,
                         **({"text": content} if content is not None else {}),

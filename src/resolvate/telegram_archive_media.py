@@ -12,6 +12,8 @@ from sqlalchemy import select
 from resolvate.archive_media_policy import (
     CLOUD_DOWNLOAD_LIMIT_BYTES,
     SKIPPED_CLOUD_LIMIT,
+    SKIPPED_POLICY,
+    forbidden_attachment,
     may_skip_media,
 )
 from resolvate.archive_media_storage import ArchiveMediaStorage
@@ -108,6 +110,13 @@ class TelegramArchiveMedia:
                 return False
 
     async def _prepare_file(self, row: TranscriptMedia) -> None:
+        if forbidden_attachment(row.kind, row.filename) and row.state != "stored":
+            async with self.repository.database.session() as session:
+                current = await session.get(TranscriptMedia, row.id, with_for_update=True)
+                assert current is not None
+                current.state = SKIPPED_POLICY
+                await session.commit()
+            return
         if (
             row.state == "stored"
             and row.storage_path

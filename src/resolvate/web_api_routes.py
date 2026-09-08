@@ -120,6 +120,7 @@ async def _parse_message_request(
                 "remnawave_user_uuid",
                 "text",
                 "photo",
+                "file",
             }
             form_items = form.multi_items()
             field_names = [key for key, _value in form_items]
@@ -127,7 +128,9 @@ async def _parse_message_request(
                 set(field_names)
             ):
                 raise ValueError("unknown or repeated multipart field")
-            photo_value = form.get("photo")
+            if "photo" in form and "file" in form:
+                raise ValueError("only one attachment is allowed")
+            photo_value = form.get("file", form.get("photo"))
             photo = photo_value if isinstance(photo_value, StarletteUploadFile) else None
             if photo_value is not None and photo is None:
                 raise ValueError("photo must be a file")
@@ -200,92 +203,100 @@ def register_web_routes(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="external_user_id is required",
             )
-        stored_media: StoredMedia | None = None
-        try:
-            if upload is not None:
-                stored_media = await media_storage.save_upload(upload)
-                metrics.event("web_media", "uploaded")
-            command = api_idempotency_command(
-                operation="web_message",
-                resource=identity_resource or "missing",
-                key=x_idempotency_key,
-                payload={
-                    "external_user_id": message.external_user_id,
-                    "email": message.email.strip().casefold(),
-                    "display_name": message.display_name,
-                    "remnawave_user_uuid": message.remnawave_user_uuid,
-                    "text": message.text,
-                    "photo_sha256": stored_media.sha256 if stored_media else None,
-                },
-            )
-            replay = await ticket_service.load_web_message_replay(command)
-            if replay is not None:
-                if stored_media is not None:
-                    await media_storage.delete(stored_media)
-                    stored_media = None
-                metrics.event("web_ingress", "replayed")
-                return accepted_message_response(replay)
-            rate_limit = await user_message_limiter.consume(
-                f"web:{settings.web_identity_mode}:{identity_resource}"
-            )
-            if not rate_limit.allowed:
-                if stored_media is not None:
-                    await media_storage.delete(stored_media)
-                    stored_media = None
-                metrics.event("web_ingress", "rate_limited")
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="Too many user messages",
-                    headers={"Retry-After": str(rate_limit.retry_after_seconds)},
-                )
+        async with media_storage.transaction(upload is not None):
+            stored_media: StoredMedia | None = None
             try:
-                result = await ticket_service.accept_message(
-                    identity_mode=settings.web_identity_mode,
-                    external_user_id=message.external_user_id,
-                    email=message.email,
-                    display_name=message.display_name,
-                    remnawave_user_uuid=message.remnawave_user_uuid,
-                    content=message.text,
-                    media=stored_media,
-                    target_chat_id=settings.support_group_id,
-                    command=command,
+                if upload is not None:
+                    stored_media = await media_storage.save_upload(upload)
+                    metrics.event("web_media", "uploaded")
+                command = api_idempotency_command(
+                    operation="web_message",
+                    resource=identity_resource or "missing",
+                    key=x_idempotency_key,
+                    payload={
+                        "external_user_id": message.external_user_id,
+                        "email": message.email.strip().casefold(),
+                        "display_name": message.display_name,
+                        "remnawave_user_uuid": message.remnawave_user_uuid,
+                        "text": message.text,
+                        "photo_sha256": stored_media.sha256 if stored_media else None,
+                    },
                 )
-            except IntegrityError:
-                # A concurrent request may commit the same idempotency key after
-                # our initial replay lookup. Resolve that race to its durable result.
                 replay = await ticket_service.load_web_message_replay(command)
-                if replay is None:
-                    raise
-                result = replay
-        except ArchiveStorageFull as error:
-            raise HTTPException(
-                status_code=503,
-                detail="Attachment was not saved: insufficient storage. Please retry later.",
-                headers={"Retry-After": "60"},
-            ) from error
-        except (ValueError, MediaValidationError) as error:
-            if stored_media is not None:
-                await media_storage.delete(stored_media)
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=str(error),
-            ) from error
-        except Exception:
+                if replay is not None:
+                    if stored_media is not None:
+                        await media_storage.delete(stored_media)
+                        stored_media = None
+                    metrics.event("web_ingress", "replayed")
+                    return accepted_message_response(replay)
+                rate_limit = await user_message_limiter.consume(
+                    f"web:{settings.web_identity_mode}:{identity_resource}"
+                )
+                if not rate_limit.allowed:
+                    if stored_media is not None:
+                        await media_storage.delete(stored_media)
+                        stored_media = None
+                    metrics.event("web_ingress", "rate_limited")
+                    raise HTTPException(
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        detail="Too many user messages",
+                        headers={"Retry-After": str(rate_limit.retry_after_seconds)},
+                    )
+                try:
+                    result = await ticket_service.accept_message(
+                        identity_mode=settings.web_identity_mode,
+                        external_user_id=message.external_user_id,
+                        email=message.email,
+                        display_name=message.display_name,
+                        remnawave_user_uuid=message.remnawave_user_uuid,
+                        content=message.text,
+                        media=stored_media,
+                        target_chat_id=settings.support_group_id,
+                        command=command,
+                    )
+                except IntegrityError:
+                    # A concurrent request may commit the same idempotency key after
+                    # our initial replay lookup. Resolve that race to its durable result.
+                    replay = await ticket_service.load_web_message_replay(command)
+                    if replay is None:
+                        raise
+                    result = replay
+            except ArchiveStorageFull as error:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Attachment was not saved: insufficient storage. Please retry later.",
+                    headers={"Retry-After": "60"},
+                ) from error
+            except MediaValidationError as error:
+                if stored_media is not None:
+                    await media_storage.delete(stored_media)
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail={"code": "invalid_attachment", "message": str(error)},
+                ) from error
+            except ValueError as error:
+                if stored_media is not None:
+                    await media_storage.delete(stored_media)
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=str(error),
+                ) from error
+            except Exception:
+                if stored_media is not None:
+                    await _delete_media_if_unlinked(
+                        ticket_service=ticket_service,
+                        media_storage=media_storage,
+                        stored_media=stored_media,
+                    )
+                raise
             if stored_media is not None:
                 await _delete_media_if_unlinked(
                     ticket_service=ticket_service,
                     media_storage=media_storage,
                     stored_media=stored_media,
                 )
-            raise
-        if stored_media is not None:
-            await _delete_media_if_unlinked(
-                ticket_service=ticket_service,
-                media_storage=media_storage,
-                stored_media=stored_media,
-            )
-        metrics.event("web_ingress", "replayed" if not result.changed else "accepted")
-        return accepted_message_response(result)
+            metrics.event("web_ingress", "replayed" if not result.changed else "accepted")
+            return accepted_message_response(result)
 
     @app.get(
         "/api/v1/web/conversations/{ticket_id}",
@@ -429,6 +440,6 @@ def register_web_routes(
         return FileResponse(
             path,
             media_type=media.mime_type,
-            filename=None,
-            headers={"Cache-Control": "private, max-age=3600"},
+            filename="attachment.pdf" if media.mime_type == "application/pdf" else None,
+            headers={"Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff"},
         )

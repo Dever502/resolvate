@@ -2,24 +2,33 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import io
+import os
+import subprocess
+import sys
 import uuid
 import warnings
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO, Protocol
+from typing import Any, BinaryIO, Protocol
 
 from PIL import Image, UnidentifiedImageError
 from starlette.datastructures import UploadFile
 
 from resolvate.archive_media_storage import ArchiveMediaStorage
 
-MAX_WEB_PHOTO_BYTES = 10 * 1024 * 1024
+MAX_WEB_PHOTO_BYTES = 20 * 1024 * 1024
 UPLOAD_CHUNK_BYTES = 64 * 1024
 ALLOWED_PHOTO_MIME_TYPES = frozenset({"image/jpeg", "image/png", "image/webp"})
 MIME_EXTENSIONS = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
     "image/webp": ".webp",
+    "application/pdf": ".pdf",
+    "video/mp4": ".mp4",
+    "video/quicktime": ".mov",
 }
 PILLOW_FORMAT_MIME_TYPES = {
     "JPEG": "image/jpeg",
@@ -31,7 +40,14 @@ MAX_TELEGRAM_PHOTO_ASPECT_RATIO = 20
 
 
 class TelegramDownloader(Protocol):
-    async def download(self, file: str, destination: Path) -> object: ...
+    async def download(self, file: str, destination: Path | BinaryIO) -> object: ...
+
+
+class LimitedDownload(io.BufferedRandom):
+    def write(self, data: Any) -> int:
+        if self.tell() + len(data) > MAX_WEB_PHOTO_BYTES:
+            raise MediaValidationError("Файл больше 20 МБ.")
+        return super().write(data)
 
 
 class MediaValidationError(ValueError):
@@ -47,9 +63,23 @@ class StoredMedia:
     sha256: str
     original_filename: str | None
 
+    @property
+    def delivery_kind(self) -> str:
+        if self.mime_type.startswith("video/"):
+            return "send_video"
+        if self.mime_type.startswith("image/") and self.size_bytes <= 10 * 1024 * 1024:
+            return "send_photo"
+        return "send_document"
+
     def message_metadata(self) -> dict[str, object]:
         return {
-            "type": "photo",
+            "type": (
+                "photo"
+                if self.mime_type.startswith("image/")
+                else "video"
+                if self.mime_type.startswith("video/")
+                else "document"
+            ),
             "media_id": self.id,
             "mime_type": self.mime_type,
             "size_bytes": self.size_bytes,
@@ -104,6 +134,18 @@ class LocalMediaStorage:
         self.root = self.data_dir / "web-media"
         self.temp_root = self.root / "tmp"
         self.asset_root = self.root / "assets"
+        self.validation_slots = asyncio.Semaphore(2)
+        self.mutation_lock = asyncio.Lock()
+
+    @asynccontextmanager
+    async def transaction(self, has_file: bool) -> AsyncIterator[None]:
+        # Keep publication and the DB reference together relative to archive unlink/compression.
+        # Text-only work does not wait for file processing.
+        if has_file:
+            async with self.mutation_lock:
+                yield
+        else:
+            yield
 
     def _prepare(self) -> None:
         self.temp_root.mkdir(parents=True, exist_ok=True)
@@ -135,37 +177,53 @@ class LocalMediaStorage:
         size, header, sha256 = self._inspect(temp_path) if inspection is None else inspection
         if size == 0:
             temp_path.unlink(missing_ok=True)
-            raise MediaValidationError("photo must not be empty")
+            raise MediaValidationError("⚠️ Файл пустой. Отправьте другой файл.")
         if size > MAX_WEB_PHOTO_BYTES:
             temp_path.unlink(missing_ok=True)
-            raise MediaValidationError("photo is too large")
-        header_mime = _detected_mime(header)
-        if header_mime is None or header_mime not in ALLOWED_PHOTO_MIME_TYPES:
-            temp_path.unlink(missing_ok=True)
-            raise MediaValidationError("unsupported photo format")
+            raise MediaValidationError("⚠️ Файл больше 20 МБ. Отправьте файл меньшего размера.")
         try:
-            detected_mime = _decoded_photo_mime(temp_path)
-        except MediaValidationError:
+            result = subprocess.run(
+                [sys.executable, "-m", "resolvate.media_inspect", str(temp_path)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                timeout=20,
+                check=True,
+                env={
+                    "PATH": os.defpath,
+                    "PYTHONPATH": str(Path(__file__).parent.parent),
+                    "PYTHONDONTWRITEBYTECODE": "1",
+                },
+            )
+            detected_mime = result.stdout.decode().strip()
+            if detected_mime not in MIME_EXTENSIONS:
+                raise ValueError("unsupported media")
+        except (subprocess.SubprocessError, ValueError, OSError) as error:
             temp_path.unlink(missing_ok=True)
-            raise
-        if detected_mime != header_mime:
-            temp_path.unlink(missing_ok=True)
-            raise MediaValidationError("photo format does not match its content")
+            raise MediaValidationError(
+                "Файл не прошёл проверку. Допустимы фото, MP4/MOV и PDF до 20 МБ."
+            ) from error
         if declared_mime and declared_mime.casefold() not in {
             detected_mime,
             "application/octet-stream",
         }:
             temp_path.unlink(missing_ok=True)
-            raise MediaValidationError("photo MIME type does not match its content")
+            raise MediaValidationError("⚠️ Содержимое файла не соответствует заявленному формату.")
         relative = (
-            Path("web-media")
-            / "assets"
-            / media_id[:2]
-            / (media_id + MIME_EXTENSIONS[detected_mime])
+            Path("web-media") / "assets" / sha256[:2] / (sha256 + MIME_EXTENSIONS[detected_mime])
         )
         destination = self.data_dir / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
-        temp_path.replace(destination)
+        # Immutable content-addressed files; publishing another reference never replaces bytes.
+        with temp_path.open("rb") as source:
+            os.fsync(source.fileno())
+        try:
+            os.link(temp_path, destination)
+        except FileExistsError:
+            actual_size, _, actual_digest = self._inspect(destination)
+            if actual_size != size or actual_digest != sha256 or destination.is_symlink():
+                raise MediaValidationError("Повреждена сохранённая копия файла.") from None
+        temp_path.unlink()
         return StoredMedia(
             id=media_id,
             storage_path=relative.as_posix(),
@@ -176,6 +234,10 @@ class LocalMediaStorage:
         )
 
     async def save_upload(self, upload: UploadFile) -> StoredMedia:
+        async with self.validation_slots:
+            return await self._save_reserved_upload(upload)
+
+    async def _save_reserved_upload(self, upload: UploadFile) -> StoredMedia:
         if self.capacity is not None:
             try:
                 async with self.capacity.reserve(MAX_WEB_PHOTO_BYTES):
@@ -225,6 +287,40 @@ class LocalMediaStorage:
                 return await self._save_telegram_photo(bot, file_id=file_id)
         return await self._save_telegram_photo(bot, file_id=file_id)
 
+    async def save_telegram_file(
+        self,
+        bot: TelegramDownloader,
+        *,
+        file_id: str,
+        declared_mime: str | None,
+        filename: str | None,
+    ) -> StoredMedia:
+        async with self.validation_slots:
+            if self.capacity is not None:
+                async with self.capacity.reserve(MAX_WEB_PHOTO_BYTES):
+                    return await self._download_file(bot, file_id, declared_mime, filename)
+            return await self._download_file(bot, file_id, declared_mime, filename)
+
+    async def _download_file(
+        self, bot: TelegramDownloader, file_id: str, declared_mime: str | None, filename: str | None
+    ) -> StoredMedia:
+        await asyncio.to_thread(self._prepare)
+        media_id = str(uuid.uuid4())
+        temp_path = self.temp_root / f"{media_id}.telegram"
+        try:
+            with LimitedDownload(io.FileIO(temp_path, "x+")) as destination:
+                await bot.download(file_id, destination=destination)
+                destination.flush()
+            return await asyncio.to_thread(
+                self._finalize,
+                temp_path=temp_path,
+                media_id=media_id,
+                declared_mime=declared_mime,
+                original_filename=filename,
+            )
+        finally:
+            await asyncio.to_thread(temp_path.unlink, missing_ok=True)
+
     async def _save_telegram_photo(self, bot: TelegramDownloader, *, file_id: str) -> StoredMedia:
         await asyncio.to_thread(self._prepare)
         media_id = str(uuid.uuid4())
@@ -244,10 +340,9 @@ class LocalMediaStorage:
 
     def resolve(self, storage_path: str) -> Path:
         candidate = (self.data_dir / storage_path).resolve()
-        try:
-            candidate.relative_to(self.asset_root.resolve())
-        except ValueError as error:
-            raise MediaValidationError("invalid media path") from error
+        roots = (self.asset_root.resolve(), (self.data_dir / "transcript-media").resolve())
+        if not any(candidate.is_relative_to(root) and candidate != root for root in roots):
+            raise MediaValidationError("invalid media path")
         return candidate
 
     async def resolve_file(self, storage_path: str) -> Path | None:
@@ -258,6 +353,11 @@ class LocalMediaStorage:
         return await asyncio.to_thread(resolve_existing_file)
 
     async def delete(self, media: StoredMedia) -> None:
+        # New content-addressed assets can already be referenced by another message.
+        # Only reference-aware orphan cleanup may unlink these files.
+        if len(Path(media.storage_path).stem) == 64:
+            return
+
         def delete_file() -> None:
             self.resolve(media.storage_path).unlink(missing_ok=True)
 

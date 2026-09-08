@@ -358,6 +358,13 @@ def create_app(
             metrics=metrics,
             user_message_limiter=user_message_limiter,
         )
+    if settings.console_origin is not None:
+        from resolvate.console import create_console
+
+        app.mount(
+            "/console",
+            create_console(database, ticket_service, settings, media_storage, client_key),
+        )
 
     def custom_openapi() -> dict[str, Any]:
         if app.openapi_schema is not None:

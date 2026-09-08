@@ -405,6 +405,7 @@ class OutboxRepository:
     async def release_stale_deliveries(self, stale_after_seconds: int = 300) -> int:
         threshold = utcnow() - timedelta(seconds=stale_after_seconds)
         async with self.database.session() as session:
+            uncertain = DeliveryOutbox.payload["console_command"].as_string().is_not(None)
             result = await session.execute(
                 update(DeliveryOutbox)
                 .where(
@@ -412,7 +413,10 @@ class OutboxRepository:
                     DeliveryOutbox.claimed_at < threshold,
                 )
                 .values(
-                    status=DeliveryStatus.PENDING,
+                    status=case((uncertain, DeliveryStatus.FAILED), else_=DeliveryStatus.PENDING),
+                    last_error=case(
+                        (uncertain, "outcome_unknown"), else_=DeliveryOutbox.last_error
+                    ),
                     claimed_at=None,
                     claim_token=None,
                 )

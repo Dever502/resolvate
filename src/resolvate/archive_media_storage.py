@@ -91,7 +91,8 @@ class ArchiveMediaStorage:
 
     def resolve(self, relative: str) -> Path:
         path = (self.data_dir / relative).resolve()
-        if not path.is_relative_to(self.root.resolve()) or path == self.root.resolve():
+        roots = (self.root.resolve(), (self.data_dir / "web-media" / "assets").resolve())
+        if not any(path.is_relative_to(root) and path != root for root in roots):
             raise ValueError("path is outside transcript media storage")
         return path
 

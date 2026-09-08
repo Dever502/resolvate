@@ -20,6 +20,7 @@ from resolvate.models import (
     OperationalNotice,
     ReconciliationOutbox,
     Ticket,
+    TicketMessage,
     TicketStatus,
     TopicArchive,
     TranscriptMedia,
@@ -30,6 +31,7 @@ from resolvate.models import (
 )
 from resolvate.operational_notices import EVENT_NOTICE_KEYS
 from resolvate.rotation_gate import SWITCHING_STATES, ingress_matches_archive, lock_rotation_gate
+from resolvate.web_models import MediaAsset
 
 
 class TopicSwitchingError(RuntimeError):
@@ -228,6 +230,30 @@ class TopicArchiveRepository:
                         select(TranscriptMedia.id).where(TranscriptMedia.file_unique_id == unique)
                     )
             now = utcnow()
+            canonical = None
+            if isinstance(payload.get("canonical_message_id"), str):
+                canonical = await session.get(TicketMessage, payload["canonical_message_id"])
+            elif isinstance(payload.get("source_chat_id"), int):
+                canonical = await session.scalar(
+                    select(TicketMessage).where(
+                        TicketMessage.source_chat_id == payload["source_chat_id"],
+                        TicketMessage.source_message_id == payload.get("source_message_id"),
+                        TicketMessage.ticket_id == archive.ticket_id,
+                    )
+                )
+            if canonical is not None and canonical.ticket_id == archive.ticket_id:
+                canonical.archive_id = archive.id
+                if media_id:
+                    asset = await session.scalar(
+                        select(MediaAsset).where(MediaAsset.message_id == canonical.id)
+                    )
+                    if asset:
+                        archived_media = await session.get(TranscriptMedia, media_id)
+                        assert archived_media is not None
+                        archived_media.state = "stored"
+                        archived_media.storage_path = asset.storage_path
+                        archived_media.sha256 = asset.sha256
+                        archived_media.size_bytes = asset.size_bytes
             if old is None:
                 session.add(
                     TranscriptMessage(

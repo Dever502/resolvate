@@ -8,12 +8,12 @@ from aiogram.types import Message
 
 from resolvate.authorization import AuthorizationService
 from resolvate.media_storage import LocalMediaStorage, MediaValidationError, StoredMedia
-from resolvate.models import TicketChannel
 from resolvate.service_types import (
     TicketNotFoundError,
     TopicAlreadyBoundError,
     TopicProvisioningConflictError,
 )
+from resolvate.telegram_attachments import record_edit, save_attachment
 from resolvate.telegram_constants import (
     COMMAND_ALREADY_HANDLED_TEXT,
     PANEL_MUTATION_COMMANDS,
@@ -55,7 +55,12 @@ class TelegramOperatorHandlers(
             or not self.authorization.is_admin(actor.id)
         ):
             return
-        await self.handle_quick_reply_topic_message(message)
+        if await self.handle_quick_reply_topic_message(message):
+            return
+        try:
+            await record_edit(message, self.bot, self.media_storage, self.ticket_service.database)
+        except MediaValidationError as error:
+            await message.reply(str(error), parse_mode=None)
 
     async def _delete_operator_media_if_unlinked(self, stored_media: StoredMedia) -> None:
         try:
@@ -351,49 +356,27 @@ class TelegramOperatorHandlers(
             await message.reply("❓ Неизвестная команда. Сообщение не отправлено клиенту.")
             return
 
-        stored_media: StoredMedia | None = None
-        operator_media = media_metadata(message)
-        if getattr(ticket, "channel", TicketChannel.TELEGRAM) is TicketChannel.WEB:
-            content_type = getattr(message.content_type, "value", str(message.content_type))
-            if content_type not in {"text", "photo"}:
-                await message.reply("⚠️ Для Web-клиента сейчас поддерживаются только текст и фото.")
-                return
-            if content_type == "photo":
-                photos = message.photo or []
-                if not photos:
-                    await message.reply("⚠️ Не удалось прочитать фотографию.")
-                    return
-                try:
-                    stored_media = await self.media_storage.save_telegram_photo(
-                        self.bot, file_id=photos[-1].file_id
-                    )
-                except MediaValidationError:
-                    await message.reply("⚠️ Фотография не прошла проверку.")
-                    return
-                except Exception:
-                    logger.exception(
-                        "Unable to persist operator photo for Web client",
-                        extra={"event": "web_operator_photo_store_failed", "ticket_id": ticket.id},
-                    )
-                    await message.reply("⚠️ Не удалось сохранить фотографию для Web-клиента.")
-                    return
-                operator_media = stored_media.message_metadata()
         try:
-            result = await self.ticket_service.accept_operator_reply(
-                ticket_id=ticket.id,
-                operator_telegram_id=message.from_user.id,
-                source_chat_id=message.chat.id,
-                source_message_id=message.message_id,
-                content=message_text(message),
-                media=operator_media,
-                stored_media=stored_media,
-            )
-        except Exception:
-            if stored_media is not None:
-                await self._delete_operator_media_if_unlinked(stored_media)
-            raise
-        if stored_media is not None and not result.changed:
-            await self.media_storage.delete(stored_media)
+            async with self.media_storage.transaction(message.content_type != "text"):
+                stored_media = await save_attachment(message, self.bot, self.media_storage)
+                operator_media = {
+                    **(media_metadata(message) or {}),
+                    "operator_name": message.from_user.full_name,
+                }
+                if stored_media:
+                    operator_media.update(stored_media.message_metadata())
+                result = await self.ticket_service.accept_operator_reply(
+                    ticket_id=ticket.id,
+                    operator_telegram_id=message.from_user.id,
+                    source_chat_id=message.chat.id,
+                    source_message_id=message.message_id,
+                    content=message_text(message),
+                    media=operator_media,
+                    stored_media=stored_media,
+                )
+        except MediaValidationError as error:
+            await message.reply(str(error), parse_mode=None)
+            return
         if result.blocked:
             await message.reply("⛔ Пользователь заблокирован. Сообщение не отправлено.")
             return

@@ -15,6 +15,9 @@ from resolvate.telegram_message_utils import media_metadata
 from resolvate.topic_archive import TopicArchiveRepository
 
 rotation_setup_context: ContextVar[str | None] = ContextVar("rotation_setup_context", default=None)
+canonical_message_context: ContextVar[str | None] = ContextVar(
+    "canonical_message_context", default=None
+)
 
 
 def message_snapshot(message: Message) -> dict[str, Any]:
@@ -120,6 +123,8 @@ class TranscriptRequestMiddleware(BaseRequestMiddleware):
                 complete = False
                 continue
             snapshot = message_snapshot(message)
+            if canonical_id := canonical_message_context.get():
+                snapshot["canonical_message_id"] = canonical_id
             if setup_id := rotation_setup_context.get():
                 snapshot["rotation_setup_id"] = setup_id
             await self.repository.observe(

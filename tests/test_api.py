@@ -928,7 +928,7 @@ def test_nginx_example_overwrites_untrusted_forwarded_chain() -> None:
     assert "proxy_set_header X-Forwarded-For $remote_addr;" in config
     assert "$proxy_add_x_forwarded_for" not in config
 
-    assert "client_max_body_size 11m;" in config
+    assert "client_max_body_size 21m;" in config
 
 
 async def test_api_auth_failures_are_rate_limited(

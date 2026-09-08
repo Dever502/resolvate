@@ -240,7 +240,13 @@ async def test_notice_deduplicates_without_suppressing_severity_change(
 
 async def archive_with_file(repo: TopicArchiveRepository, size: int | None) -> str:
     archive_id = await make_topic(repo)
-    attachment = {"file_id": "file", "file_unique_id": "unique", "file_size": size}
+    attachment = {
+        "file_id": "file",
+        "file_unique_id": "unique",
+        "file_size": size,
+        "file_name": "attachment.pdf",
+        "telegram_content_type": "document",
+    }
     await repo.observe(
         topic_id=10, message_id=1, payload={"document": attachment}, attachment=attachment
     )
@@ -793,7 +799,13 @@ async def test_late_attachment_after_deletion_is_saved_without_extending_retenti
     await age_retirement(archive_repo, archive_id)
     await worker.advance(archive_id)
     archived_at = (await worker.repository.get(archive_id)).archived_at
-    document = {"file_id": "late", "file_unique_id": "late-unique", "file_size": 5}
+    document = {
+        "file_id": "late",
+        "file_unique_id": "late-unique",
+        "file_size": 5,
+        "file_name": "late.pdf",
+        "telegram_content_type": "document",
+    }
     await archive_repo.observe(
         topic_id=10, message_id=30, payload={"document": document}, attachment=document
     )

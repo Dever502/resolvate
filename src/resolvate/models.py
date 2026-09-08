@@ -171,6 +171,9 @@ class TicketMessage(Base):
     )
     direction: Mapped[Direction] = mapped_column(String(32), nullable=False)
     channel: Mapped[str] = mapped_column(String(32), default="telegram", nullable=False)
+    archive_id: Mapped[str | None] = mapped_column(
+        ForeignKey("topic_archives.id", ondelete="SET NULL"), index=True
+    )
     content: Mapped[str | None] = mapped_column(Text)
     media: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     suppressed: Mapped[bool] = mapped_column(
@@ -540,3 +543,51 @@ class OperationalNotice(Base):
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     next_delivery_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ConsoleAccount(Base):
+    __tablename__ = "console_accounts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    login: Mapped[str] = mapped_column(String(64), unique=True)
+    display_name: Mapped[str] = mapped_column(String(100))
+    password_hash: Mapped[str] = mapped_column(String(256))
+    role: Mapped[str] = mapped_column(String(16))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ConsoleSession(Base):
+    __tablename__ = "console_sessions"
+
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    account_id: Mapped[str] = mapped_column(
+        ForeignKey("console_accounts.id", ondelete="CASCADE"), index=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class ConsoleRead(Base):
+    __tablename__ = "console_reads"
+
+    account_id: Mapped[str] = mapped_column(
+        ForeignKey("console_accounts.id", ondelete="CASCADE"), primary_key=True
+    )
+    ticket_id: Mapped[str] = mapped_column(
+        ForeignKey("tickets.id", ondelete="CASCADE"), primary_key=True
+    )
+    through_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ConsoleSend(Base):
+    """Durable command snapshot, never an independent conversation history."""
+
+    __tablename__ = "console_sends"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    account_id: Mapped[str] = mapped_column(ForeignKey("console_accounts.id"))
+    message_id: Mapped[str] = mapped_column(
+        ForeignKey("ticket_messages.id", ondelete="CASCADE"), unique=True
+    )
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    deliveries: Mapped[dict[str, Any]] = mapped_column(JSONB)

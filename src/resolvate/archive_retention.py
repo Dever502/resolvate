@@ -5,12 +5,14 @@ from typing import cast
 
 from sqlalchemy import ColumnElement, delete, exists, func, literal_column, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from resolvate.models import (
     DeliveryOutbox,
     DeliveryStatus,
     InboundUpdate,
     Ticket,
+    TicketMessage,
     TopicArchive,
     TranscriptMedia,
     TranscriptMessage,
@@ -20,6 +22,7 @@ from resolvate.models import (
 )
 from resolvate.rotation_gate import ingress_matches_archive, lock_rotation_gate
 from resolvate.topic_archive import TopicArchiveRepository
+from resolvate.web_models import MediaAsset
 
 
 def protected_archive() -> ColumnElement[bool]:
@@ -53,13 +56,32 @@ def protected_archive() -> ColumnElement[bool]:
 
 
 def eligible_media(before: datetime) -> ColumnElement[bool]:
+    other = aliased(TranscriptMedia)
     protected_reference = exists(
         select(TranscriptMessage.id)
         .join(TopicArchive, TopicArchive.id == TranscriptMessage.archive_id)
+        .join(other, other.id == TranscriptMessage.media_id)
         .where(
-            TranscriptMessage.media_id == TranscriptMedia.id,
+            or_(
+                TranscriptMessage.media_id == TranscriptMedia.id,
+                other.storage_path == TranscriptMedia.storage_path,
+            ),
             or_(protected_archive(), TopicArchive.archived_at > before),
         )
+    )
+    web_reference = exists(
+        select(MediaAsset.id)
+        .join(TicketMessage, TicketMessage.id == MediaAsset.message_id)
+        .outerjoin(TopicArchive, TopicArchive.id == TicketMessage.archive_id)
+        .where(
+            MediaAsset.storage_path == TranscriptMedia.storage_path,
+            or_(
+                TicketMessage.archive_id.is_(None),
+                protected_archive(),
+                TopicArchive.archived_at > before,
+            ),
+        )
+        .correlate(TranscriptMedia)
     )
     # Admission can precede journaling: protect attachments in not-yet-handled updates too.
     queued_attachment = exists().where(
@@ -70,7 +92,7 @@ def eligible_media(before: datetime) -> ColumnElement[bool]:
             func.jsonb_build_object("file", TranscriptMedia.file_unique_id),
         ),
     )
-    return ~protected_reference & ~queued_attachment
+    return ~protected_reference & ~queued_attachment & ~web_reference
 
 
 class ArchiveRetention:
@@ -154,7 +176,10 @@ class ArchiveRetention:
                         .where(
                             TopicArchive.archived_at <= before,
                             ~protected_archive(),
-                            exists().where(TranscriptMessage.archive_id == TopicArchive.id),
+                            or_(
+                                exists().where(TranscriptMessage.archive_id == TopicArchive.id),
+                                exists().where(TicketMessage.archive_id == TopicArchive.id),
+                            ),
                         )
                         .order_by(TopicArchive.archived_at)
                         .limit(100)
@@ -176,6 +201,9 @@ class ArchiveRetention:
                 if archive is None:
                     continue
                 # Keep the small routing/history tombstone, not the message bodies.
+                await session.execute(
+                    delete(TicketMessage).where(TicketMessage.archive_id == archive_id)
+                )
                 await session.execute(
                     delete(TranscriptMessage).where(TranscriptMessage.archive_id == archive_id)
                 )

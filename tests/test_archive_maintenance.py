@@ -20,6 +20,7 @@ from resolvate.models import (
     InboundUpdate,
     OperationalNotice,
     Ticket,
+    TicketMessage,
     TicketStatus,
     TopicArchive,
     TranscriptMedia,
@@ -29,6 +30,7 @@ from resolvate.models import (
     utcnow,
 )
 from resolvate.topic_archive import TopicArchiveRepository
+from resolvate.web_models import MediaAsset
 
 
 @pytest.fixture
@@ -146,6 +148,78 @@ async def test_shared_file_waits_for_newest_reference(maintenance: ArchiveMainte
         utcnow() - timedelta(days=30)
     )
     assert not await maintenance.remove_media(media_id, utcnow() - timedelta(days=30), utcnow())
+
+
+async def test_web_reference_protects_shared_blob_and_expires_with_archive(
+    maintenance: ArchiveMaintenance,
+) -> None:
+    archive_id, media_id, ticket_id = await seed(maintenance, days=90)
+    async with maintenance.archives.database.session() as session:
+        media = await session.get(TranscriptMedia, media_id)
+        message = TicketMessage(
+            ticket_id=ticket_id,
+            direction=Direction.OPERATOR_TO_USER,
+            channel="console",
+            content="Archived answer",
+        )
+        session.add(message)
+        await session.flush()
+        asset = MediaAsset(
+            ticket_id=ticket_id,
+            message_id=message.id,
+            storage_path=media.storage_path,
+            mime_type="application/pdf",
+            size_bytes=media.size_bytes,
+            sha256=media.sha256,
+        )
+        session.add(asset)
+        await session.commit()
+        ident = message.id
+    assert not await maintenance.remove_media(media_id, utcnow(), utcnow())
+    async with maintenance.archives.database.session() as session:
+        message = await session.get(TicketMessage, ident)
+        message.archive_id = archive_id
+        await session.commit()
+    assert await maintenance.remove_media(media_id, utcnow() - timedelta(days=30), utcnow())
+    async with maintenance.archives.database.session() as session:
+        assert await session.get(MediaAsset, asset.id) is None
+        assert await session.get(TicketMessage, ident) is not None
+    assert await maintenance.retention.purge_transcripts(utcnow()) == 1
+    async with maintenance.archives.database.session() as session:
+        assert await session.get(TicketMessage, ident) is None
+
+
+async def test_compression_updates_web_asset_reference(maintenance: ArchiveMaintenance) -> None:
+    archive_id, media_id, ticket_id = await seed(maintenance, days=20, kind="photo")
+    async with maintenance.archives.database.session() as session:
+        media = await session.get(TranscriptMedia, media_id)
+        old_path = media.storage_path
+        message = TicketMessage(
+            ticket_id=ticket_id,
+            archive_id=archive_id,
+            direction=Direction.OPERATOR_TO_USER,
+            channel="console",
+            media={"mime_type": "image/png"},
+        )
+        session.add(message)
+        await session.flush()
+        asset = MediaAsset(
+            ticket_id=ticket_id,
+            message_id=message.id,
+            storage_path=old_path,
+            mime_type="image/png",
+            size_bytes=media.size_bytes,
+            sha256=media.sha256,
+        )
+        session.add(asset)
+        await session.commit()
+    assert await maintenance.compress_media(media_id, utcnow() - timedelta(days=14), utcnow())
+    async with maintenance.archives.database.session() as session:
+        updated = await session.get(MediaAsset, asset.id)
+        assert updated.storage_path != old_path and updated.mime_type == "image/webp"
+        assert maintenance.storage.resolve(updated.storage_path).is_file()
+        message = await session.get(TicketMessage, message.id)
+        assert message.media["mime_type"] == "image/webp"
 
 
 @pytest.mark.parametrize(

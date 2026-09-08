@@ -27,6 +27,7 @@ from resolvate.service_types import DeliveryJob
 from resolvate.services import TicketService
 from resolvate.telegram_errors import is_missing_topic_error
 from resolvate.telegram_limits import TelegramRateLimiter
+from resolvate.telegram_transcript import canonical_message_context
 
 logger = logging.getLogger(__name__)
 
@@ -257,6 +258,14 @@ class DeliveryWorker:
         return True
 
     async def _deliver(self, job: DeliveryJob) -> None:
+        ident = job.payload.get("canonical_message_id")
+        token = canonical_message_context.set(ident if isinstance(ident, str) else None)
+        try:
+            await self._deliver_message(job)
+        finally:
+            canonical_message_context.reset(token)
+
+    async def _deliver_message(self, job: DeliveryJob) -> None:
         payload = job.payload
         delivered_message_id: int | None = None
         system_topic = payload.get("target_system_topic")
@@ -302,7 +311,7 @@ class DeliveryWorker:
                     reply_markup=reply_markup,
                 )
                 delivered_message_id = sent_message.message_id
-            elif payload.get("kind") == "send_photo":
+            elif payload.get("kind") in {"send_photo", "send_video", "send_document"}:
                 storage_path = payload.get("storage_path")
                 if not isinstance(storage_path, str):
                     raise TypeError("send_photo delivery requires storage_path")
@@ -312,13 +321,30 @@ class DeliveryWorker:
                     photo_path.relative_to(allowed_root)
                 except ValueError as error:
                     raise ValueError("send_photo delivery path is outside media storage") from error
-                sent_message = await self.bot.send_photo(
-                    chat_id=_payload_int(payload, "target_chat_id"),
-                    photo=FSInputFile(photo_path),
-                    caption=str(payload["text"]) if payload.get("text") is not None else None,
-                    parse_mode=None,
-                    message_thread_id=target_thread_id,
-                )
+                if payload.get("kind") == "send_video":
+                    sent_message = await self.bot.send_video(
+                        chat_id=_payload_int(payload, "target_chat_id"),
+                        video=FSInputFile(photo_path),
+                        caption=str(payload["text"]) if payload.get("text") is not None else None,
+                        parse_mode=None,
+                        message_thread_id=target_thread_id,
+                    )
+                elif payload.get("kind") == "send_document":
+                    sent_message = await self.bot.send_document(
+                        chat_id=_payload_int(payload, "target_chat_id"),
+                        document=FSInputFile(photo_path),
+                        caption=str(payload["text"]) if payload.get("text") is not None else None,
+                        parse_mode=None,
+                        message_thread_id=target_thread_id,
+                    )
+                else:
+                    sent_message = await self.bot.send_photo(
+                        chat_id=_payload_int(payload, "target_chat_id"),
+                        photo=FSInputFile(photo_path),
+                        caption=str(payload["text"]) if payload.get("text") is not None else None,
+                        parse_mode=None,
+                        message_thread_id=target_thread_id,
+                    )
                 delivered_message_id = sent_message.message_id
             elif payload.get("kind") == "snapshot":
                 delivered_message_id = await self._send_snapshot(payload, target_thread_id)
@@ -492,6 +518,12 @@ class DeliveryWorker:
             )
             await self._alert(job, f"permanent Telegram delivery error: {error_text[:200]}")
         except TelegramAPIError as error:
+            if payload.get("console_command"):
+                await self._retry_delivery(
+                    job, payload, "outcome_unknown", 0, max_attempts=job.attempt_count
+                )
+                await self._alert(job, "console delivery outcome unknown; inspect Telegram")
+                return
             retry_after = min(60.0, 2.0 ** min(job.attempt_count, 6))
             if not await self._retry_delivery(job, payload, str(error), retry_after):
                 return
@@ -518,6 +550,12 @@ class DeliveryWorker:
                 )
                 await self._alert(job, "delivery exhausted after Telegram API errors")
         except Exception as error:
+            if payload.get("console_command"):
+                await self._retry_delivery(
+                    job, payload, "outcome_unknown", 0, max_attempts=job.attempt_count
+                )
+                await self._alert(job, "console delivery outcome unknown; inspect Telegram")
+                return
             logger.exception(
                 "Unexpected delivery failure",
                 extra={

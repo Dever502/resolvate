@@ -170,6 +170,7 @@ class Settings(BaseSettings):
     user_messages_per_minute: int = 30
     user_messages_per_hour: int = 200
     api_enabled: bool = False
+    console_origin: str | None = None
     api_host: str = "0.0.0.0"
     api_port: int = 8080
     api_admin_token: SecretStr | None = None
@@ -262,6 +263,12 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_runtime_settings(self) -> Self:
+        if self.console_origin is not None:
+            validate_external_url("CONSOLE_ORIGIN", self.console_origin)
+            origin = urlsplit(self.console_origin)
+            if origin.path not in {"", "/"} or origin.query or origin.fragment or origin.username:
+                raise ValueError("CONSOLE_ORIGIN must be an origin without a path or credentials")
+            self.console_origin = self.console_origin.rstrip("/")
         if self.rotation_cleanup_target < 1:
             raise ValueError(
                 "TOPIC_ROTATION_TOPIC_LIMIT must exceed twice TOPIC_ROTATION_TOPIC_RESERVE"

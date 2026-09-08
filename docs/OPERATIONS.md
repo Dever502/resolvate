@@ -86,8 +86,8 @@ POSTGRES_RUNTIME_PASSWORD=replace-with-random-password-3
 По умолчанию Compose публикует API на `127.0.0.1:8080`. `API_HOST`, `API_PUBLISH_HOST`,
 `API_PORT` и `API_TRUSTED_PROXY_IPS` остаются расширенными настройками.
 
-Пустой `ADMIN_TELEGRAM_IDS` допустим только при `API_ENABLED=true`: в этом случае работа
-операторов идёт только через API. Оставляйте публикацию на loopback и используйте HTTPS reverse
+Пустой `ADMIN_TELEGRAM_IDS` допустим при `API_ENABLED=true` или заданном `CONSOLE_ORIGIN`: работа
+операторов идёт через API или Web-панель. Оставляйте публикацию на loopback и используйте HTTPS reverse
 proxy. Каждая мутация требует
 `X-Idempotency-Key`: точный повтор возвращает сохранённый ответ, другой payload с тем же ключом —
 `409 Conflict`. API-квота считается отдельно для Operator token; строгая защита от перебора
@@ -111,8 +111,13 @@ CORS. Он использует тот же bind/port, но отдельные c
 смена email создаёт нового клиента. После первого Web-обращения режим фиксируется в БД.
 
 Все мутации требуют `X-Idempotency-Key`. Текст принимается как JSON (до 4096 символов); текст с
-одним JPEG/PNG/WebP до 10 MiB — как multipart, при этом подпись ограничена 1024 символами.
-Пример Nginx допускает 11 MiB на весь multipart-запрос. Минимальный запрос:
+одним JPEG/PNG/WebP, MP4/MOV или PDF до 20 MiB — как multipart (поле `file`; прежнее `photo`
+сохранено для совместимости), при этом подпись ограничена 1024 символами.
+ZIP/RAR, текстовые файлы и остальные форматы не принимаются. Содержимое проверяется
+в отдельном ограниченном процессе; PDF выдаётся только для скачивания.
+Отказ при проверке вложения возвращает `422` и `detail.code=invalid_attachment`,
+а `detail.message` содержит описание для интегратора.
+Пример Nginx допускает 21 MiB на весь multipart-запрос. Минимальный запрос:
 
 ```bash
 curl -X POST https://support.example.com/api/v1/web/messages \

@@ -5,9 +5,11 @@ import logging
 from aiogram.exceptions import TelegramAPIError
 from aiogram.types import CallbackQuery, Message
 
+from resolvate.media_storage import LocalMediaStorage, MediaValidationError
 from resolvate.service_types import (
     TicketNotFoundError,
 )
+from resolvate.telegram_attachments import record_edit, save_attachment
 from resolvate.telegram_constants import SUPPORT_PENDING_TEXT, WELCOME_TEXT
 from resolvate.telegram_message_utils import (
     media_metadata,
@@ -21,6 +23,16 @@ logger = logging.getLogger(__name__)
 
 
 class TelegramUserHandlers(TelegramTopicManager):
+    media_storage: LocalMediaStorage
+
+    async def handle_edited_private_message(self, message: Message) -> None:
+        if message.from_user is None or message.from_user.is_bot:
+            return
+        try:
+            await record_edit(message, self.bot, self.media_storage, self.ticket_service.database)
+        except MediaValidationError as error:
+            await message.answer(str(error), parse_mode=None)
+
     async def handle_start(self, message: Message) -> None:
         logger.info(
             "Handled start command",
@@ -115,16 +127,23 @@ class TelegramUserHandlers(TelegramTopicManager):
             },
         )
         async with self._ticket_locks.hold(message.from_user.id):
-            result = await self.ticket_service.accept_customer_message(
-                telegram_user_id=message.from_user.id,
-                display_name=message.from_user.full_name,
-                username=message.from_user.username,
-                source_chat_id=message.chat.id,
-                source_message_id=message.message_id,
-                target_chat_id=self.settings.support_group_id,
-                content=message_text(message),
-                media=media_metadata(message),
-            )
+            try:
+                async with self.media_storage.transaction(message.content_type != "text"):
+                    stored_media = await save_attachment(message, self.bot, self.media_storage)
+                    result = await self.ticket_service.accept_customer_message(
+                        telegram_user_id=message.from_user.id,
+                        display_name=message.from_user.full_name,
+                        username=message.from_user.username,
+                        source_chat_id=message.chat.id,
+                        source_message_id=message.message_id,
+                        target_chat_id=self.settings.support_group_id,
+                        content=message_text(message),
+                        media=media_metadata(message),
+                        stored_media=stored_media,
+                    )
+            except MediaValidationError as error:
+                await message.answer(str(error), parse_mode=None)
+                return
             if result.blocked:
                 logger.info(
                     "Ignored message from blocked user",

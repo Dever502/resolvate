@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from resolvate.audit import record_event
 from resolvate.durable_work import enqueue_topic_reconciliation
+from resolvate.media_storage import StoredMedia
 from resolvate.models import (
     DeliveryOutbox,
     DeliveryStatus,
@@ -23,6 +24,7 @@ from resolvate.models import (
     utcnow,
 )
 from resolvate.service_types import TicketNotFoundError, TicketView
+from resolvate.telegram_attachments import attach_media
 from resolvate.ticket_service_base import TicketServiceBase
 from resolvate.trace import get_trace_id
 from resolvate.web_models import TicketLifecycleEvent
@@ -77,6 +79,7 @@ class TicketIngressService(TicketServiceBase):
         target_chat_id: int,
         content: str | None,
         media: dict[str, object] | None,
+        stored_media: StoredMedia | None = None,
     ) -> CustomerMessageResult:
         key = f"copy:{Direction.USER_TO_OPERATOR.value}:{source_chat_id}:{source_message_id}"
         async with self.database.session() as session:
@@ -134,7 +137,8 @@ class TicketIngressService(TicketServiceBase):
             else:
                 ticket.last_activity_at = utcnow()
 
-            session.add(
+            await attach_media(
+                session,
                 TicketMessage(
                     ticket_id=ticket.id,
                     direction=Direction.USER_TO_OPERATOR,
@@ -142,7 +146,8 @@ class TicketIngressService(TicketServiceBase):
                     source_message_id=source_message_id,
                     content=content,
                     media=media,
-                )
+                ),
+                stored_media,
             )
             delivery_payload: dict[str, object] = {
                 "kind": "copy",
@@ -203,6 +208,7 @@ class TicketIngressService(TicketServiceBase):
         source_message_id: int,
         content: str | None,
         media: dict[str, object] | None,
+        stored_media: StoredMedia | None = None,
     ) -> TelegramOperatorReplyResult:
         key = f"copy:{Direction.OPERATOR_TO_USER.value}:{source_chat_id}:{source_message_id}"
         reopen_key = f"telegram:reopen:{source_chat_id}:{source_message_id}"
@@ -258,7 +264,8 @@ class TicketIngressService(TicketServiceBase):
                     trace_id=get_trace_id(),
                 )
             )
-            session.add(
+            await attach_media(
+                session,
                 TicketMessage(
                     ticket_id=ticket.id,
                     direction=Direction.OPERATOR_TO_USER,
@@ -266,7 +273,8 @@ class TicketIngressService(TicketServiceBase):
                     source_message_id=source_message_id,
                     content=content,
                     media=media,
-                )
+                ),
+                stored_media,
             )
             session.add(
                 DeliveryOutbox(

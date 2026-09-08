@@ -96,7 +96,7 @@ def validate_api_settings(settings: Settings) -> None:
 
 
 def validate_operator_access(settings: Settings) -> None:
-    if settings.admin_telegram_ids or settings.api_enabled:
+    if settings.admin_telegram_ids or settings.api_enabled or settings.console_origin:
         return
     raise RuntimeError(
         "ADMIN_TELEGRAM_IDS must contain at least one administrator when API_ENABLED=false"
@@ -172,7 +172,12 @@ async def run() -> None:
     runtime_health.register("database")
     runtime_health.register("telegram_ingress", progress_timeout_seconds=45)
     runtime_health.register("reconciliation", progress_timeout_seconds=45)
-    runtime_health.register("api", configured=settings.api_enabled or settings.web_api_enabled)
+    runtime_health.register(
+        "api",
+        configured=bool(
+            settings.api_enabled or settings.web_api_enabled or settings.console_origin
+        ),
+    )
     runtime_health.register("panel", configured=settings.remnawave_enabled)
     runtime_health.register("delivery_worker", progress_timeout_seconds=45)
     runtime_health.register(
@@ -256,6 +261,7 @@ async def run() -> None:
         settings.data_dir, reserve_bytes=settings.storage_reserve_bytes
     )
     web_media_storage = LocalMediaStorage(settings.data_dir, capacity=archive_storage)
+    web_media_storage.mutation_lock = topic_archive.media_lock
     archive_media = TelegramArchiveMedia(
         topic_archive,
         bot,
@@ -310,7 +316,7 @@ async def run() -> None:
     quick_response_topic_worker = QuickResponseTopicRefreshWorker(adapter)
     statistics_worker = StatisticsDashboardRefreshWorker(adapter)
 
-    if settings.api_enabled or settings.web_api_enabled:
+    if settings.api_enabled or settings.web_api_enabled or settings.console_origin:
         api_server = ApiServer(
             create_app(
                 database=database,

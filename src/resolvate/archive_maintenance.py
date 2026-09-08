@@ -9,14 +9,15 @@ import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 
 from resolvate.archive_media_policy import CLOUD_DOWNLOAD_LIMIT_BYTES
 from resolvate.archive_media_storage import ArchiveMediaStorage
 from resolvate.archive_retention import ArchiveRetention
-from resolvate.models import TranscriptMedia, utcnow
+from resolvate.models import TicketMessage, TranscriptMedia, utcnow
 from resolvate.runtime_supervision import wait_for_event
 from resolvate.topic_archive import TopicArchiveRepository
+from resolvate.web_models import MediaAsset
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,13 @@ class ArchiveMaintenance:
                 if row is None or not row.storage_path:
                     return False
                 path = self.storage.resolve(row.storage_path)
+                old_path = row.storage_path
+                await session.execute(delete(MediaAsset).where(MediaAsset.storage_path == old_path))
+                await session.execute(
+                    update(TranscriptMedia)
+                    .where(TranscriptMedia.storage_path == old_path)
+                    .values(state="deleted", deleted_at=now, storage_path=None)
+                )
                 # Commit the tombstone first. A crash leaves an orphan, never a live DB
                 # reference to a file intentionally removed by this operation.
                 row.state = "deleted"
@@ -138,6 +146,39 @@ class ArchiveMaintenance:
                         current.size_bytes = result.size_bytes
                         current.sha256 = result.sha256
                         current.compressed_at = now
+                        mime = "image/webp" if row.kind == "photo" else "video/mp4"
+                        assets = list(
+                            (
+                                await session.scalars(
+                                    select(MediaAsset).where(
+                                        MediaAsset.storage_path == row.storage_path
+                                    )
+                                )
+                            ).all()
+                        )
+                        for asset in assets:
+                            asset.storage_path = relative
+                            asset.size_bytes = result.size_bytes
+                            asset.sha256 = result.sha256
+                            asset.mime_type = mime
+                            message = await session.get(TicketMessage, asset.message_id)
+                            if message:
+                                message.media = {
+                                    **(message.media or {}),
+                                    "mime_type": mime,
+                                    "sha256": result.sha256,
+                                    "size_bytes": result.size_bytes,
+                                }
+                        await session.execute(
+                            update(TranscriptMedia)
+                            .where(TranscriptMedia.storage_path == row.storage_path)
+                            .values(
+                                storage_path=relative,
+                                size_bytes=result.size_bytes,
+                                sha256=result.sha256,
+                                compressed_at=now,
+                            )
+                        )
                         await session.commit()
                         published = True
                     await asyncio.to_thread(original.unlink, missing_ok=True)
@@ -171,6 +212,7 @@ class ArchiveMaintenance:
                         )
                     ).all()
                 )
+                referenced.update((await session.scalars(select(MediaAsset.storage_path))).all())
 
             def cleanup() -> None:
                 for path in self.storage.root.glob("*/*"):
@@ -188,6 +230,16 @@ class ArchiveMaintenance:
                         ).unlink(missing_ok=True)
 
             await asyncio.to_thread(cleanup)
+            from resolvate.media_cleanup import cleanup_media_files
+            from resolvate.media_storage import LocalMediaStorage
+
+            await asyncio.to_thread(
+                cleanup_media_files,
+                LocalMediaStorage(self.storage.data_dir),
+                referenced_paths={path for path in referenced if path is not None},
+                apply=True,
+                now=now,
+            )
 
     async def tick(self, now: datetime | None = None) -> None:
         now = now or utcnow()

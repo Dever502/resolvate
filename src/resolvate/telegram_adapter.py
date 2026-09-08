@@ -73,13 +73,14 @@ class TelegramSupportAdapter(TelegramOperatorHandlers):
             CommandStart(),
             F.chat.type == ChatType.PRIVATE,
         )
-        self.router.message.register(
-            self.handle_private_message,
-            F.chat.type == ChatType.PRIVATE,
-        )
+        self.router.message.register(self.handle_private_message, F.chat.type == ChatType.PRIVATE)
         self.router.message.register(
             self.handle_group_message,
             F.chat.id == self.settings.support_group_id,
+        )
+        self.router.edited_message.register(
+            self.handle_edited_private_message,
+            F.chat.type == ChatType.PRIVATE,
         )
         self.router.edited_message.register(
             self.handle_edited_group_message,

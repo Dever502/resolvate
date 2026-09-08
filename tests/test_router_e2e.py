@@ -4,7 +4,9 @@ from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
+import pytest
 from aiogram import Bot, Dispatcher
 from aiogram.client.session.base import BaseSession
 from aiogram.enums import ChatType, MessageEntityType
@@ -109,7 +111,9 @@ def _edited_message_update(
     )
 
 
-async def test_router_registers_and_routes_private_and_authorized_group_boundaries() -> None:
+async def test_router_registers_and_routes_private_and_authorized_group_boundaries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     session = RecordingSession()
     bot = Bot(token=f"123456:{'A' * 35}", session=session)
     settings = Settings(
@@ -128,7 +132,7 @@ async def test_router_registers_and_routes_private_and_authorized_group_boundari
     dispatcher.include_router(adapter.router)
 
     assert len(adapter.router.message.handlers) == 3
-    assert len(adapter.router.edited_message.handlers) == 1
+    assert len(adapter.router.edited_message.handlers) == 2
     assert len(adapter.router.callback_query.handlers) == 3
     assert len(adapter.router.inline_query.handlers) == 0
 
@@ -182,12 +186,29 @@ async def test_router_registers_and_routes_private_and_authorized_group_boundari
         _edited_message_update(
             update_id=4,
             chat_id=settings.support_group_id,
-            user_id=2,
+            user_id=3,
             text="Изменённый ответ в клиентской теме",
             message_thread_id=777,
         ),
     )
 
+    assert session.requests == []
+    record_edit = AsyncMock()
+    database = object()
+    adapter.ticket_service = SimpleNamespace(database=database)  # type: ignore[assignment]
+    monkeypatch.setattr("resolvate.telegram_operator_handlers.record_edit", record_edit)
+    await dispatcher.feed_update(
+        bot,
+        _edited_message_update(
+            update_id=5,
+            chat_id=settings.support_group_id,
+            user_id=2,
+            text="Разрешённое редактирование",
+            message_thread_id=777,
+        ),
+    )
+    record_edit.assert_awaited_once()
+    assert record_edit.await_args.args[-1] is database
     assert session.requests == []
     await bot.session.close()
     assert session.closed is True

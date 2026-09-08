@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Поддержка · Resolvate</title>
+    <link rel="stylesheet" href="assets/app.css" />
+    <script src="assets/app.js" defer></script>
+  </head>
+  <body>
+    <main id="login-screen" class="login-screen">
+      <form id="login-form" class="login-card">
+        <div class="brand"><span class="brand-mark">R</span> Resolvate</div>
+        <h1>Рады видеть вас</h1>
+        <p class="muted">Войдите, чтобы продолжить работу с обращениями.</p>
+        <label
+          >Логин<input
+            name="login"
+            autocomplete="username"
+            required
+            maxlength="64"
+            autofocus
+        /></label>
+        <label
+          >Пароль<input
+            name="password"
+            type="password"
+            autocomplete="current-password"
+            required
+            minlength="12"
+            maxlength="128"
+        /></label>
+        <p id="login-error" class="error" role="alert"></p>
+        <button class="primary" type="submit">Войти</button>
+        <p class="hint">Доступ выдаёт администратор вашей поддержки.</p>
+      </form>
+    </main>
+    <div id="workspace" class="workspace" hidden>
+      <aside class="sidebar">
+        <header class="sidebar-head">
+          <div class="brand"><span class="brand-mark">R</span> Resolvate</div>
+          <span class="muted small">Поддержка</span>
+        </header>
+        <div class="list-controls">
+          <input
+            id="search"
+            type="search"
+            placeholder="Найти клиента…"
+            aria-label="Поиск клиента"
+            maxlength="100"
+          />
+          <nav class="tabs" aria-label="Список обращений">
+            <button id="active-tab" class="selected" aria-pressed="true">
+              Активные</button
+            ><button id="archive-tab" aria-pressed="false">Архив</button>
+          </nav>
+        </div>
+        <div id="ticket-list" class="ticket-list" aria-label="Диалоги"></div>
+        <button id="more-tickets" class="quiet">Показать ещё</button>
+        <footer class="sidebar-foot">
+          <div>
+            <strong id="account-name"></strong
+            ><span id="account-role" class="muted small"></span>
+          </div>
+          <button id="accounts-open" class="quiet" hidden>Команда</button
+          ><button id="logout" class="quiet">Выйти</button>
+        </footer>
+      </aside>
+      <main class="conversation">
+        <div id="global-error" class="notice" role="alert" hidden></div>
+        <div id="empty" class="empty">
+          <span class="empty-icon">↗</span>
+          <h1>Каждый вопрос важен</h1>
+          <p>
+            Выберите диалог слева, чтобы прочитать историю<br />и помочь
+            клиенту.
+          </p>
+        </div>
+        <section id="dialogue" class="dialogue" hidden>
+          <header class="dialogue-head">
+            <button id="back" class="quiet" aria-label="К списку диалогов">
+              ←</button
+            ><button id="customer-open" class="customer-title">
+              <strong id="customer-name"></strong
+              ><span id="customer-channel" class="muted small"></span></button
+            ><span id="closed-label" class="pill" hidden>В архиве</span
+            ><button id="lifecycle" class="secondary">Завершить</button>
+          </header>
+          <div id="messages" class="messages" aria-label="Переписка">
+            <button id="older" class="quiet older">Предыдущие сообщения</button>
+            <div id="message-list"></div>
+          </div>
+          <div class="composer-area">
+            <div
+              id="reply-options"
+              class="reply-options"
+              role="listbox"
+              aria-label="Готовые ответы"
+              hidden
+            ></div>
+            <div id="attachment" class="attachment" hidden>
+              <span id="attachment-name"></span
+              ><button
+                id="remove-file"
+                class="quiet"
+                aria-label="Убрать вложение"
+              >
+                ×
+              </button>
+            </div>
+            <form id="composer" class="composer">
+              <button
+                id="attach"
+                type="button"
+                class="icon-button"
+                aria-label="Прикрепить файл"
+                title="Фото, MP4/MOV или PDF до 20 МБ"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="m8 13 6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l9-9a2 2 0 0 1 3 3l-9 9"
+                  />
+                </svg>
+              </button>
+              <input
+                id="file"
+                type="file"
+                accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,application/pdf"
+                hidden
+              />
+              <textarea
+                id="message-text"
+                rows="1"
+                placeholder="Написать ответ…  / — готовые ответы"
+                aria-label="Текст ответа"
+                maxlength="3900"
+              ></textarea>
+              <button
+                id="send"
+                type="submit"
+                class="primary send"
+                aria-label="Отправить"
+              >
+                Отправить <span>↑</span>
+              </button>
+            </form>
+            <div class="composer-hint">
+              <span>Enter — отправить · Shift + Enter — новая строка</span
+              ><span>Resolvate</span>
+            </div>
+          </div>
+        </section>
+      </main>
+      <aside id="customer-card" class="customer-card" hidden>
+        <header>
+          <h2>Клиент</h2>
+          <button
+            id="customer-close"
+            class="quiet"
+            aria-label="Закрыть карточку"
+          >
+            ×
+          </button>
+        </header>
+        <dl id="customer-fields"></dl>
+      </aside>
+    </div>
+    <dialog id="accounts-dialog">
+      <header>
+        <div>
+          <h2>Команда поддержки</h2>
+          <p class="muted">Доступ к общим диалогам и готовым ответам.</p>
+        </div>
+        <button id="accounts-close" class="quiet" aria-label="Закрыть">
+          ×
+        </button>
+      </header>
+      <div id="account-list"></div>
+      <form id="account-form">
+        <h3>Добавить сотрудника</h3>
+        <div class="form-grid">
+          <label
+            >Имя<input
+              name="name"
+              required
+              maxlength="100"
+              autocomplete="off" /></label
+          ><label
+            >Логин<input
+              name="login"
+              required
+              minlength="3"
+              maxlength="64"
+              autocomplete="off"
+              pattern="[a-zA-Z0-9][a-zA-Z0-9_.-]{2,63}"
+          /></label>
+          <label
+            >Пароль<input
+              name="password"
+              type="password"
+              required
+              minlength="12"
+              maxlength="128"
+              autocomplete="new-password" /></label
+          ><label
+            >Роль<select name="role">
+              <option value="operator">Оператор</option>
+              <option value="admin">Администратор</option>
+            </select></label
+          >
+        </div>
+        <p id="account-error" class="error" role="alert"></p>
+        <button class="primary">Создать учётную запись</button>
+      </form>
+    </dialog>
+  </body>
+</html>

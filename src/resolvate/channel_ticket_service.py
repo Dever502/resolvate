@@ -26,10 +26,11 @@ from resolvate.models import (
     utcnow,
 )
 from resolvate.service_types import TicketNotFoundError
+from resolvate.telegram_attachments import attach_media
 from resolvate.ticket_ingress_service import TelegramOperatorReplyResult, TicketIngressService
 from resolvate.ticket_message_service import OperatorMessageResult, TicketMessageService
 from resolvate.trace import get_trace_id
-from resolvate.web_models import MediaAsset, SystemSetting, TicketLifecycleEvent
+from resolvate.web_models import SystemSetting, TicketLifecycleEvent
 from resolvate.web_support_service import WebSupportService
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,7 @@ class ChannelAwareTicketService(WebSupportService):
                 source_message_id=source_message_id,
                 content=content,
                 media=media,
+                stored_media=stored_media,
             )
         key = f"copy:{Direction.OPERATOR_TO_USER.value}:{source_chat_id}:{source_message_id}"
         reopen_key = f"telegram:reopen:{source_chat_id}:{source_message_id}"
@@ -126,8 +128,11 @@ class ChannelAwareTicketService(WebSupportService):
                 )
             )
             message_id = uuid.uuid4()
-            effective_media = stored_media.message_metadata() if stored_media else media
-            session.add(
+            effective_media = (
+                {**(media or {}), **stored_media.message_metadata()} if stored_media else media
+            )
+            await attach_media(
+                session,
                 TicketMessage(
                     id=str(message_id),
                     ticket_id=ticket.id,
@@ -137,22 +142,9 @@ class ChannelAwareTicketService(WebSupportService):
                     source_message_id=source_message_id,
                     content=content,
                     media=effective_media,
-                )
+                ),
+                stored_media,
             )
-            if stored_media is not None:
-                await session.flush()
-                session.add(
-                    MediaAsset(
-                        id=stored_media.id,
-                        ticket_id=ticket.id,
-                        message_id=str(message_id),
-                        storage_path=stored_media.storage_path,
-                        mime_type=stored_media.mime_type,
-                        size_bytes=stored_media.size_bytes,
-                        sha256=stored_media.sha256,
-                        original_filename=stored_media.original_filename,
-                    )
-                )
             if TicketChannel(ticket.channel) is TicketChannel.TELEGRAM:
                 if view.telegram_user_id is None:
                     raise RuntimeError("Telegram ticket has no Telegram identity")
