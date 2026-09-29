@@ -77,6 +77,24 @@ class DurableTelegramIngressMiddleware(BaseMiddleware):
         ):
             decision = await self.inbound_limiter.consume(f"telegram:{message.from_user.id}")
             if not decision.allowed:
+                if decision.notify_operators:
+                    try:
+                        # Same ordered queue as admitted messages: even an immediate burst
+                        # on a new conversation is reported after its ticket is created.
+                        await self.repository.enqueue_inbound_update(
+                            event.update_id,
+                            {
+                                "resolvate_event": "rate_limit",
+                                "telegram_user_id": message.from_user.id,
+                            },
+                            ordering_key=update_ordering_key(event),
+                        )
+                    except Exception:
+                        await self.inbound_limiter.retry_operator_notice(
+                            f"telegram:{message.from_user.id}"
+                        )
+                        raise
+                    self.wake_worker()
                 await self._reject_rate_limited_message(
                     message, decision.retry_after_seconds, decision.notify_client
                 )
@@ -147,10 +165,12 @@ class TelegramIngressWorker:
         poll_interval_seconds: float = 0.25,
         stale_recovery_interval_seconds: float = 60.0,
         cleanup_interval_seconds: float = 3600.0,
+        notify_rate_limit: Callable[[int, int], Awaitable[None]] | None = None,
     ) -> None:
         self.bot = bot
         self.dispatcher = dispatcher
         self.repository = repository
+        self.notify_rate_limit = notify_rate_limit
         self.runtime_health = runtime_health
         self.poll_interval_seconds = poll_interval_seconds
         if cleanup_interval_seconds <= 0:
@@ -182,12 +202,18 @@ class TelegramIngressWorker:
                     await self._wait()
                     continue
                 try:
-                    update = Update.model_validate(job.payload, context={"bot": self.bot})
-                    await self.dispatcher.feed_update(
-                        self.bot,
-                        update,
-                        durable_replay=True,
-                    )
+                    if job.payload.get("resolvate_event") == "rate_limit":
+                        user_id = job.payload.get("telegram_user_id")
+                        if self.notify_rate_limit is None or not isinstance(user_id, int):
+                            raise ValueError("rate limit event has no handler or user")
+                        await self.notify_rate_limit(user_id, job.telegram_update_id)
+                    else:
+                        update = Update.model_validate(job.payload, context={"bot": self.bot})
+                        await self.dispatcher.feed_update(
+                            self.bot,
+                            update,
+                            durable_replay=True,
+                        )
                 except asyncio.CancelledError:
                     raise
                 except Exception as error:

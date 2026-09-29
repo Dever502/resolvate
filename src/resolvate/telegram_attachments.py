@@ -20,7 +20,8 @@ from resolvate.telegram_message_utils import media_metadata, message_text
 from resolvate.web_models import MediaAsset
 
 UNSUPPORTED_ATTACHMENT = (
-    "⚠️ Этот тип файла не поддерживается. Отправьте фото, видео или PDF размером до 20 МБ."
+    "⚠️ Этот тип файла не поддерживается. "
+    "Отправьте фото, видео, PDF или голосовое OGG/Opus до 20 МБ."
 )
 
 
@@ -29,7 +30,11 @@ async def save_attachment(
 ) -> StoredMedia | None:
     if message.content_type == "text":
         return None
-    attachment = message.photo[-1] if message.photo else message.video or message.document
+    attachment = (
+        message.photo[-1]
+        if message.photo
+        else message.video or message.document or getattr(message, "voice", None)
+    )
     if attachment is None:
         raise MediaValidationError(UNSUPPORTED_ATTACHMENT)
     mime = "image/jpeg" if message.photo else getattr(attachment, "mime_type", None)
@@ -43,11 +48,14 @@ async def save_attachment(
             "image/webp",
             "video/mp4",
             "video/quicktime",
+            "audio/ogg",
+            "application/ogg",
+            "audio/opus",
         }
         or (
             filename
             and Path(filename).suffix.lower()
-            not in {".pdf", ".jpg", ".jpeg", ".png", ".webp", ".mp4", ".mov"}
+            not in {".pdf", ".jpg", ".jpeg", ".png", ".webp", ".mp4", ".mov", ".ogg", ".opus"}
         )
     ):
         raise MediaValidationError(UNSUPPORTED_ATTACHMENT)

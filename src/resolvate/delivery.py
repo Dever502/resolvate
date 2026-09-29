@@ -311,7 +311,7 @@ class DeliveryWorker:
                     reply_markup=reply_markup,
                 )
                 delivered_message_id = sent_message.message_id
-            elif payload.get("kind") in {"send_photo", "send_video", "send_document"}:
+            elif payload.get("kind") in {"send_photo", "send_video", "send_document", "send_voice"}:
                 storage_path = payload.get("storage_path")
                 if not isinstance(storage_path, str):
                     raise TypeError("send_photo delivery requires storage_path")
@@ -321,12 +321,20 @@ class DeliveryWorker:
                     photo_path.relative_to(allowed_root)
                 except ValueError as error:
                     raise ValueError("send_photo delivery path is outside media storage") from error
-                if payload.get("kind") == "send_video":
+                if payload.get("kind") == "send_voice":
+                    sent_message = await self.bot.send_voice(
+                        chat_id=_payload_int(payload, "target_chat_id"),
+                        voice=FSInputFile(photo_path),
+                        caption=str(payload["text"]) if payload.get("text") is not None else None,
+                        parse_mode="HTML" if payload.get("parse_mode") == "HTML" else None,
+                        message_thread_id=target_thread_id,
+                    )
+                elif payload.get("kind") == "send_video":
                     sent_message = await self.bot.send_video(
                         chat_id=_payload_int(payload, "target_chat_id"),
                         video=FSInputFile(photo_path),
                         caption=str(payload["text"]) if payload.get("text") is not None else None,
-                        parse_mode=None,
+                        parse_mode="HTML" if payload.get("parse_mode") == "HTML" else None,
                         message_thread_id=target_thread_id,
                     )
                 elif payload.get("kind") == "send_document":
@@ -334,7 +342,7 @@ class DeliveryWorker:
                         chat_id=_payload_int(payload, "target_chat_id"),
                         document=FSInputFile(photo_path),
                         caption=str(payload["text"]) if payload.get("text") is not None else None,
-                        parse_mode=None,
+                        parse_mode="HTML" if payload.get("parse_mode") == "HTML" else None,
                         message_thread_id=target_thread_id,
                     )
                 else:
@@ -342,7 +350,7 @@ class DeliveryWorker:
                         chat_id=_payload_int(payload, "target_chat_id"),
                         photo=FSInputFile(photo_path),
                         caption=str(payload["text"]) if payload.get("text") is not None else None,
-                        parse_mode=None,
+                        parse_mode="HTML" if payload.get("parse_mode") == "HTML" else None,
                         message_thread_id=target_thread_id,
                     )
                 delivered_message_id = sent_message.message_id

@@ -361,6 +361,18 @@ async def test_web_message_rate_limit_is_per_canonical_identity(
         assert limited.headers["Retry-After"] == "60"
         assert limited.json()["error"]["code"] == "rate_limited"
         assert independent.status_code == 200
+        async with database.session() as session:
+            notices = list(
+                (
+                    await session.scalars(
+                        select(TicketMessage).where(TicketMessage.channel == "internal_note")
+                    )
+                ).all()
+            )
+            assert len(notices) == 1 and notices[0].media["system_event"] == "rate_limit"
+            ticket_id = notices[0].ticket_id
+        visible = await _service.list_messages(ticket_id, after=None, limit=50)
+        assert len(visible.items) == 1 and visible.items[0].content == "Первое сообщение"
     finally:
         await client.aclose()
         await database.dispose()
@@ -667,6 +679,11 @@ async def test_web_close_rating_and_reopen_cycles(
             "ratings",
             "ratings",
         ]
+        assert "⭐⭐⭐⭐⭐ <b>5/5</b>" in rating_payloads[0]["text"]
+        assert "cycle@example.com" in rating_payloads[0]["text"]
+        assert "cycle-user" in rating_payloads[0]["text"]
+        assert "Telegram ID" not in rating_payloads[0]["text"]
+        assert "⭐⭐⭐⭐ <b>4/5</b>" in rating_payloads[1]["text"]
     finally:
         await client.aclose()
         await database.dispose()

@@ -92,6 +92,7 @@ def project_view(project: Project, account: ConsoleAccount, member: bool) -> dic
         "active": project.active,
         "admin_id": project.admin_id,
         "role": "admin" if project.admin_id == account.id else "operator" if member else None,
+        "logo": project.logo_sha256 if member or project.admin_id == account.id else None,
     }
 
 

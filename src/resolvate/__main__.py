@@ -285,8 +285,21 @@ async def _run_project(
     poll_progress = TelegramPollProgress()
     bot.session.middleware(poll_progress)
     dispatcher = Dispatcher()
+
+    async def notify_rate_limit(user_id: int, update_id: int) -> None:
+        await ticket_service.record_rate_limit_notice(
+            provider="telegram",
+            identity=str(user_id),
+            key=f"rate-limit:telegram:{update_id}",
+            target_chat_id=settings.support_group_id,
+        )
+
     ingress_worker = TelegramIngressWorker(
-        bot=bot, dispatcher=dispatcher, repository=durable_work, runtime_health=runtime_health
+        bot=bot,
+        dispatcher=dispatcher,
+        repository=durable_work,
+        runtime_health=runtime_health,
+        notify_rate_limit=notify_rate_limit,
     )
     dispatcher.update.outer_middleware(TraceMiddleware())
     dispatcher.update.outer_middleware(

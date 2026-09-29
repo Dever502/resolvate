@@ -59,6 +59,8 @@ def test_project_media_round_trip_preserves_runtime_files(
     files = {
         f"projects/{first}/web-media/assets/a.jpg": b"first",
         f"projects/{second}/transcript-media/b.mp4": b"second",
+        f"projects/{first}/branding/logo.png": b"first logo",
+        f"projects/{second}/branding/logo.png": b"second logo",
     }
     for relative, contents in files.items():
         path = source / relative
@@ -78,7 +80,7 @@ def test_project_media_round_trip_preserves_runtime_files(
     heartbeat.parent.mkdir(parents=True)
     heartbeat.write_text("keep")
     monkeypatch.setattr(sys, "stdin", BinaryInput(payload))
-    assert import_media(destination, apply=True) == 11
+    assert import_media(destination, apply=True) == sum(len(data) for data in files.values())
     assert heartbeat.read_text() == "keep"
     for relative, contents in files.items():
         assert (destination / relative).read_bytes() == contents
@@ -88,6 +90,7 @@ def test_project_media_round_trip_preserves_runtime_files(
     "name",
     [
         "projects/not-a-project/web-media/test",
+        "branding/installation-logo.png",
         "projects/11111111-1111-1111-1111-111111111111/heartbeat",
         "projects/11111111-1111-1111-1111-111111111111/web-media/../../../escape",
     ],

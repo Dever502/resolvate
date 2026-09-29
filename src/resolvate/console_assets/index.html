@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>Поддержка · Resolvate</title>
     <link rel="stylesheet" href="assets/app.css" />
+    <script src="assets/image_viewer.js" defer></script>
     <script src="assets/app.js" defer></script>
   </head>
   <body>
@@ -42,6 +43,7 @@
           <button id="projects-open" class="quiet">Проекты</button>
         </header>
         <label class="project-picker">Проект
+          <img id="project-logo" class="project-logo" alt="Логотип проекта" hidden />
           <select id="project-select" aria-label="Текущий проект"></select>
         </label>
         <div class="list-controls">
@@ -66,6 +68,7 @@
             ><span id="account-role" class="muted small"></span>
           </div>
           <button id="accounts-open" class="quiet" hidden>Аккаунты</button
+          ><button id="password-open" class="quiet">Пароль</button
           ><button id="logout" class="quiet">Выйти</button>
         </footer>
       </aside>
@@ -113,7 +116,7 @@
                 type="button"
                 class="icon-button"
                 aria-label="Прикрепить файл"
-                title="Фото, MP4/MOV или PDF до 20 МБ"
+                title="Фото, MP4/MOV, PDF или голосовое OGG/Opus до 20 МБ"
               >
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                   <path
@@ -124,7 +127,7 @@
               <input
                 id="file"
                 type="file"
-                accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,application/pdf"
+                accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,application/pdf,audio/ogg,audio/opus,.ogg,.opus"
                 hidden
               />
               <textarea
@@ -163,6 +166,33 @@
         <dl id="customer-fields"></dl>
       </aside>
     </div>
+    <dialog id="password-dialog" aria-labelledby="password-title">
+      <header>
+        <h2 id="password-title">Сменить пароль</h2>
+        <button id="password-close" class="quiet" aria-label="Закрыть">×</button>
+      </header>
+      <form id="password-form">
+        <p id="password-description" class="muted"></p>
+        <label>Текущий пароль вашего аккаунта<input name="current_password" type="password" autocomplete="current-password" required maxlength="128" /></label>
+        <label>Новый пароль<input name="new_password" type="password" autocomplete="new-password" required minlength="12" maxlength="128" /></label>
+        <label>Повторите новый пароль<input name="confirmation" type="password" autocomplete="new-password" required minlength="12" maxlength="128" /></label>
+        <p id="password-error" class="error" role="alert"></p>
+        <button class="primary">Сохранить пароль</button>
+      </form>
+    </dialog>
+    <dialog id="image-viewer" class="image-viewer" aria-label="Просмотр изображения">
+      <div class="image-toolbar">
+        <button id="image-zoom-out" aria-label="Уменьшить">−</button>
+        <button id="image-reset" title="Подогнать под окно">100%</button>
+        <button id="image-zoom-in" aria-label="Увеличить">+</button>
+        <span>Колесо или жест — масштаб · перетаскивание — перемещение</span>
+        <button id="image-close" aria-label="Закрыть изображение">×</button>
+      </div>
+      <div id="image-stage" class="image-stage">
+        <img id="image-full" alt="Изображение из переписки" draggable="false" />
+      </div>
+      <p id="image-error" role="alert" hidden>Изображение недоступно. Закройте просмотр и обновите переписку.</p>
+    </dialog>
     <dialog id="accounts-dialog">
       <header>
         <div>
@@ -233,6 +263,7 @@
         <nav class="tabs" aria-label="Управление проектом">
           <button id="members-tab" class="selected" aria-pressed="true">Участники</button>
           <button id="settings-tab" aria-pressed="false">Подключения</button>
+          <button id="branding-tab" aria-pressed="false">Логотип</button>
         </nav>
         <section id="members-section">
           <div id="member-list"></div>
@@ -250,6 +281,17 @@
           <p class="muted small">Секреты не отображаются. Пустое поле ключа сохраняет прежний ключ.</p>
           <div id="project-setting-fields"></div>
           <button class="primary">Сохранить подключения</button>
+        </form>
+        <form id="project-branding-form" hidden>
+          <h3>Логотип проекта</h3>
+          <img id="branding-preview" class="branding-preview" alt="Текущий логотип" hidden />
+          <p class="muted small">PNG, JPEG или WebP до 2 МБ. Только для выбранного проекта.</p>
+          <label>Изображение<input id="branding-file" type="file" accept="image/png,image/jpeg,image/webp" required /></label>
+          <div class="row-actions">
+            <button class="primary" type="submit">Загрузить логотип</button>
+            <button id="branding-remove" class="quiet" type="button" hidden>Удалить логотип</button>
+          </div>
+          <p id="branding-status" class="muted small" role="status"></p>
         </form>
       </section>
     </dialog>

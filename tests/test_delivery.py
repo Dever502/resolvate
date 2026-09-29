@@ -528,6 +528,35 @@ async def test_web_photo_delivery_reads_only_from_managed_media_storage(
     assert service.delivered_calls == [("web-photo", "claim-photo", 790)]
 
 
+async def test_voice_delivery_preserves_caption_and_uses_voice_method(tmp_path: Path) -> None:
+    service = FakeTicketService()
+    bot = AsyncMock()
+    bot.send_voice.return_value = SimpleNamespace(message_id=791)
+    worker = delivery_worker(tmp_path, service=service, bot=bot)
+    await worker._deliver(
+        DeliveryJob(
+            id="voice",
+            ticket_id="ticket-1",
+            attempt_count=1,
+            claim_token="claim-voice",
+            payload={
+                "kind": "send_voice",
+                "target_chat_id": -100123,
+                "target_thread_id": 900,
+                "storage_path": "web-media/assets/aa/voice.ogg",
+                "text": "<b>КЛИЕНТ</b>",
+                "parse_mode": "HTML",
+            },
+        )
+    )
+    call = bot.send_voice.await_args.kwargs
+    assert call["caption"] == "<b>КЛИЕНТ</b>" and call["parse_mode"] == "HTML"
+    assert call["message_thread_id"] == 900
+    assert str(call["voice"].path).endswith("web-media/assets/aa/voice.ogg")
+    assert service.delivered_calls == [("voice", "claim-voice", 791)]
+    bot.send_document.assert_not_awaited()
+
+
 async def test_stale_success_is_not_reported_as_delivered(tmp_path: Path, caplog: Any) -> None:
     service = FakeTicketService(transitions_applied=False)
     worker = delivery_worker(tmp_path, service=service, bot=SuccessfulBot())

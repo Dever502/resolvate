@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from typing import cast
 
@@ -23,9 +24,11 @@ from resolvate.models import (
     UserIdentity,
     utcnow,
 )
+from resolvate.rotation_gate import lock_rotation_gate
 from resolvate.service_types import TicketNotFoundError, TicketView
 from resolvate.telegram_attachments import attach_media
 from resolvate.ticket_service_base import TicketServiceBase
+from resolvate.topic_messages import topic_deliveries
 from resolvate.trace import get_trace_id
 from resolvate.web_models import TicketLifecycleEvent
 
@@ -47,6 +50,60 @@ class TelegramOperatorReplyResult:
 
 
 class TicketIngressService(TicketServiceBase):
+    async def record_rate_limit_notice(
+        self, *, provider: str, identity: str, key: str, target_chat_id: int
+    ) -> None:
+        """An operator-only timeline event and Telegram delivery in one transaction."""
+        text = (
+            "⚠️ Клиент отправил слишком много сообщений подряд. "
+            "Сработала защита от спама — приём новых сообщений временно ограничен."
+        )
+        async with self.database.session() as session:
+            await lock_rotation_gate(session)
+            ticket = await session.scalar(
+                select(Ticket)
+                .join(UserIdentity, UserIdentity.user_id == Ticket.user_id)
+                .where(
+                    UserIdentity.provider == provider,
+                    UserIdentity.external_id == identity,
+                    Ticket.channel
+                    == (TicketChannel.TELEGRAM if provider == "telegram" else TicketChannel.WEB),
+                )
+                .with_for_update(of=Ticket)
+            )
+            # Commands alone must not create or resurrect a support conversation.
+            if ticket is None or ticket.status == TicketStatus.CLOSED:
+                return
+            if await self._delivery_exists(session, key):
+                return
+            message = TicketMessage(
+                ticket_id=ticket.id,
+                direction=Direction.OPERATOR_TO_USER,
+                channel="internal_note",
+                content=text,
+                media={"operator_name": "Система", "system_event": "rate_limit"},
+            )
+            session.add(message)
+            await session.flush()
+            session.add(
+                DeliveryOutbox(
+                    ticket_id=ticket.id,
+                    direction=Direction.USER_TO_OPERATOR,
+                    idempotency_key=key,
+                    payload={
+                        "kind": "send_text",
+                        "text": text,
+                        "canonical_message_id": message.id,
+                        "target_chat_id": target_chat_id,
+                        "target_thread_id": ticket.topic_id,
+                    },
+                    status=DeliveryStatus.PENDING
+                    if ticket.topic_id
+                    else DeliveryStatus.WAITING_TOPIC,
+                )
+            )
+            await session.commit()
+
     async def _ticket_for_telegram_id(
         self, session: AsyncSession, telegram_user_id: int
     ) -> Ticket | None:
@@ -137,19 +194,18 @@ class TicketIngressService(TicketServiceBase):
             else:
                 ticket.last_activity_at = utcnow()
 
-            await attach_media(
-                session,
-                TicketMessage(
-                    ticket_id=ticket.id,
-                    direction=Direction.USER_TO_OPERATOR,
-                    source_chat_id=source_chat_id,
-                    source_message_id=source_message_id,
-                    content=content,
-                    media=media,
-                ),
-                stored_media,
+            canonical = TicketMessage(
+                id=str(uuid.uuid4()),
+                ticket_id=ticket.id,
+                direction=Direction.USER_TO_OPERATOR,
+                source_chat_id=source_chat_id,
+                source_message_id=source_message_id,
+                content=content,
+                media=media,
             )
+            await attach_media(session, canonical, stored_media)
             delivery_payload: dict[str, object] = {
+                "canonical_message_id": canonical.id,
                 "kind": "copy",
                 "source_chat_id": source_chat_id,
                 "source_message_id": source_message_id,
@@ -158,19 +214,35 @@ class TicketIngressService(TicketServiceBase):
             }
             if reopened:
                 delivery_payload["prepare_reopened_context"] = True
-            session.add(
-                DeliveryOutbox(
-                    ticket_id=ticket.id,
-                    direction=Direction.USER_TO_OPERATOR,
-                    idempotency_key=key,
-                    payload=delivery_payload,
-                    status=(
-                        DeliveryStatus.PENDING
-                        if ticket.topic_id is not None
-                        else DeliveryStatus.WAITING_TOPIC
-                    ),
+            if stored_media is not None or not media:
+                delivery_payload["kind"] = (
+                    stored_media.delivery_kind if stored_media else "send_text"
                 )
-            )
+                if stored_media:
+                    delivery_payload["storage_path"] = stored_media.storage_path
+                session.add_all(
+                    topic_deliveries(
+                        ticket_id=ticket.id,
+                        key=key,
+                        payload=delivery_payload,
+                        content=content,
+                        author=display_name or username,
+                    )
+                )
+            else:
+                session.add(
+                    DeliveryOutbox(
+                        ticket_id=ticket.id,
+                        direction=Direction.USER_TO_OPERATOR,
+                        idempotency_key=key,
+                        payload=delivery_payload,
+                        status=(
+                            DeliveryStatus.PENDING
+                            if ticket.topic_id is not None
+                            else DeliveryStatus.WAITING_TOPIC
+                        ),
+                    )
+                )
             if created or reopened:
                 session.add(
                     TicketLifecycleEvent(

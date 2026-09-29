@@ -97,6 +97,7 @@ async def test_middleware_drops_excess_private_messages_before_persistence() -> 
     class Repository:
         def __init__(self) -> None:
             self.saved: list[tuple[int, str]] = []
+            self.payloads: list[dict[str, object]] = []
 
         async def enqueue_inbound_update(
             self,
@@ -106,6 +107,7 @@ async def test_middleware_drops_excess_private_messages_before_persistence() -> 
             ordering_key: str,
         ) -> bool:
             self.saved.append((update_id, ordering_key))
+            self.payloads.append(payload)
             return True
 
     repository = Repository()
@@ -144,9 +146,44 @@ async def test_middleware_drops_excess_private_messages_before_persistence() -> 
     await middleware(handler, private_message(2), {})
     await middleware(handler, private_message(3), {})
 
-    assert repository.saved == [(1, "chat:42:thread:0")]
-    assert wake.call_count == 1
+    assert repository.saved == [(1, "chat:42:thread:0"), (2, "chat:42:thread:0")]
+    assert repository.payloads[1] == {"resolvate_event": "rate_limit", "telegram_user_id": 42}
+    assert wake.call_count == 2
     assert bot.send_message.await_count == 1
     assert bot.send_message.await_args.kwargs["text"] == (
         "Вы отправили слишком много сообщений. Следующее можно отправить через 1 мин."
     )
+
+
+async def test_short_burst_limit_recovers_without_rejected_messages_extending_it() -> None:
+    clock = Clock()
+    limiter = UserMessageRateLimiter(monotonic=clock.monotonic)
+    for _ in range(8):
+        assert (await limiter.consume("telegram:42")).allowed
+    decision = await limiter.consume("telegram:42")
+    assert not decision.allowed and decision.retry_after_seconds == 5
+    assert decision.notify_client and decision.notify_operators
+    clock.advance(4)
+    for _ in range(50):
+        decision = await limiter.consume("telegram:42")
+        assert decision.retry_after_seconds == 1
+        assert not decision.notify_client and not decision.notify_operators
+    assert (await limiter.consume("telegram:43")).allowed
+    assert (await limiter.consume("web:external_id:42")).allowed
+    clock.advance(1)
+    assert (await limiter.consume("telegram:42")).allowed
+
+
+async def test_operator_notice_is_once_per_episode_and_retried_after_failed_write() -> None:
+    clock = Clock()
+    limiter = UserMessageRateLimiter(per_minute=1, per_hour=1, monotonic=clock.monotonic)
+    await limiter.consume("telegram:42")
+    assert (await limiter.consume("telegram:42")).notify_operators
+    await limiter.retry_operator_notice("telegram:42")
+    assert (await limiter.consume("telegram:42")).notify_operators
+    clock.advance(61)
+    decision = await limiter.consume("telegram:42")
+    assert decision.notify_client and not decision.notify_operators
+    clock.advance(3600)
+    assert (await limiter.consume("telegram:42")).allowed
+    assert (await limiter.consume("telegram:42")).notify_operators

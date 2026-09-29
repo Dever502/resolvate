@@ -12,14 +12,18 @@ class UserMessageRateLimitDecision:
     allowed: bool
     retry_after_seconds: int = 0
     notify_client: bool = False
+    notify_operators: bool = False
 
 
 @dataclass
 class _UserMessageRateWindow:
+    burst_hits: deque[float] = field(default_factory=deque)
     minute_hits: deque[float] = field(default_factory=deque)
     hour_hits: deque[float] = field(default_factory=deque)
     last_seen: float = 0.0
     last_notice_at: float | None = None
+    last_operator_notice_at: float | None = None
+    operator_notice_sent: bool = False
 
 
 class UserMessageRateLimiter:
@@ -30,16 +34,20 @@ class UserMessageRateLimiter:
         *,
         per_minute: int = 30,
         per_hour: int = 200,
+        burst: int = 8,
+        burst_seconds: float = 5.0,
         notice_interval_seconds: float = 60.0,
         max_users: int = 20_000,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         if per_minute <= 0 or per_hour < per_minute:
             raise ValueError("user message limits must be positive and hourly must cover burst")
-        if notice_interval_seconds <= 0 or max_users <= 0:
+        if notice_interval_seconds <= 0 or max_users <= 0 or burst <= 0 or burst_seconds <= 0:
             raise ValueError("notice interval and max_users must be positive")
         self.per_minute = per_minute
         self.per_hour = per_hour
+        self.burst = burst
+        self.burst_seconds = burst_seconds
         self.notice_interval_seconds = notice_interval_seconds
         self.max_users = max_users
         self._monotonic = monotonic
@@ -67,15 +75,21 @@ class UserMessageRateLimiter:
 
             self._discard_expired(window.minute_hits, minute_cutoff)
             self._discard_expired(window.hour_hits, hour_cutoff)
+            self._discard_expired(window.burst_hits, now - self.burst_seconds)
             window.last_seen = now
             minute_blocked = len(window.minute_hits) >= self.per_minute
             hour_blocked = len(window.hour_hits) >= self.per_hour
-            if not minute_blocked and not hour_blocked:
+            burst_blocked = len(window.burst_hits) >= self.burst
+            if not minute_blocked and not hour_blocked and not burst_blocked:
+                window.burst_hits.append(now)
                 window.minute_hits.append(now)
                 window.hour_hits.append(now)
+                window.operator_notice_sent = False
                 return UserMessageRateLimitDecision(allowed=True)
 
             retry_at = []
+            if burst_blocked:
+                retry_at.append(window.burst_hits[0] + self.burst_seconds)
             if minute_blocked:
                 retry_at.append(window.minute_hits[0] + 60.0)
             if hour_blocked:
@@ -87,11 +101,26 @@ class UserMessageRateLimiter:
             )
             if notify_client:
                 window.last_notice_at = now
+            notify_operators = not window.operator_notice_sent and (
+                window.last_operator_notice_at is None
+                or now - window.last_operator_notice_at >= self.notice_interval_seconds
+            )
+            if notify_operators:
+                window.operator_notice_sent = True
+                window.last_operator_notice_at = now
             return UserMessageRateLimitDecision(
                 allowed=False,
                 retry_after_seconds=retry_after,
                 notify_client=notify_client,
+                notify_operators=notify_operators,
             )
+
+    async def retry_operator_notice(self, identity_key: str) -> None:
+        """A failed durable write must not consume the notification opportunity."""
+        async with self._lock:
+            if window := self._windows.get(identity_key):
+                window.operator_notice_sent = False
+                window.last_operator_notice_at = None
 
     @staticmethod
     def _discard_expired(hits: deque[float], cutoff: float) -> None:

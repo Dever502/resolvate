@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 
 from resolvate.api_security import InMemoryRateLimiter
 from resolvate.database import Database
-from resolvate.models import ConsoleAccount, ConsoleSession, Project, utcnow
+from resolvate.models import AccessAudit, ConsoleAccount, ConsoleSession, Project, utcnow
 
 COOKIE = "resolvate_session"
 SESSION_SECONDS = 12 * 60 * 60
@@ -69,6 +69,7 @@ class ConsoleAuth:
         self.global_limiter = InMemoryRateLimiter(limit=60, window_seconds=60)
         self.request_limiter = InMemoryRateLimiter(limit=300, window_seconds=60)
         self.hash_slots = asyncio.Semaphore(2)
+        self.password_limiter = InMemoryRateLimiter(limit=5, window_seconds=300)
 
     def same_origin(self, request: Request) -> None:
         if request.headers.get("origin") != self.origin:
@@ -214,6 +215,65 @@ class ConsoleAuth:
             except IntegrityError as error:
                 raise HTTPException(409, "Логин или Telegram ID уже используется.") from error
             return account
+
+    async def change_password(
+        self,
+        actor: ConsoleAccount,
+        *,
+        token: str,
+        current_password: str,
+        new_password: str,
+        target_id: str | None = None,
+    ) -> None:
+        reset = target_id is not None
+        if reset and actor.role != "admin":
+            raise HTTPException(403, "Сброс пароля доступен администратору установки.")
+        allowed, retry = await self.password_limiter.consume(actor.id)
+        if not allowed:
+            raise HTTPException(
+                429, "Слишком много попыток смены пароля.", headers={"Retry-After": str(retry)}
+            )
+        previous_hash = actor.password_hash
+        async with self.hash_slots:
+            if not await asyncio.to_thread(verify_password, current_password, previous_hash):
+                raise HTTPException(403, "Неверный текущий пароль вашего аккаунта.")
+            encoded = await asyncio.to_thread(password_hash, new_password)
+        async with self.database.session() as session:
+            await session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": ACCOUNT_LOCK})
+            current = await session.scalar(
+                select(ConsoleAccount).where(ConsoleAccount.id == actor.id).with_for_update()
+            )
+            live_session = await session.scalar(
+                select(ConsoleSession.token_hash).where(
+                    ConsoleSession.token_hash == digest(token),
+                    ConsoleSession.account_id == actor.id,
+                    ConsoleSession.expires_at > utcnow(),
+                )
+            )
+            if (
+                current is None
+                or not current.active
+                or current.password_hash != previous_hash
+                or live_session is None
+            ):
+                raise HTTPException(401, "Сессия завершена. Войдите снова.")
+            if reset and current.role != "admin":
+                raise HTTPException(403, "Сброс пароля доступен администратору установки.")
+            target = await session.get(ConsoleAccount, target_id or actor.id, with_for_update=True)
+            if target is None:
+                raise HTTPException(404, "Учётная запись не найдена.")
+            target.password_hash = encoded
+            await session.execute(
+                delete(ConsoleSession).where(ConsoleSession.account_id == target.id)
+            )
+            session.add(
+                AccessAudit(
+                    actor_id=actor.id,
+                    target_id=target.id,
+                    action="password_reset" if reset else "password_changed",
+                )
+            )
+            await session.commit()
 
     async def set_active(self, account_id: str, active: bool) -> None:
         async with self.database.session() as session:

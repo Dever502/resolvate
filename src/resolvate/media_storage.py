@@ -29,6 +29,7 @@ MIME_EXTENSIONS = {
     "application/pdf": ".pdf",
     "video/mp4": ".mp4",
     "video/quicktime": ".mov",
+    "audio/ogg": ".ogg",
 }
 PILLOW_FORMAT_MIME_TYPES = {
     "JPEG": "image/jpeg",
@@ -65,6 +66,8 @@ class StoredMedia:
 
     @property
     def delivery_kind(self) -> str:
+        if self.mime_type == "audio/ogg":
+            return "send_voice"
         if self.mime_type.startswith("video/"):
             return "send_video"
         if self.mime_type.startswith("image/") and self.size_bytes <= 10 * 1024 * 1024:
@@ -74,7 +77,9 @@ class StoredMedia:
     def message_metadata(self) -> dict[str, object]:
         return {
             "type": (
-                "photo"
+                "voice"
+                if self.mime_type == "audio/ogg"
+                else "photo"
                 if self.mime_type.startswith("image/")
                 else "video"
                 if self.mime_type.startswith("video/")
@@ -201,8 +206,11 @@ class LocalMediaStorage:
         except (subprocess.SubprocessError, ValueError, OSError) as error:
             temp_path.unlink(missing_ok=True)
             raise MediaValidationError(
-                "Файл не прошёл проверку. Допустимы фото, MP4/MOV и PDF до 20 МБ."
+                "Файл не прошёл проверку. "
+                "Допустимы фото, MP4/MOV, PDF и голосовые OGG/Opus до 20 МБ."
             ) from error
+        if detected_mime == "audio/ogg" and declared_mime in {"application/ogg", "audio/opus"}:
+            declared_mime = "audio/ogg"
         if declared_mime and declared_mime.casefold() not in {
             detected_mime,
             "application/octet-stream",

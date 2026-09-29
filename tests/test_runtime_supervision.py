@@ -267,6 +267,38 @@ async def test_durable_ingress_commits_without_running_handler_then_replays() ->
     assert handled == [501]
 
 
+async def test_ingress_replays_rate_limit_control_event_without_customer_message() -> None:
+    from resolvate.durable_work import InboundUpdateJob
+
+    repository = AsyncMock()
+    dispatcher = AsyncMock()
+    job = InboundUpdateJob(
+        telegram_update_id=9,
+        payload={"resolvate_event": "rate_limit", "telegram_user_id": 42},
+        attempt_count=1,
+        claim_token="claim",
+    )
+    repository.claim_inbound_update.return_value = job
+    repository.purge_expired_terminal_work.return_value.total = 0
+    seen = []
+
+    async def notify(user_id: int, update_id: int) -> None:
+        seen.append((user_id, update_id))
+        worker.stop()
+
+    worker = TelegramIngressWorker(
+        bot=AsyncMock(),
+        dispatcher=dispatcher,
+        repository=repository,
+        notify_rate_limit=notify,
+    )
+    await worker.run()
+    assert seen == [(42, 9)]
+    repository.finish_inbound_update.assert_awaited_once_with(job)
+    repository.retry_inbound_update.assert_not_awaited()
+    dispatcher.feed_update.assert_not_awaited()
+
+
 async def test_retention_cleanup_failure_does_not_stop_ingress(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import uuid
 from collections.abc import AsyncIterator
@@ -139,6 +140,83 @@ async def test_account_permissions_and_revocation(console: Any) -> None:
     assert (await client.get("/console/me")).status_code == 401
 
 
+async def test_change_password_revokes_all_sessions_and_preserves_role(console: Any) -> None:
+    client, database, _, auth, admin, _ = console
+    _, other_token = await auth.login("admin", PASSWORD, "other-device")
+    new_password = "changed-test-password-only"
+    payload = {"current_password": PASSWORD, "new_password": new_password}
+    assert (
+        await client.post("/console/password", json=payload, headers={"X-CSRF-Token": "bad"})
+    ).status_code == 403
+    assert (
+        await client.post("/console/password", json={**payload, "current_password": "wrong"})
+    ).status_code == 403
+    assert (await client.post("/console/password", json=payload)).status_code == 200
+    assert (await client.get("/console/me")).status_code == 401
+    async with database.session() as session:
+        assert await session.scalar(select(func.count()).select_from(ConsoleSession)) == 0
+        assert await session.get(ConsoleSession, digest(other_token)) is None
+    assert (
+        await client.post("/console/login", json={"login": "admin", "password": PASSWORD})
+    ).status_code == 401
+    response = await client.post(
+        "/console/login", json={"login": "admin", "password": new_password}
+    )
+    assert response.status_code == 200
+    assert response.json()["account"]["id"] == admin.id
+    assert response.json()["account"]["role"] == "admin"
+
+
+async def test_owner_resets_employee_password_without_transferring_ownership(console: Any) -> None:
+    from resolvate.models import AccessAudit, ConsoleAccount
+
+    client, database, _, auth, admin, _ = console
+    employee = await auth.create_account(
+        login="employee", name="Employee", password=PASSWORD, role="operator"
+    )
+    await auth.login("employee", PASSWORD, "employee-device")
+    path = f"/console/accounts/{employee.id}/password"
+    payload = {"current_password": PASSWORD, "new_password": "employee-new-password-only"}
+    assert (await client.post(path, json=payload)).status_code == 200
+    assert (await client.get("/console/me")).status_code == 200
+    async with database.session() as session:
+        assert (
+            await session.scalar(
+                select(func.count())
+                .select_from(ConsoleSession)
+                .where(ConsoleSession.account_id == employee.id)
+            )
+            == 0
+        )
+        changed = await session.get(ConsoleAccount, employee.id)
+        assert changed and changed.role == "operator" and changed.active
+        owner = await session.get(ConsoleAccount, admin.id)
+        assert owner and owner.role == "admin"
+        audit = await session.scalar(
+            select(AccessAudit).where(AccessAudit.action == "password_reset")
+        )
+        assert audit and audit.actor_id == admin.id and audit.target_id == employee.id
+    login = await client.post(
+        "/console/login", json={"login": "employee", "password": payload["new_password"]}
+    )
+    assert login.status_code == 200
+    client.headers["X-CSRF-Token"] = login.json()["csrf"]
+    assert (
+        await client.post(f"/console/accounts/{admin.id}/password", json=payload)
+    ).status_code == 403
+
+
+async def test_password_change_rechecks_revoked_session(console: Any) -> None:
+    client, database, _, auth, admin, _ = console
+    token = client.cookies.get("resolvate_session")
+    assert (await client.post("/console/logout")).status_code == 200
+    with pytest.raises(HTTPException) as error:
+        await auth.change_password(
+            admin, token=token, current_password=PASSWORD, new_password="different-test-password"
+        )
+    assert error.value.status_code == 401
+
+
 async def customer(tickets: TicketService) -> str:
     result = await tickets.accept_customer_message(
         telegram_user_id=10001,
@@ -183,6 +261,12 @@ async def test_send_sync_idempotency_lifecycle(console: Any) -> None:
         ).all()
         assert len(jobs) == 2
         assert {job.payload["target_chat_id"] for job in jobs} == {10001, -100123456}
+        client_job = next(job for job in jobs if job.payload["target_chat_id"] == 10001)
+        mirror = next(job for job in jobs if job.payload["target_chat_id"] == -100123456)
+        assert client_job.payload["text"] == "Поможем <script>"
+        assert "parse_mode" not in client_job.payload
+        assert mirror.payload["parse_mode"] == "HTML"
+        assert "<blockquote>Поможем &lt;script&gt;</blockquote>" in mirror.payload["text"]
     page = (await client.post(f"/console/tickets/{ticket_id}/sync", json={})).json()
     assert len(page["items"]) == 2 and page["items"][-1]["author"] == "Администратор"
     unchanged = (
@@ -198,6 +282,228 @@ async def test_send_sync_idempotency_lifecycle(console: Any) -> None:
     assert not (await client.post("/console/tickets/sync", json={})).json()["order"]
     assert (await client.post("/console/tickets/sync", json={"archived": True})).json()["order"]
     assert (await client.post(f"/console/tickets/{ticket_id}/reopen")).status_code == 200
+
+
+async def test_web_close_notifies_telegram_customer_once_with_matching_rating_cycle(
+    console: Any,
+) -> None:
+    from resolvate.telegram_constants import TICKET_CLOSED_TEXT
+    from resolvate.telegram_message_utils import rating_keyboard
+
+    client, database, tickets, _, _, _ = console
+    ticket_id = await customer(tickets)
+    results = await asyncio.gather(
+        *(client.post(f"/console/tickets/{ticket_id}/close") for _ in range(2))
+    )
+    assert all(result.status_code == 200 for result in results)
+    assert sorted(result.json()["changed"] for result in results) == [False, True]
+    ticket = await tickets.get_ticket(ticket_id)
+    assert ticket.close_cycle == 1
+    async with database.session() as session:
+        notifications = (
+            await session.scalars(
+                select(DeliveryOutbox).where(DeliveryOutbox.direction == Direction.OPERATOR_TO_USER)
+            )
+        ).all()
+        messages = (
+            await session.scalars(select(TicketMessage).where(TicketMessage.channel == "system"))
+        ).all()
+        assert len(notifications) == len(messages) == 1
+        payload = notifications[0].payload
+        assert payload["text"] == TICKET_CLOSED_TEXT
+        assert payload["target_chat_id"] == 10001
+        assert payload["parse_mode"] == "HTML"
+        assert payload["reply_markup"] == rating_keyboard(ticket_id, 1).model_dump(
+            mode="json", exclude_none=True
+        )
+        assert payload["canonical_message_id"] == messages[0].id
+        assert "<b>" not in messages[0].content
+    page = (await client.post(f"/console/tickets/{ticket_id}/sync", json={})).json()
+    event = next(item for item in page["items"] if item["channel"] == "system")
+    assert event["system"] and event["author"] == "Система"
+    assert event["text"] == "✅ Обращение закрыто"
+    assert "ниже" not in event["text"]
+
+
+async def test_legacy_system_markup_and_user_text_are_not_confused(console: Any) -> None:
+    from resolvate.telegram_constants import TICKET_CLOSED_TEXT
+
+    client, database, tickets, _, _, _ = console
+    ticket_id = await customer(tickets)
+    async with database.session() as session:
+        session.add_all(
+            [
+                TicketMessage(
+                    ticket_id=ticket_id,
+                    direction=Direction.OPERATOR_TO_USER,
+                    channel="system",
+                    content=TICKET_CLOSED_TEXT,
+                ),
+                TicketMessage(
+                    ticket_id=ticket_id,
+                    direction=Direction.OPERATOR_TO_USER,
+                    channel="telegram",
+                    content="<b>Текст оператора</b>",
+                ),
+                TicketMessage(
+                    ticket_id=ticket_id,
+                    direction=Direction.USER_TO_OPERATOR,
+                    channel="telegram",
+                    content=TICKET_CLOSED_TEXT,
+                ),
+            ]
+        )
+        await session.commit()
+    items = (await client.post(f"/console/tickets/{ticket_id}/sync", json={})).json()["items"]
+    event = next(item for item in items if item["channel"] == "system")
+    assert event["author"] == "Система" and event["text"] == "✅ Обращение закрыто"
+    operator = next(item for item in items if item["text"] == "<b>Текст оператора</b>")
+    assert not operator["system"] and operator["author"] == "Оператор (Telegram)"
+    assert any(item["text"] == TICKET_CLOSED_TEXT and not item["system"] for item in items)
+
+
+async def test_web_close_respects_customer_block(console: Any) -> None:
+    client, database, tickets, _, _, _ = console
+    ticket_id = await customer(tickets)
+    await tickets.block_ticket(ticket_id=ticket_id, operator_telegram_id=1)
+    assert (await client.post(f"/console/tickets/{ticket_id}/close")).status_code == 200
+    async with database.session() as session:
+        assert not (
+            await session.scalars(
+                select(DeliveryOutbox).where(DeliveryOutbox.direction == Direction.OPERATOR_TO_USER)
+            )
+        ).all()
+        assert not (
+            await session.scalars(select(TicketMessage).where(TicketMessage.channel == "system"))
+        ).all()
+
+
+async def test_web_close_for_api_customer_stores_plain_client_notification(console: Any) -> None:
+    from resolvate.api_idempotency import api_idempotency_command
+
+    client, database, tickets, _, _, _ = console
+    result = await tickets.accept_message(
+        identity_mode="external_id",
+        external_user_id="web-customer",
+        email="customer@example.com",
+        display_name="Web customer",
+        remnawave_user_uuid=None,
+        content="Help",
+        media=None,
+        target_chat_id=-100123456,
+        command=api_idempotency_command(
+            operation="web-message", resource="web-customer", key="create", payload={"text": "Help"}
+        ),
+    )
+    assert (await client.post(f"/console/tickets/{result.ticket.id}/close")).status_code == 200
+    page = await tickets.list_messages(result.ticket.id, after=None, limit=50)
+    notification = next(message for message in page.items if message.channel == "system")
+    assert "Обращение закрыто" in notification.content
+    assert "Спасибо за обращение" in notification.content
+    assert "<b>" not in notification.content and "ниже" not in notification.content
+    async with database.session() as session:
+        assert not (
+            await session.scalars(
+                select(DeliveryOutbox).where(DeliveryOutbox.direction == Direction.OPERATOR_TO_USER)
+            )
+        ).all()
+
+
+async def test_rating_card_has_canonical_score_and_client_snapshot(console: Any) -> None:
+    from resolvate.models import User
+    from resolvate.telegram_message_utils import rating_report
+
+    client, database, tickets, _, _, _ = console
+    ticket_id = await customer(tickets)
+    await client.post(f"/console/tickets/{ticket_id}/close")
+    ticket = await tickets.get_ticket(ticket_id)
+    for score, expected in ((3, True), (5, False)):
+        assert (
+            await tickets.enqueue_rating(
+                ticket_id=ticket_id,
+                source_chat_id=10001,
+                score=score,
+                close_cycle=1,
+                target_chat_id=-100123456,
+                text=rating_report(ticket, score, support_group_id=-100123456),
+                idempotency_key=f"rating:{score}",
+                parse_mode="HTML",
+            )
+            is expected
+        )
+    async with database.session() as session:
+        user = await session.scalar(select(User))
+        user.display_name = "Новое имя"
+        await session.commit()
+        reports = (await session.scalars(select(DeliveryOutbox))).all()
+    items = (await client.post(f"/console/tickets/{ticket_id}/sync", json={})).json()["items"]
+    card = next(item for item in items if item["channel"] == "rating")
+    assert card["system"] and card["author"] == "Система"
+    assert card["rating"]["score"] == 3 and card["rating"]["ticket_id"] == ticket_id
+    assert "Оценка: ⭐⭐⭐ 3/5" in card["text"]
+    assert "Клиент · @customer" in card["text"]
+    assert "Telegram ID: 10001" in card["text"]
+    assert "Новое имя" not in card["text"] and "<b>" not in card["text"]
+    report = next(
+        job.payload for job in reports if job.payload.get("target_system_topic") == "ratings"
+    )
+    assert "⭐⭐⭐ <b>3/5</b>" in report["text"] and "t.me/c/123456/100" in report["text"]
+
+
+async def test_legacy_rating_card_falls_back_to_current_client(console: Any) -> None:
+    client, database, tickets, _, _, _ = console
+    ticket_id = await customer(tickets)
+    async with database.session() as session:
+        session.add(
+            TicketMessage(
+                ticket_id=ticket_id,
+                direction=Direction.USER_TO_OPERATOR,
+                channel="rating",
+                content="4/5",
+                media={"rating": 4},
+            )
+        )
+        await session.commit()
+    items = (await client.post(f"/console/tickets/{ticket_id}/sync", json={})).json()["items"]
+    card = next(item for item in items if item["channel"] == "rating")
+    assert card["rating"]["score"] == 4 and "⭐⭐⭐⭐ 4/5" in card["text"]
+    assert "@customer" in card["text"] and card["author"] == "Система"
+
+
+async def test_spam_notice_is_one_system_event_and_operator_only_delivery(console: Any) -> None:
+    client, database, tickets, _, _, _ = console
+    ticket_id = await customer(tickets)
+    for _ in range(2):
+        await tickets.record_rate_limit_notice(
+            provider="telegram",
+            identity="10001",
+            key="rate-limit:telegram:2",
+            target_chat_id=-100123456,
+        )
+    async with database.session() as session:
+        jobs = list(
+            (
+                await session.scalars(
+                    select(DeliveryOutbox).where(
+                        DeliveryOutbox.idempotency_key == "rate-limit:telegram:2"
+                    )
+                )
+            ).all()
+        )
+        assert len(jobs) == 1 and jobs[0].payload["target_chat_id"] == -100123456
+        assert jobs[0].payload["target_thread_id"] == 100
+        message = await session.get(TicketMessage, jobs[0].payload["canonical_message_id"])
+        assert message and message.channel == "internal_note"
+        customer_job = await session.scalar(
+            select(DeliveryOutbox).where(
+                DeliveryOutbox.idempotency_key == "copy:user_to_operator:10001:1"
+            )
+        )
+        assert customer_job and customer_job.payload["canonical_message_id"]
+    page = (await client.post(f"/console/tickets/{ticket_id}/sync", json={})).json()
+    assert len(page["items"]) == 2
+    assert page["items"][-1]["author"] == "Система"
+    assert "защита от спама" in page["items"][-1]["text"]
 
 
 async def test_media_dedup_and_validation(tmp_path: Path) -> None:

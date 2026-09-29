@@ -32,8 +32,10 @@ from resolvate.models import (
     utcnow,
 )
 from resolvate.service_types import TicketNotFoundError, TicketView
-from resolvate.telegram_formatting import ticket_topic_link
+from resolvate.system_messages import rating_data
+from resolvate.telegram_message_utils import rating_report
 from resolvate.ticket_service_base import TicketServiceBase
+from resolvate.topic_messages import topic_deliveries
 from resolvate.trace import get_trace_id
 from resolvate.web_models import MediaAsset, SystemSetting, TicketLifecycleEvent
 
@@ -485,17 +487,13 @@ class WebSupportService(TicketServiceBase):
                     }
                     if reopened:
                         delivery_payload["prepare_reopened_context"] = True
-                    session.add(
-                        DeliveryOutbox(
+                    session.add_all(
+                        topic_deliveries(
                             ticket_id=ticket.id,
-                            direction=Direction.USER_TO_OPERATOR,
-                            idempotency_key=f"web-delivery:{command.storage_key}",
+                            key=f"web-delivery:{command.storage_key}",
                             payload=delivery_payload,
-                            status=(
-                                DeliveryStatus.PENDING
-                                if ticket.topic_id is not None
-                                else DeliveryStatus.WAITING_TOPIC
-                            ),
+                            content=content,
+                            author=user.display_name,
                         )
                     )
                     lifecycle_type = "created" if created else "reopened" if reopened else None
@@ -656,13 +654,18 @@ class WebSupportService(TicketServiceBase):
             suppressed = await self._is_ticket_blocked_in_session(session, ticket.id)
             changed = duplicate is None
             if changed:
+                rated_ticket = await self._ticket_view(session, ticket)
                 session.add(
                     TicketMessage(
                         ticket_id=ticket.id,
                         direction=Direction.USER_TO_OPERATOR,
                         channel="rating",
                         content=f"{score}/5",
-                        media={"rating": score, "source": "web"},
+                        media={
+                            "rating": score,
+                            "source": "web",
+                            "rating_details": rating_data(rated_ticket, score),
+                        },
                         rating_cycle=ticket.close_cycle,
                         suppressed=suppressed,
                     )
@@ -676,8 +679,6 @@ class WebSupportService(TicketServiceBase):
                             close_cycle=ticket.close_cycle,
                         )
                     )
-                    ticket_link = ticket_topic_link(target_chat_id, ticket.topic_id)
-                    ticket_link_suffix = f"\n\n{ticket_link}" if ticket_link else ""
                     session.add(
                         DeliveryOutbox(
                             ticket_id=ticket.id,
@@ -687,10 +688,8 @@ class WebSupportService(TicketServiceBase):
                                 "kind": "send_text",
                                 "target_chat_id": target_chat_id,
                                 "target_system_topic": "ratings",
-                                "text": (
-                                    f"⭐ <b>Оценка поддержки</b>\n\n"
-                                    f"Web-клиент: <b>{score}/5</b>"
-                                    f"{ticket_link_suffix}"
+                                "text": rating_report(
+                                    rated_ticket, score, support_group_id=target_chat_id
                                 ),
                                 "parse_mode": "HTML",
                             },

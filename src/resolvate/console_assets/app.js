@@ -1,6 +1,9 @@
 "use strict";
 
 const $ = (id) => document.getElementById(id);
+const imageViewer = new ImageViewer();
+let passwordTarget = null;
+let passwordBusy = false;
 const state = {
   account: null,
   project: null,
@@ -99,12 +102,16 @@ function showLogin() {
   state.tickets.clear();
   $("accounts-dialog").close();
   $("projects-dialog").close();
+  closePassword();
+  imageViewer.close();
   $("workspace").hidden = true;
   $("login-screen").hidden = false;
   $("message-list").replaceChildren();
   $("ticket-list").replaceChildren();
   $("file").value = "";
   $("message-text").value = "";
+  $("project-logo").hidden = true;
+  $("project-logo").removeAttribute("src");
 }
 async function enter(result) {
   state.account = result.account;
@@ -119,6 +126,16 @@ async function enter(result) {
   $("empty").hidden = false;
   $("workspace").classList.remove("open-chat");
   await refreshProjects();
+  const requested = new URLSearchParams(location.search);
+  const projectId = requested.get("project"), ticketId = requested.get("ticket");
+  if (projectId && ticketId) {
+    const available = state.projects.find((item) => item.id === projectId && item.role && item.active);
+    if (available) {
+      selectProject(projectId);
+      await syncTickets();
+      await openTicket(ticketId);
+    } else notice("Нет доступа к проекту из ссылки.");
+  }
 }
 $("login-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -142,6 +159,63 @@ $("logout").onclick = async () => {
     showLogin();
   } catch (error) {
     fail(error);
+  }
+};
+
+function openPassword(account = null) {
+  passwordTarget = account;
+  $("password-form").reset();
+  $("password-error").textContent = "";
+  $("password-title").textContent = account ? `Сброс пароля: ${account.login}` : "Сменить пароль";
+  $("password-description").textContent = account
+    ? "Подтвердите своим паролем. Все сессии сотрудника будут завершены; его права не изменятся."
+    : "После смены пароля потребуется войти заново на всех устройствах.";
+  $("password-dialog").showModal();
+}
+$("password-open").onclick = () => openPassword();
+function closePassword() {
+  $("password-form").reset();
+  passwordTarget = null;
+  $("password-dialog").close();
+}
+$("password-close").onclick = () => { if (!passwordBusy) closePassword(); };
+$("password-dialog").addEventListener("cancel", (event) => {
+  if (passwordBusy) event.preventDefault();
+});
+$("password-dialog").addEventListener("close", () => {
+  if ($("password-dialog").open) return;
+  $("password-form").reset();
+  passwordTarget = null;
+});
+$("password-form").onsubmit = async (event) => {
+  event.preventDefault();
+  const fields = Object.fromEntries(new FormData(event.target));
+  if (fields.new_password !== fields.confirmation) {
+    $("password-error").textContent = "Новые пароли не совпадают.";
+    return;
+  }
+  const target = passwordTarget;
+  const own = !target || target.id === state.account?.id;
+  event.submitter.disabled = true;
+  passwordBusy = true;
+  $("password-error").textContent = "";
+  try {
+    await api(target ? `accounts/${target.id}/password` : "password", {
+      method: "POST",
+      data: {current_password: fields.current_password, new_password: fields.new_password},
+    });
+    closePassword();
+    if (own) {
+      showLogin();
+      $("login-error").textContent = "Пароль изменён. Войдите с новым паролем.";
+    } else {
+      $("account-error").textContent = "Пароль сотрудника изменён. Старые сессии завершены.";
+    }
+  } catch (error) {
+    $("password-error").textContent = error.message;
+  } finally {
+    passwordBusy = false;
+    event.submitter.disabled = false;
   }
 };
 
@@ -276,8 +350,8 @@ function renderMessage(item) {
   const element = node(
     "article",
     "message" +
-      (outgoing ? " outgoing" : "") +
-      (item.channel === "internal_note" ? " internal" : ""),
+      (outgoing && !item.system ? " outgoing" : "") +
+      (item.system ? " system" : item.channel === "internal_note" ? " internal" : ""),
   );
   element.dataset.id = item.id;
   element.dataset.revision = item.revision;
@@ -286,7 +360,7 @@ function renderMessage(item) {
     node(
       "span",
       "",
-      outgoing ? item.author : $("customer-name").textContent || "Клиент",
+      item.system ? "Система" : outgoing ? item.author : $("customer-name").textContent || "Клиент",
     ),
     node(
       "time",
@@ -310,7 +384,19 @@ function renderMessage(item) {
       image.onerror = () => {
         image.replaceWith(node("span", "muted", "Фото больше не доступно"));
       };
-      bubble.append(image);
+      const open = node("button", "image-preview");
+      open.type = "button";
+      open.setAttribute("aria-label", "Открыть изображение");
+      open.onclick = () => imageViewer.open(url);
+      open.append(image);
+      bubble.append(open);
+    } else if (item.mime?.startsWith("audio/")) {
+      const audio = node("audio");
+      audio.src = url;
+      audio.controls = true;
+      audio.preload = "metadata";
+      audio.setAttribute("aria-label", "Голосовое сообщение");
+      bubble.append(audio);
     } else if (item.mime?.startsWith("video/")) {
       const video = node("video");
       video.src = url;
@@ -325,6 +411,18 @@ function renderMessage(item) {
   } else if (item.attachment)
     bubble.append(node("span", "muted", "Вложение недоступно в Web"));
   if (item.text) bubble.append(document.createTextNode(item.text));
+  if (item.rating) {
+    bubble.classList.add("rating-card");
+    const link = node("a", "ticket-link", "📂 Перейти к тикету");
+    const project = state.project;
+    link.href = `/console/?project=${encodeURIComponent(project)}&ticket=${encodeURIComponent(item.rating.ticket_id)}`;
+    link.onclick = (event) => {
+      if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      if (state.project === project) openTicket(item.rating.ticket_id).catch(fail);
+    };
+    bubble.append(link);
+  }
   element.append(meta, bubble);
   if (item.failed?.length) {
     const error = node("div", "message-error", "Не удалось отправить ");
@@ -671,7 +769,9 @@ async function refreshAccounts() {
       finally { save.disabled = false; }
     };
     description.append(identity);
-    row.append(description, button);
+    const resetPassword = node("button", "secondary", "Сбросить пароль");
+    resetPassword.onclick = () => openPassword(account);
+    row.append(description, resetPassword, button);
     $("account-list").append(row);
   }
 }
@@ -709,6 +809,7 @@ $("account-form").onsubmit = async (event) => {
 };
 function selectProject(id) {
   if (state.sending) return;
+  imageViewer.close();
   state.epoch++;
   state.listEpoch++;
   state.searchEpoch++;
@@ -741,7 +842,22 @@ function selectProject(id) {
     ? "Здесь появится история обращения."
     : "Откройте «Проекты» или попросите администратора выдать доступ.";
   $("project-select").value = id || "";
+  renderProjectLogo();
   notice();
+}
+function logoSource(project) {
+  return `/console/projects/${encodeURIComponent(project.id)}/logo?v=${encodeURIComponent(project.logo)}`;
+}
+function renderProjectLogo() {
+  const project = state.projects.find((item) => item.id === state.project);
+  const image = $("project-logo");
+  image.hidden = !project?.logo;
+  if (project?.logo) {
+    const source = logoSource(project);
+    if (image.getAttribute("src") !== source) image.src = source;
+  }
+  else image.removeAttribute("src");
+  image.onerror = () => { image.hidden = true; };
 }
 async function refreshProjects(initial = true) {
   const account = state.account;
@@ -761,6 +877,7 @@ async function refreshProjects(initial = true) {
   const current = available.find((project) => project.id === state.project);
   if (!current) selectProject(initial ? available[0]?.id : null);
   else $("project-select").value = current.id;
+  renderProjectLogo();
   if (initial) await syncTickets();
 }
 $("project-select").onchange = () => {
@@ -833,6 +950,9 @@ async function openManagement(project) {
   $("project-management").hidden = false;
   $("project-admin-form").hidden = state.account.role !== "admin";
   $("settings-tab").hidden = project.role !== "admin";
+  $("branding-tab").hidden = project.role !== "admin";
+  $("project-branding-form").reset();
+  $("branding-status").textContent = "";
   $("project-settings-form").reset();
   $("project-setting-fields").replaceChildren();
   $("members-tab").click();
@@ -864,15 +984,57 @@ async function refreshMembers() {
     $("member-list").append(row);
   }
 }
-function managementTab(settings) {
-  $("members-section").hidden = settings;
-  $("project-settings-form").hidden = !settings;
-  for (const [id, selected] of [["members-tab", !settings], ["settings-tab", settings]]) {
+function managementTab(tab) {
+  $("members-section").hidden = tab !== "members";
+  $("project-settings-form").hidden = tab !== "settings";
+  $("project-branding-form").hidden = tab !== "branding";
+  for (const [id, selected] of [["members-tab", tab === "members"], ["settings-tab", tab === "settings"], ["branding-tab", tab === "branding"]]) {
     $(id).classList.toggle("selected", selected);
     $(id).setAttribute("aria-pressed", String(selected));
   }
 }
-$("members-tab").onclick = () => managementTab(false);
+$("members-tab").onclick = () => managementTab("members");
+function renderBranding() {
+  const project = state.projects.find((item) => item.id === managedProject?.id);
+  const image = $("branding-preview");
+  image.hidden = !project?.logo;
+  $("branding-remove").hidden = !project?.logo;
+  if (project?.logo) {
+    const source = logoSource(project);
+    if (image.getAttribute("src") !== source) image.src = source;
+  }
+  else image.removeAttribute("src");
+  image.onerror = () => { image.hidden = true; };
+}
+$("branding-tab").onclick = () => {
+  if (!managedProject || managedProject.role !== "admin") return;
+  renderBranding();
+  managementTab("branding");
+};
+async function changeBranding(remove = false) {
+  const id = managedProject.id, epoch = managementEpoch;
+  const form = $("project-branding-form");
+  const buttons = [...form.querySelectorAll("button")];
+  buttons.forEach((button) => { button.disabled = true; });
+  $("branding-status").textContent = "";
+  try {
+    if (remove) await api(`projects/${id}/logo/remove`, {method: "POST"});
+    else {
+      const file = $("branding-file").files[0];
+      if (!file || file.size > 2 * 1024 * 1024) throw new Error("Выберите изображение до 2 МБ.");
+      const upload = new FormData(); upload.set("file", file);
+      await api(`projects/${id}/logo`, {method: "POST", form: upload});
+    }
+    await refreshProjects(false);
+    if (epoch === managementEpoch) {
+      form.reset(); renderBranding();
+      $("branding-status").textContent = remove ? "Логотип удалён." : "Логотип сохранён.";
+    }
+  } catch (error) { if (epoch === managementEpoch) projectError(error); }
+  finally { buttons.forEach((button) => { button.disabled = false; }); }
+}
+$("project-branding-form").onsubmit = (event) => { event.preventDefault(); changeBranding(); };
+$("branding-remove").onclick = () => changeBranding(true);
 const settingSections = [
   ["Telegram", [
     ["support_bot_token", "Токен бота", "password"],
@@ -930,7 +1092,7 @@ $("settings-tab").onclick = async () => {
       }
       fields.append(section);
     }
-    managementTab(true);
+    managementTab("settings");
   } catch (error) { projectError(error); }
 };
 $("projects-open").onclick = async () => {

@@ -41,7 +41,14 @@ def photo(source: Path, target: Path) -> None:
                     raise ValueError("photo verification failed")
 
 
-def probe(path: Path) -> dict[str, Any]:
+def probe(path: Path, *, format_whitelist: str = "mov") -> dict[str, Any]:
+    # Video compression compares the original/output stream descriptions; adding
+    # codec names there would incorrectly reject an intentional H.264 conversion.
+    stream_fields = (
+        "codec_type,codec_name,channels,sample_rate"
+        if format_whitelist == "ogg"
+        else "codec_type,width,height"
+    )
     result = subprocess.run(
         [
             "ffprobe",
@@ -50,9 +57,9 @@ def probe(path: Path) -> dict[str, Any]:
             "-protocol_whitelist",
             "file",
             "-format_whitelist",
-            "mov",
+            format_whitelist,
             "-show_entries",
-            "stream=codec_type,width,height:format=duration",
+            f"stream={stream_fields}:format=duration",
             "-of",
             "json",
             str(path),

@@ -12,6 +12,7 @@ from resolvate.config import get_settings
 
 MAX_ARCHIVE_BYTES = 100 * 1024 * 1024 * 1024
 MEDIA_NAMES = ("web-media", "transcript-media")
+PROJECT_MEDIA_NAMES = (*MEDIA_NAMES, "branding")
 
 
 def _project_id(value: str) -> bool:
@@ -27,7 +28,7 @@ def _media_roots(data_dir: Path) -> list[Path]:
     if projects.is_dir() and not projects.is_symlink():
         for project in sorted(projects.iterdir()):
             if project.is_dir() and not project.is_symlink() and _project_id(project.name):
-                roots.extend(project / name for name in MEDIA_NAMES)
+                roots.extend(project / name for name in PROJECT_MEDIA_NAMES)
     return roots
 
 
@@ -50,7 +51,7 @@ def _safe_member(member: tarfile.TarInfo) -> PurePosixPath:
             len(path.parts) >= 3
             and path.parts[0] == "projects"
             and _project_id(path.parts[1])
-            and path.parts[2] in MEDIA_NAMES
+            and path.parts[2] in PROJECT_MEDIA_NAMES
         )
     )
     if (

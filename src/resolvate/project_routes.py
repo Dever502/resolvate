@@ -1,11 +1,13 @@
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel, Field
+from starlette.datastructures import UploadFile
 
 from resolvate.console_auth import ConsoleAuth
 from resolvate.models import ConsoleAccount
+from resolvate.project_branding import ProjectBranding
 from resolvate.projects import ProjectService
 
 
@@ -32,6 +34,25 @@ class TelegramIdentity(BaseModel):
 
 def register_project_routes(app: FastAPI, auth: ConsoleAuth, service: ProjectService) -> None:
     Actor = Annotated[ConsoleAccount, Depends(auth.require)]
+    branding = ProjectBranding(service)
+
+    @app.get("/projects/{project_id}/logo")
+    async def logo(project_id: UUID, actor: Actor) -> Response:
+        return Response(await branding.read(actor, str(project_id)), media_type="image/png")
+
+    @app.post("/projects/{project_id}/logo")
+    async def upload_logo(project_id: UUID, request: Request, actor: Actor) -> dict[str, str]:
+        await branding.authorize(actor, str(project_id))
+        async with request.form(max_files=1, max_fields=0, max_part_size=65536) as form:
+            file = form.get("file")
+            if not isinstance(file, UploadFile) or set(form) != {"file"}:
+                raise HTTPException(422, "Прикрепите один логотип.")
+            return {"logo": await branding.upload(actor, str(project_id), file)}
+
+    @app.post("/projects/{project_id}/logo/remove")
+    async def remove_logo(project_id: UUID, actor: Actor) -> dict[str, bool]:
+        await branding.remove(actor, str(project_id))
+        return {"ok": True}
 
     @app.post("/accounts/{account_id}/identity/telegram")
     async def telegram_identity(

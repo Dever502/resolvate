@@ -13,7 +13,7 @@ from resolvate.migrations import (
     upgrade_database,
 )
 
-HEAD_REVISION = "0005_projects"
+HEAD_REVISION = "0006_project_branding"
 
 
 async def current_revision(database_url: str) -> str:

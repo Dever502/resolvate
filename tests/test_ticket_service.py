@@ -628,8 +628,16 @@ async def test_operator_close_can_enqueue_user_notification(
     assert changed is True
     assert duplicate is False
     assert len(jobs) == 1
+    async with ticket_service.database.session() as session:
+        notification = await session.scalar(
+            select(TicketMessage).where(
+                TicketMessage.ticket_id == ticket.id, TicketMessage.channel == "system"
+            )
+        )
+        assert notification is not None
     assert jobs[0].payload == {
         "kind": "send_text",
+        "canonical_message_id": notification.id,
         "target_chat_id": 1010,
         "text": "Тикет закрыт.",
         "parse_mode": "HTML",

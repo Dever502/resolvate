@@ -18,7 +18,7 @@ from resolvate.models import Base
 
 pytestmark = pytest.mark.postgres
 
-HEAD_REVISION = "0005_projects"
+HEAD_REVISION = "0006_project_branding"
 EXPECTED_QUERY_INDEXES = {
     "ix_tickets_status_updated",
     "ix_tickets_status_last_activity",
@@ -73,6 +73,7 @@ def test_repository_has_one_head_above_postgresql_baseline() -> None:
     assert scripts.get_heads() == [HEAD_REVISION]
     assert [revision.revision for revision in scripts.walk_revisions()] == [
         HEAD_REVISION,
+        "0005_projects",
         "0004_operator_console",
         "0003_notice_delivery",
         "0002_topic_archives",
@@ -87,6 +88,54 @@ async def test_fresh_upgrade_exactly_matches_orm_metadata(
 
     assert await _current_revision(postgres_database_url) == HEAD_REVISION
     assert await _metadata_differences(postgres_database_url) == []
+
+
+async def test_branding_upgrade_preserves_existing_project_data(postgres_database_url: str) -> None:
+    config = build_alembic_config(postgres_database_url)
+    await asyncio.to_thread(command.upgrade, config, "0005_projects")
+    engine = create_async_engine(postgres_database_url)
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text("""
+                INSERT INTO console_accounts
+                    (id, login, display_name, password_hash, role, active, created_at)
+                VALUES ('operator', 'operator', 'Operator', 'not-a-login-password',
+                        'operator', true, now())
+            """)
+            )
+            await connection.execute(
+                text("""
+                INSERT INTO projects (id, name, admin_id, active, revision, settings, created_at)
+                VALUES ('project', 'Existing project', 'operator', true, 9, '{}', now())
+            """)
+            )
+            await connection.execute(
+                text("""
+                INSERT INTO project_members (project_id, account_id, created_at)
+                VALUES ('project', 'operator', now())
+            """)
+            )
+            await connection.execute(
+                text("""
+                INSERT INTO users (id, project_id, display_name, created_at, updated_at)
+                VALUES (1, 'project', 'Existing customer', now(), now())
+            """)
+            )
+        await upgrade_database(postgres_database_url)
+        async with engine.connect() as connection:
+            row = (
+                await connection.execute(text("SELECT name, revision, logo_sha256 FROM projects"))
+            ).one()
+            assert tuple(row) == ("Existing project", 9, None)
+            assert await connection.scalar(text("SELECT count(*) FROM project_members")) == 1
+            assert (
+                await connection.scalar(text("SELECT display_name FROM users"))
+                == "Existing customer"
+            )
+        assert await _metadata_differences(postgres_database_url) == []
+    finally:
+        await engine.dispose()
 
 
 async def test_baseline_uses_postgresql_native_types_and_required_indexes(

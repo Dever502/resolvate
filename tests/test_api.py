@@ -147,8 +147,16 @@ async def test_api_close_can_notify_user_via_outbox(
     assert response.json()["changed"] is True
     assert duplicate.json()["changed"] is True
     assert len(jobs) == 1
+    async with ticket_service.database.session() as session:
+        notification = await session.scalar(
+            select(TicketMessage).where(
+                TicketMessage.ticket_id == ticket.id, TicketMessage.channel == "system"
+            )
+        )
+        assert notification is not None
     assert jobs[0].payload == {
         "kind": "send_text",
+        "canonical_message_id": notification.id,
         "target_chat_id": ticket.telegram_user_id,
         "text": API_TICKET_CLOSED_TEXT,
     }

@@ -37,12 +37,38 @@ from resolvate.service_types import (
     TicketNotFoundError,
     TicketView,
 )
+from resolvate.system_messages import plain_system_text, rating_data
+from resolvate.telegram_constants import TICKET_CLOSED_SUMMARY_TEXT, TICKET_CLOSED_TEXT
+from resolvate.telegram_message_utils import rating_keyboard
 from resolvate.ticket_topic_service import TicketTopicService
 from resolvate.trace import get_trace_id
 from resolvate.web_models import TicketLifecycleEvent
 
 
 class TicketLifecycleService(TicketTopicService):
+    async def close_with_notification(
+        self, *, ticket_id: str, operator_telegram_id: int, idempotency_key: str
+    ) -> bool:
+        ticket = await self.get_ticket(ticket_id)
+        telegram = ticket.channel == TicketChannel.TELEGRAM
+        return await self.close(
+            ticket_id=ticket_id,
+            operator_telegram_id=operator_telegram_id,
+            idempotency_key=idempotency_key,
+            notification_text=TICKET_CLOSED_TEXT
+            if telegram
+            else (plain_system_text(TICKET_CLOSED_SUMMARY_TEXT) + "\n\n⭐ Оцените поддержку."),
+            notification_target_chat_id=ticket.telegram_user_id if telegram else None,
+            notification_parse_mode="HTML" if telegram else None,
+            notification_reply_markup_builder=(
+                lambda cycle: rating_keyboard(ticket_id, cycle).model_dump(
+                    mode="json", exclude_none=True
+                )
+            )
+            if telegram
+            else None,
+        )
+
     async def close(
         self,
         *,
@@ -136,16 +162,21 @@ class TicketLifecycleService(TicketTopicService):
             )
             notification_blocked = await self._is_ticket_blocked_in_session(session, ticket.id)
             if notification_text is not None and not notification_blocked:
-                session.add(
-                    TicketMessage(
-                        ticket_id=ticket.id,
-                        direction=Direction.OPERATOR_TO_USER,
-                        channel="system",
-                        source_chat_id=None,
-                        source_message_id=None,
-                        content=notification_text,
-                    )
+                message = TicketMessage(
+                    id=str(uuid.uuid4()),
+                    ticket_id=ticket.id,
+                    direction=Direction.OPERATOR_TO_USER,
+                    channel="system",
+                    source_chat_id=None,
+                    source_message_id=None,
+                    content=(
+                        plain_system_text(notification_text)
+                        if notification_parse_mode == "HTML"
+                        else notification_text
+                    ),
+                    media={"system_event": "ticket_closed", "close_cycle": close_cycle},
                 )
+                session.add(message)
                 if notification_chat_id is not None:
                     delivery_key = notification_idempotency_key or f"{action_key}:notification"
                     reply_markup = (
@@ -160,6 +191,7 @@ class TicketLifecycleService(TicketTopicService):
                             idempotency_key=delivery_key,
                             payload={
                                 "kind": "send_text",
+                                "canonical_message_id": message.id,
                                 "target_chat_id": notification_chat_id,
                                 "text": notification_text,
                                 **(
@@ -236,7 +268,12 @@ class TicketLifecycleService(TicketTopicService):
                     direction=Direction.USER_TO_OPERATOR,
                     channel="rating",
                     content=f"{score}/5",
-                    media={"rating": score},
+                    media={
+                        "rating": score,
+                        "rating_details": rating_data(
+                            await self._ticket_view(session, ticket), score
+                        ),
+                    },
                     rating_cycle=close_cycle,
                     source_chat_id=source_chat_id,
                     source_message_id=None,

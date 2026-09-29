@@ -43,8 +43,18 @@ PASSWORD = "project-test-password-only"
 ORIGIN = "http://localhost:8080"
 
 
+def logo_bytes(color: str = "blue", *, size: tuple[int, int] = (800, 400)) -> bytes:
+    from PIL.PngImagePlugin import PngInfo
+
+    output = io.BytesIO()
+    metadata = PngInfo()
+    metadata.add_text("Author", "Discard this metadata")
+    Image.new("RGBA", size, color).save(output, "PNG", pnginfo=metadata)
+    return output.getvalue()
+
+
 @pytest.fixture
-async def installation(migrated_postgres_database_url: str) -> AsyncIterator[Any]:
+async def installation(migrated_postgres_database_url: str, tmp_path: Path) -> AsyncIterator[Any]:
     provisioner = Database(migrated_postgres_database_url)
     role = "project_test_" + uuid.uuid4().hex
     async with provisioner.engine.begin() as connection:
@@ -67,7 +77,7 @@ async def installation(migrated_postgres_database_url: str) -> AsyncIterator[Any
         .render_as_string(hide_password=False)
     )
     database = Database(url)
-    settings = Settings(database_url=url, console_origin=ORIGIN, _env_file=None)
+    settings = Settings(database_url=url, console_origin=ORIGIN, data_dir=tmp_path, _env_file=None)
     auth = ConsoleAuth(database, ORIGIN)
     owner = await auth.create_account(
         login="owner", name="Owner", password=PASSWORD, role="admin", bootstrap=True
@@ -130,6 +140,154 @@ async def test_database_boundary_and_pool_reuse(installation: Any) -> None:
                 ),
                 {"other": first.id},
             )
+
+
+async def test_project_logo_permissions_replacement_and_lifetime(installation: Any) -> None:
+    database, settings, _, _, alice, _, first, second, service = installation
+    settings.storage_reserve_bytes = 0
+    app = create_installation(database, settings, ProjectManager(database, settings))
+    path = f"/console/projects/{first.id}/logo"
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url=ORIGIN, headers={"Origin": ORIGIN}
+    ) as client:
+
+        async def login(name: str) -> None:
+            response = await client.post(
+                "/console/login", json={"login": name, "password": PASSWORD}
+            )
+            assert response.status_code == 200
+            client.headers["X-CSRF-Token"] = response.json()["csrf"]
+
+        assert (await client.get(path)).status_code == 401
+        await login("alice")
+        assert (await client.get(path)).status_code == 404
+        result = await client.post(path, files={"file": ("logo.png", logo_bytes(), "image/png")})
+        assert result.status_code == 200, result.text
+        first_digest = result.json()["logo"]
+        png = await client.get(path)
+        assert png.headers["content-type"] == "image/png"
+        with Image.open(io.BytesIO(png.content)) as image:
+            assert image.size == (512, 256) and image.format == "PNG"
+            assert "Author" not in image.info
+        root = settings.data_dir / "projects" / first.id / "branding"
+        assert (root / f"{first_digest}.png").is_file()
+        # No runtime is running; logo management must remain available without one.
+        async with database.session() as session:
+            project = await session.get(Project, first.id)
+            revision = project.revision
+            project.active = False
+            await session.commit()
+        replacement = await client.post(
+            path, files={"file": ("logo.png", logo_bytes("red"), "image/png")}
+        )
+        digest = replacement.json()["logo"]
+        assert digest != first_digest and not (root / f"{first_digest}.png").exists()
+        assert len(list(root.glob("*.png"))) == 1
+        async with database.session() as session:
+            project = await session.get(Project, first.id)
+            assert project.logo_sha256 == digest and project.revision == revision
+        assert (await client.get(path)).status_code == 200
+        assert (await client.get(f"/console/projects/{second.id}/logo")).status_code == 403
+        await login("owner")
+        assert (await client.get(path)).status_code == 403
+        assert (await client.post(path + "/remove")).status_code == 403
+        assert (
+            next(p for p in (await client.get("/console/projects")).json() if p["id"] == first.id)[
+                "logo"
+            ]
+            is None
+        )
+        await login("bob")
+        assert (await client.get(path)).status_code == 403
+        await service.change_member(alice, first.id, "bob")
+        assert (await client.get(path)).status_code == 200
+        assert (
+            await client.post(path, files={"file": ("logo.png", logo_bytes(), "image/png")})
+        ).status_code == 403
+        assert (await client.post(path + "/remove")).status_code == 403
+        await service.change_member(alice, first.id, "bob", remove=True)
+        assert (await client.get(path)).status_code == 403
+        await login("alice")
+        assert (await client.post(path + "/remove")).status_code == 200
+        assert (await client.get(path)).status_code == 404
+        assert not list(root.glob("*.png"))
+
+
+async def test_project_logo_rejects_unsafe_uploads_and_requires_csrf(installation: Any) -> None:
+    from resolvate.project_branding import MAX_LOGO_BYTES
+
+    database, settings, _, _, _, _, first, _, _ = installation
+    app = create_installation(database, settings, ProjectManager(database, settings))
+    path = f"/console/projects/{first.id}/logo"
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url=ORIGIN, headers={"Origin": ORIGIN}
+    ) as client:
+        response = await client.post(
+            "/console/login", json={"login": "alice", "password": PASSWORD}
+        )
+        file = ("logo.png", logo_bytes(), "image/png")
+        assert (await client.post(path, files={"file": file})).status_code == 403
+        client.headers["X-CSRF-Token"] = response.json()["csrf"]
+        assert (
+            await client.post(
+                path, files={"file": file}, headers={"Origin": "https://outside.example"}
+            )
+        ).status_code == 403
+        for content, mime in (
+            (b"<svg/>", "image/svg+xml"),
+            (b"PK\x03\x04archive", "image/png"),
+            (logo_bytes() + b"PK\x03\x04archive", "image/png"),
+            (b"", "image/png"),
+        ):
+            result = await client.post(path, files={"file": ("logo", content, mime)})
+            assert result.status_code == 422, result.text
+        assert (await client.post(path, files=[("file", file), ("file", file)])).status_code == 400
+        assert (
+            await client.post(
+                path, files={"file": ("large", b"x" * (MAX_LOGO_BYTES + 1), "image/png")}
+            )
+        ).status_code == 422
+        assert (
+            await client.post(
+                path, files={"file": ("large", b"x" * (MAX_LOGO_BYTES + 65536), "image/png")}
+            )
+        ).status_code == 413
+        assert (await client.get(path)).status_code == 404
+
+
+@pytest.mark.parametrize(
+    "format,mime", [("PNG", "image/png"), ("JPEG", "image/jpeg"), ("WEBP", "image/webp")]
+)
+def test_logo_normalizes_supported_formats(format: str, mime: str) -> None:
+    from resolvate.project_branding import ProjectBranding
+
+    output = io.BytesIO()
+    Image.new("RGB", (20, 40), "green").save(output, format)
+    png = ProjectBranding._normalize(output.getvalue())
+    with Image.open(io.BytesIO(png)) as image:
+        assert image.format == "PNG" and image.size == (20, 40)
+
+
+async def test_logo_respects_disk_reserve(installation: Any) -> None:
+    from starlette.datastructures import Headers, UploadFile
+
+    from resolvate.project_branding import ProjectBranding
+
+    _, settings, _, _, alice, _, first, _, service = installation
+    settings.storage_reserve_bytes = 2**63 - 1
+    branding = ProjectBranding(service)
+    upload = UploadFile(
+        io.BytesIO(logo_bytes()),
+        filename="logo.png",
+        headers=Headers({"content-type": "image/png"}),
+    )
+    with pytest.raises(HTTPException) as error:
+        await branding.upload(alice, first.id, upload)
+    assert error.value.status_code == 503
+    assert upload.file.closed
+    with pytest.raises(HTTPException) as error:
+        await branding.read(alice, first.id)
+    assert error.value.status_code == 404
 
 
 async def test_explicit_memberships_roles_and_revocation(installation: Any) -> None:

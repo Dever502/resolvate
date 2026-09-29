@@ -19,6 +19,10 @@ def inspect(path: Path) -> str:
         source.seek(max(0, path.stat().st_size - 32))
         tail = source.read()
     mime = _detected_mime(header)
+    if header.startswith(b"OggS"):
+        from resolvate.voice_inspect import inspect_voice
+
+        return inspect_voice(path)
     if mime in {"image/jpeg", "image/png", "image/webp"}:
         if mime == "image/jpeg" and not tail.endswith(b"\xff\xd9"):
             raise ValueError("trailing image data")

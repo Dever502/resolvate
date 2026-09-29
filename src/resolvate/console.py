@@ -19,6 +19,7 @@ from resolvate.console_service import ConsoleService, delta
 from resolvate.database import Database
 from resolvate.media_storage import LocalMediaStorage, MediaValidationError
 from resolvate.models import ConsoleAccount, ConsoleSession, QuickResponse
+from resolvate.project_branding import MAX_LOGO_BYTES
 from resolvate.service_types import TicketNotFoundError
 from resolvate.services import TicketService
 from resolvate.web_api_routes import _limit_request_body
@@ -37,6 +38,11 @@ class NewAccount(Login):
     name: str = Field(min_length=1, max_length=100)
     role: Literal["admin", "operator"] = "operator"
     telegram_id: int | None = Field(default=None, gt=0, le=2**52 - 1)
+
+
+class PasswordChange(BaseModel):
+    current_password: SecretStr = Field(min_length=1, max_length=128)
+    new_password: SecretStr = Field(min_length=12, max_length=128)
 
 
 class Sync(BaseModel):
@@ -69,6 +75,8 @@ def create_console(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
         size = 20 * 1024 * 1024 + 65536 if request.url.path.endswith("/send") else 768 * 1024
+        if request.url.path.endswith("/logo"):
+            size = MAX_LOGO_BYTES + 65536
         _limit_request_body(request, size)
         try:
             if int(request.headers.get("content-length", "0")) > size:
@@ -105,7 +113,7 @@ def create_console(
 
     @app.get("/assets/{name}")
     async def asset(name: str) -> FileResponse:
-        if name not in {"app.js", "app.css"}:
+        if name not in {"app.js", "app.css", "image_viewer.js"}:
             raise HTTPException(404)
         return FileResponse(ASSETS / name)
 
@@ -162,6 +170,34 @@ def create_console(
             telegram_id=payload.telegram_id,
         )
         return account_view(created)
+
+    @app.post("/password")
+    async def change_password(
+        payload: PasswordChange, request: Request, response: Response, actor: Identity
+    ) -> dict[str, bool]:
+        await auth.change_password(
+            actor,
+            token=request.cookies[COOKIE],
+            current_password=payload.current_password.get_secret_value(),
+            new_password=payload.new_password.get_secret_value(),
+        )
+        response.delete_cookie(
+            COOKIE, path="/console", secure=auth.secure, httponly=True, samesite="strict"
+        )
+        return {"ok": True}
+
+    @app.post("/accounts/{account_id}/password")
+    async def reset_password(
+        account_id: uuid.UUID, payload: PasswordChange, request: Request, actor: Admin
+    ) -> dict[str, bool]:
+        await auth.change_password(
+            actor,
+            token=request.cookies[COOKIE],
+            current_password=payload.current_password.get_secret_value(),
+            new_password=payload.new_password.get_secret_value(),
+            target_id=str(account_id),
+        )
+        return {"ok": True}
 
     @app.post("/accounts/{account_id}/{action}")
     async def change_account(
@@ -232,7 +268,7 @@ def create_console(
         ticket_id: uuid.UUID, action: Literal["close", "reopen"], actor: Actor
     ) -> dict[str, bool]:
         key = f"console:{actor.id}:{uuid.uuid4()}"
-        method = tickets.close if action == "close" else tickets.reopen
+        method = tickets.close_with_notification if action == "close" else tickets.reopen
         changed = await method(
             ticket_id=str(ticket_id), operator_telegram_id=0, idempotency_key=key
         )

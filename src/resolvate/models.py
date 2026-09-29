@@ -646,6 +646,7 @@ class Project(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(String(100))
+    logo_sha256: Mapped[str | None] = mapped_column(String(64))
     admin_id: Mapped[str] = mapped_column(ForeignKey("console_accounts.id", ondelete="RESTRICT"))
     active: Mapped[bool] = mapped_column(Boolean, default=False)
     revision: Mapped[int] = mapped_column(Integer, default=1)

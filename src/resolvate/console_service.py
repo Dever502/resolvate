@@ -6,7 +6,7 @@ import uuid
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 
 from resolvate.config import Settings
@@ -31,6 +31,8 @@ from resolvate.models import (
 )
 from resolvate.rotation_gate import lock_rotation_gate
 from resolvate.services import TicketService
+from resolvate.system_messages import operator_system_text, rating_data, rating_text
+from resolvate.topic_messages import topic_deliveries
 from resolvate.web_models import MediaAsset, TicketLifecycleEvent
 from resolvate.web_support_service import decode_cursor, encode_cursor
 
@@ -74,7 +76,13 @@ class ConsoleService:
             .scalar_subquery()
         )
         latest = (
-            select(TicketMessage.content)
+            select(
+                case(
+                    (TicketMessage.channel == "rating", "⭐ Оценка поддержки"),
+                    (TicketMessage.channel == "system", "Системное уведомление"),
+                    else_=TicketMessage.content,
+                )
+            )
             .where(
                 TicketMessage.ticket_id == Ticket.id,
                 TicketMessage.suppressed.is_(False),
@@ -130,7 +138,7 @@ class ConsoleService:
     async def messages(
         self, ticket_id: str, *, known: dict[str, str], before: str | None = None
     ) -> dict[str, Any]:
-        await self.tickets.get_ticket(ticket_id)
+        ticket = await self.tickets.get_ticket(ticket_id)
         base = select(TicketMessage).where(
             TicketMessage.ticket_id == ticket_id, TicketMessage.suppressed.is_(False)
         )
@@ -218,6 +226,16 @@ class ConsoleService:
         items: list[dict[str, Any]] = []
         for row in rows:
             media = row.media or {}
+            system = row.channel in {"system", "rating"} or bool(media.get("system_event"))
+            content = row.content or ""
+            rating = None
+            if row.channel == "rating" and media.get("rating") in range(1, 6):
+                rating = media.get("rating_details") or rating_data(ticket, int(media["rating"]))
+                # Routing always uses the authorized ticket, never an embedded metadata ID.
+                rating = {**rating, "ticket_id": ticket_id, "score": int(media["rating"])}
+                content = rating_text(rating)
+            elif row.channel == "system":
+                content = operator_system_text(content, media)
             command = command_by_message.get(row.id)
             failed: list[str] = []
             uncertain = False
@@ -233,9 +251,13 @@ class ConsoleService:
                     "id": row.id,
                     "direction": row.direction,
                     "channel": row.channel,
-                    "text": row.content or "",
+                    "text": content,
+                    "system": system,
+                    "rating": rating,
                     "time": row.created_at.isoformat(),
-                    "author": media.get("operator_name")
+                    "author": "Система"
+                    if system
+                    else media.get("operator_name")
                     or (
                         "Оператор (Telegram)"
                         if row.direction == Direction.OPERATOR_TO_USER
@@ -380,27 +402,21 @@ class ConsoleService:
                     )
                 )
                 jobs[ident] = customer
-            ident = str(uuid.uuid4())
             mirror = {
                 **payload,
                 "target_chat_id": self.settings.support_group_id,
                 "target_thread_id": ticket.topic_id,
-                "text": f"{account.display_name} · Web\n\n{content}".strip(),
             }
-            session.add(
-                DeliveryOutbox(
-                    id=ident,
-                    ticket_id=ticket_id,
-                    direction=Direction.USER_TO_OPERATOR,
-                    idempotency_key=f"console:{key}:mirror",
-                    payload=mirror,
-                    created_at=now,
-                    status=DeliveryStatus.PENDING
-                    if ticket.topic_id
-                    else DeliveryStatus.WAITING_TOPIC,
-                )
-            )
-            jobs[ident] = mirror
+            for entry in topic_deliveries(
+                ticket_id=ticket_id,
+                key=f"console:{key}:mirror",
+                payload=mirror,
+                content=content,
+                author=account.display_name,
+                operator=True,
+            ):
+                session.add(entry)
+                jobs[entry.id] = entry.payload
             session.add(
                 ConsoleSend(
                     id=key,

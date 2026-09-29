@@ -237,6 +237,19 @@ def register_web_routes(
                         await media_storage.delete(stored_media)
                         stored_media = None
                     metrics.event("web_ingress", "rate_limited")
+                    if rate_limit.notify_operators:
+                        try:
+                            await ticket_service.record_rate_limit_notice(
+                                provider=f"web_{settings.web_identity_mode}",
+                                identity=identity_resource,
+                                key=f"rate-limit:web:{command.storage_key}",
+                                target_chat_id=settings.support_group_id,
+                            )
+                        except Exception:
+                            await user_message_limiter.retry_operator_notice(
+                                f"web:{settings.web_identity_mode}:{identity_resource}"
+                            )
+                            raise
                     raise HTTPException(
                         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                         detail="Too many user messages",
