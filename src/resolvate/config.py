@@ -159,8 +159,8 @@ class Settings(BaseSettings):
         hide_input_in_errors=True,
     )
 
-    support_bot_token: SecretStr
-    support_group_id: int
+    support_bot_token: SecretStr = SecretStr("")
+    support_group_id: int = 0
     admin_telegram_ids: frozenset[int] = Field(default_factory=frozenset)
     data_dir: Path = Path("./data")
     database_url: str

@@ -61,7 +61,7 @@ class TelegramSupportAdapter(TelegramOperatorHandlers):
         self.quick_replies_topic_id = quick_replies_topic_id
         self.initialize_quick_reply_runtime()
         self.panel_commands = TelegramPanelCommandHandler(panel_service)
-        self.authorization = AuthorizationService(settings)
+        self.authorization = AuthorizationService(settings, ticket_service.database)
         self.limiter = limiter
         self.router = Router(name="support")
         self._ticket_locks = TicketLockPool()

@@ -222,7 +222,10 @@ class TopicArchiveRepository:
                             declared_size=attachment.get("file_size"),
                         )
                         .on_conflict_do_update(
-                            index_elements=[TranscriptMedia.file_unique_id],
+                            index_elements=[
+                                TranscriptMedia.project_id,
+                                TranscriptMedia.file_unique_id,
+                            ],
                             set_={"file_id": attachment["file_id"]},
                         )
                     )
@@ -323,7 +326,9 @@ class TopicArchiveRepository:
             await session.execute(
                 insert(OperationalNotice)
                 .values(key=key, text=message, severity=severity, active=active)
-                .on_conflict_do_nothing(index_elements=[OperationalNotice.key])
+                .on_conflict_do_nothing(
+                    index_elements=[OperationalNotice.key, OperationalNotice.project_id]
+                )
             )
             current = await session.get(OperationalNotice, key, with_for_update=True)
             assert current is not None

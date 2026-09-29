@@ -6,18 +6,18 @@
 ## Требования и Telegram
 
 - Linux, Docker Engine и Docker Compose v2;
-- Telegram-бот и закрытая supergroup с включёнными Topics;
-- числовые Telegram ID администраторов;
-- HTTPS reverse proxy, если Operator API или Web API доступны извне.
+- отдельные Telegram-бот и закрытая supergroup с Topics для каждого проекта;
+- Telegram ID аккаунтов, которые будут работать из Telegram (не нужен для работы из Web);
+- HTTPS reverse proxy для панели и API при доступе извне.
 
 Добавьте бота администратором Forum-группы с правами управления темами и удаления сообщений.
-При старте preflight проверяет токен, тип группы, Topics и права бота; `SUPPORT_GROUP_ID`
+При старте проекта preflight проверяет токен, тип группы, Topics и права бота; ID
 supergroup обычно начинается с `-100`.
 
 ## Быстрый запуск
 
-Версия 4.0 предназначена для чистой установки PostgreSQL. Перенос схемы и данных из версий 3.x
-не поддерживается; образ версии 3.x нельзя использовать с текущими Compose-файлами.
+Текущая многопроектная схема предназначена для чистой установки PostgreSQL. Автоматический
+перенос прежних однопроектных данных не поддерживается: миграция откажет без удаления данных.
 
 Скопируйте конфигурацию и заполните обязательные значения:
 
@@ -26,9 +26,7 @@ cp .env.example .env
 ```
 
 ```dotenv
-SUPPORT_BOT_TOKEN=replace-with-bot-token
-SUPPORT_GROUP_ID=replace-with-forum-group-id
-ADMIN_TELEGRAM_IDS=replace-with-admin-id
+CONSOLE_ORIGIN=https://support.example.com
 DATA_DIR=./data
 ```
 
@@ -50,6 +48,11 @@ POSTGRES_RUNTIME_PASSWORD=replace-with-random-password-3
 `postgres-provision` создаёт least-privilege роли, `postgres-migrate` применяет Alembic, затем
 запускается приложение без migration credential. Поддерживается один экземпляр приложения.
 
+Создайте администратора установки через `python -m resolvate.console_admin admin` внутри контейнера,
+затем откройте `/console/`. В панели создаются аккаунты и проекты, назначаются администраторы,
+настраиваются боты, группы и интеграции. Новый проект выключен до настройки. Пошагово:
+[CONSOLE.md](CONSOLE.md).
+
 `start.sh` скачивает release image, закрепляет его digest, проверяет Compose и ждёт healthcheck.
 Другой image можно передать единственным необязательным аргументом.
 
@@ -59,18 +62,16 @@ POSTGRES_RUNTIME_PASSWORD=replace-with-random-password-3
 
 | Переменная | По умолчанию | Назначение |
 | --- | --- | --- |
-| `SUPPORT_BOT_TOKEN` | обязательна | токен Telegram-бота |
-| `SUPPORT_GROUP_ID` | обязательна | ID закрытой Forum-группы |
-| `ADMIN_TELEGRAM_IDS` | обязательна без API | ID администраторов через запятую; доступ ко всем командам |
-| `DATA_DIR` | `./data` | Web-фото и heartbeat-файлы |
+| `CONSOLE_ORIGIN` | обязательна | внешний origin панели, без пути |
+| `DATA_DIR` | `./data` | отдельные каталоги медиа и состояния проектов |
 | `DATABASE_URL` | обязательна вне Compose | PostgreSQL URL с драйвером `postgresql+asyncpg` |
 | `MIGRATION_DATABASE_URL` | `DATABASE_URL` | отдельный URL для миграций |
 | `MIGRATIONS_AT_STARTUP` | `true` | PostgreSQL Compose меняет на `false` |
 | `LOG_LEVEL` | `INFO` | уровень логирования |
-| `USER_MESSAGES_PER_MINUTE` | `30` | burst-лимит сообщений одного клиента |
-| `USER_MESSAGES_PER_HOUR` | `200` | часовой лимит сообщений одного клиента |
 | `API_REQUESTS_PER_MINUTE` | `6000` | минутная квота отдельно для каждого API token |
 
+Параметры проектов хранятся в БД, не в общем `.env`; общие секреты из окружения проектам
+не наследуются. По умолчанию клиенту разрешено 30 сообщений в минуту и 200 в час.
 Пользовательский лимит одинаков для Telegram и Web: в Telegram клиент определяется по ID,
 в Web — по выбранному каноническому идентификатору. Текст и фото считаются одним сообщением;
 разные клиенты не делят квоту. API-квота применяется отдельно к каждому валидному API token.
@@ -78,17 +79,19 @@ POSTGRES_RUNTIME_PASSWORD=replace-with-random-password-3
 
 ### Operator API
 
-| Переменная | По умолчанию | Назначение |
+Настройки ниже относятся к выбранному проекту и меняются в панели, не через `.env`.
+Все пути API и диагностики имеют префикс `/projects/{project_id}`; ID виден в настройках проекта.
+
+| Настройка проекта | По умолчанию | Назначение |
 | --- | --- | --- |
-| `API_ENABLED` | `false` | включает API |
-| `API_ADMIN_TOKEN` | пусто | `X-API-Token`, минимум 32 символа |
+| `api_enabled` | `false` | включает Operator API |
+| `api_admin_token` | пусто | `X-API-Token`, минимум 32 символа |
 
 По умолчанию Compose публикует API на `127.0.0.1:8080`. `API_HOST`, `API_PUBLISH_HOST`,
 `API_PORT` и `API_TRUSTED_PROXY_IPS` остаются расширенными настройками.
 
-Пустой `ADMIN_TELEGRAM_IDS` допустим при `API_ENABLED=true` или заданном `CONSOLE_ORIGIN`: работа
-операторов идёт через API или Web-панель. Оставляйте публикацию на loopback и используйте HTTPS reverse
-proxy. Каждая мутация требует
+Telegram ID не обязателен для Web-оператора. Доступ к проекту выдаётся явно, общего Telegram-
+allowlist нет. Оставляйте публикацию на loopback и используйте HTTPS reverse proxy. Каждая мутация требует
 `X-Idempotency-Key`: точный повтор возвращает сохранённый ответ, другой payload с тем же ключом —
 `409 Conflict`. API-квота считается отдельно для Operator token; строгая защита от перебора
 token остаётся по IP.
@@ -102,11 +105,12 @@ CORS. Он использует тот же bind/port, но отдельные c
 
 | Переменная | По умолчанию | Назначение |
 | --- | --- | --- |
-| `WEB_API_ENABLED` | `false` | включает `/api/v1/web` |
-| `WEB_API_TOKEN` | пусто | отдельный `X-API-Token`, минимум 32 символа |
-| `WEB_IDENTITY_MODE` | `external_id` | `external_id` или `email` |
+| `web_api_enabled` | `false` | включает `/projects/{project_id}/api/v1/web` |
+| `web_api_token` | пусто | отдельный `X-API-Token`, минимум 32 символа |
+| `web_identity_mode` | `external_id` | `external_id` или `email` |
 
-`WEB_API_TOKEN` не может совпадать с `API_ADMIN_TOKEN`. Рекомендуемый режим `external_id`
+API-токены не могут совпадать друг с другом или с API-токенами других проектов.
+Рекомендуемый режим `external_id`
 использует стабильный ID аккаунта сайта, email остаётся изменяемым атрибутом. В режиме `email`
 смена email создаёт нового клиента. После первого Web-обращения режим фиксируется в БД.
 
@@ -120,14 +124,15 @@ ZIP/RAR, текстовые файлы и остальные форматы не
 Пример Nginx допускает 21 MiB на весь multipart-запрос. Минимальный запрос:
 
 ```bash
-curl -X POST https://support.example.com/api/v1/web/messages \
+curl -X POST "https://support.example.com/projects/$PROJECT_ID/api/v1/web/messages" \
   -H "X-API-Token: $WEB_API_TOKEN" \
   -H "X-Idempotency-Key: message-account-42-0001" \
   -H 'Content-Type: application/json' \
   -d '{"external_user_id":"account-42","email":"user@example.com","text":"Нужна помощь"}'
 ```
 
-Backend сохраняет `conversation_id` и `next_cursor`, затем каждые 2–5 секунд читает:
+Backend сохраняет `conversation_id` и `next_cursor`, затем каждые 2–5 секунд читает.
+К каждому пути ниже добавляется `/projects/{project_id}`:
 
 ```text
 GET  /api/v1/web/conversations/{id}
@@ -150,25 +155,29 @@ retention.
 
 ### Remnawave и webhook
 
-Поддерживается Remnawave 2.8.x. Обе интеграции опциональны.
+Поддерживается Remnawave 2.8.x. Обе интеграции опциональны и настраиваются отдельно в каждом
+проекте. Разрешены только публичные HTTPS-адреса: локальная сеть, loopback и metadata endpoint
+недоступны, включая DNS-подмену на приватный IP.
 
 | Переменная | По умолчанию | Назначение |
 | --- | --- | --- |
-| `REMNAWAVE_ENABLED` | `false` | включает Remnawave |
-| `REMNAWAVE_BASE_URL` | пусто | HTTPS origin панели без `/api` |
-| `REMNAWAVE_API_TOKEN` | пусто | API token, минимум 32 символа |
-| `REMNAWAVE_REVOKE_LINK_TELEGRAM_NOTIFICATION` | `true` | отправлять новую ссылку клиенту |
-| `NOTIFICATION_WEBHOOK_ENABLED` | `false` | включает webhook-доставку |
-| `NOTIFICATION_WEBHOOK_URL` | пусто | HTTPS endpoint |
-| `NOTIFICATION_WEBHOOK_SECRET` | пусто | HMAC secret, минимум 32 символа |
+| `remnawave_enabled` | `false` | включает Remnawave |
+| `remnawave_base_url` | пусто | HTTPS origin панели без `/api` |
+| `remnawave_api_token` | пусто | API token, минимум 32 символа |
+| `remnawave_revoke_link_telegram_notification` | `true` | отправлять новую ссылку клиенту |
+| `notification_webhook_enabled` | `false` | включает webhook-доставку |
+| `notification_webhook_url` | пусто | HTTPS endpoint |
+| `notification_webhook_secret` | пусто | HMAC secret, минимум 32 символа |
 
 `/revokelink` всегда создаёт webhook-событие; флаг управляет только сообщением в Telegram.
-Фактическая webhook-доставка требует `NOTIFICATION_WEBHOOK_ENABLED=true`. Получатель проверяет
+Фактическая webhook-доставка требует `notification_webhook_enabled=true`. Получатель проверяет
 HMAC-SHA256 и дедуплицирует эффект по `event_id`.
 
-## Команды администраторов
+## Команды операторов
 
-Команды выполняются в связанной Forum-теме. Неизвестные команды клиенту не пересылаются.
+Команды выполняются участниками проекта с привязанным Telegram ID в связанной Forum-теме.
+Неизвестные команды клиенту не пересылаются. Администраторы группы самостоятельно контролируют
+членство в ней: отзыв доступа в Resolvate не удаляет пользователя из Telegram-группы.
 
 | Команда | Действие |
 | --- | --- |
@@ -190,7 +199,7 @@ HMAC-SHA256 и дедуплицирует эффект по `event_id`.
 ### Быстрые ответы
 
 При старте бот создаёт системную тему `⚡ Быстрые ответы` и закрепляет в ней короткую
-инструкцию. Чтобы добавить ответ, оператор из `ADMIN_TELEGRAM_IDS` отправляет обычное текстовое
+инструкцию. Чтобы добавить ответ, авторизованный оператор проекта отправляет обычное текстовое
 сообщение. В нём можно указать от 0 до 5 любых хештегов в формате `#текст` без пробела.
 Цифровые теги вроде `#1` также поддерживаются.
 После сохранения бот заменяет исходник одним новым сообщением:
@@ -202,7 +211,7 @@ HMAC-SHA256 и дедуплицирует эффект по `event_id`.
 ```
 
 Поиск выполняется штатной лупой Telegram по тексту или хештегу. Под каждым сохранённым ответом
-есть кнопка `🗑 Удалить`, доступная операторам из `ADMIN_TELEGRAM_IDS`. Она удаляет ответ сразу,
+есть кнопка `🗑 Удалить`, доступная операторам проекта. Она удаляет ответ сразу,
 без запроса подтверждения. Если Telegram запрещает удаление старого сообщения (старше 48 часов),
 бот заменяет его на `🗑 Ответ удалён`, убирая исходный текст, теги и кнопку. При временном сбое
 очистка повторяется автоматически; уведомление об успехе появляется только после удаления или
@@ -245,7 +254,7 @@ Telegram. Такая запись не восстанавливается. Ру�
 Первая принятая оценка автоматически создаёт системную тему `⭐ Оценки`; последующие оценки
 публикуются там со ссылкой на исходный тикет.
 В General topic хранится одно сообщение `📊 Статистика` с периодами сегодня, 7 и 30 дней; callback
-доступен только `ADMIN_TELEGRAM_IDS`.
+доступен только авторизованным участникам проекта.
 
 ## Deploy и rollback
 
@@ -291,19 +300,21 @@ production host; deploy остаётся ручной операцией.
 
 ```bash
 sh scripts/production-compose.sh ps
-curl -H "X-API-Token: $API_ADMIN_TOKEN" http://127.0.0.1:8080/health
-curl -H "X-API-Token: $API_ADMIN_TOKEN" http://127.0.0.1:8080/ready
-curl -H "X-API-Token: $API_ADMIN_TOKEN" http://127.0.0.1:8080/metrics
+curl -H "X-API-Token: $API_ADMIN_TOKEN" "http://127.0.0.1:8080/projects/$PROJECT_ID/health"
+curl -H "X-API-Token: $API_ADMIN_TOKEN" "http://127.0.0.1:8080/projects/$PROJECT_ID/ready"
+curl -H "X-API-Token: $API_ADMIN_TOKEN" "http://127.0.0.1:8080/projects/$PROJECT_ID/metrics"
 ```
 
-HTTP endpoints доступны при включённом Operator API или Web API. `/health` проверяет процесс, `/ready` — базу и
-настроенные компоненты, `/metrics` отдаёт Prometheus-метрики. Логи — JSON; основные поля:
+Диагностика проекта требует его API-токен. `/health` проверяет его HTTP-обработчик, `/ready` — базу и
+компоненты, `/metrics` отдаёт его метрики. Общий `/health/live` показывает доступность HTTP;
+контейнерный heartbeat проверяет управляющий цикл установки, а не здоровье каждого бота.
+Поэтому мониторить нужно и readiness проектов. Логи — JSON; основные поля:
 `event`, `trace_id`, `ticket_id`, `delivery_id`, `operator_action_id`.
 
 ## Backup и восстановление
 
 Храните зашифрованные копии вне Docker volumes и регулярно проверяйте restore на отдельном
-стенде. Backup содержит пользовательские данные. При включённом Web API передавайте второй путь:
+стенде. Backup содержит данные и секреты всех проектов. Для сохранения вложений передавайте второй путь:
 скрипт кратко остановит единственный writer и создаст согласованную пару БД + media archive.
 
 ```bash
@@ -313,8 +324,11 @@ CONFIRM_RESTORE=yes PRODUCTION_DEPLOYMENT=yes DEPLOY_DIR=/opt/resolvate \
   sh scripts/restore.sh /srv/backups/support.dump /srv/backups/support-media.tar.gz
 ```
 
-Archive проверяется до остановки. Restore работает через migration role, повторно применяет
-миграции и ждёт healthcheck. После ошибки проверьте БД и запускайте приложение вручную.
+Archive проверяется до остановки. Dump/restore используют bootstrap-администратора только внутри
+контейнера PostgreSQL: это необходимо для всех строк под FORCE RLS. Приложение этих прав не получает.
+Restore восстанавливает владельцев/права через provisioning, применяет миграции и ждёт healthcheck.
+Медиа-копия включает `projects/{id}/web-media` и `projects/{id}/transcript-media` всех проектов.
+После ошибки проверьте БД и запускайте приложение вручную.
 DB-only backup принимает один путь и не останавливает приложение. При передаче media archive
 приложение останавливается на время создания согласованной пары. Restore заранее проверяет все
 переданные архивы.
@@ -325,8 +339,8 @@ DB-only backup принимает один путь и не останавлив
 Проверка orphan/temp Web-файлов безопасна по умолчанию; удаление требует явного флага:
 
 ```bash
-docker compose exec resolvate python -m resolvate.media_cleanup
-docker compose exec resolvate python -m resolvate.media_cleanup --apply
+sh scripts/production-compose.sh exec resolvate python -m resolvate.media_cleanup --project "$PROJECT_ID"
+sh scripts/production-compose.sh exec resolvate python -m resolvate.media_cleanup --project "$PROJECT_ID" --apply
 ```
 
 `scripts/drill_production_data_path.sh` проверяет deploy, rollback, backup и restore только на

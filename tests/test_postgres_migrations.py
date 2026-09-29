@@ -18,7 +18,7 @@ from resolvate.models import Base
 
 pytestmark = pytest.mark.postgres
 
-HEAD_REVISION = "0004_operator_console"
+HEAD_REVISION = "0005_projects"
 EXPECTED_QUERY_INDEXES = {
     "ix_tickets_status_updated",
     "ix_tickets_status_last_activity",
@@ -73,6 +73,7 @@ def test_repository_has_one_head_above_postgresql_baseline() -> None:
     assert scripts.get_heads() == [HEAD_REVISION]
     assert [revision.revision for revision in scripts.walk_revisions()] == [
         HEAD_REVISION,
+        "0004_operator_console",
         "0003_notice_delivery",
         "0002_topic_archives",
         "0001_postgresql_initial",
@@ -142,24 +143,13 @@ def _inspect_postgresql_schema(
     return tables, indexes, json_columns, unresolved_index
 
 
-async def test_baseline_supports_full_downgrade_and_clean_reupgrade(
+async def test_project_isolation_refuses_unsafe_downgrade(
     postgres_database_url: str,
 ) -> None:
     config = build_alembic_config(postgres_database_url)
     await upgrade_database(postgres_database_url)
-    await asyncio.to_thread(command.downgrade, config, "base")
-
-    engine = create_async_engine(postgres_database_url)
-    try:
-        async with engine.connect() as connection:
-            tables_after_downgrade = await connection.run_sync(
-                lambda sync_connection: set(sa.inspect(sync_connection).get_table_names())
-            )
-    finally:
-        await engine.dispose()
-
-    assert tables_after_downgrade <= {"alembic_version"}
-
+    with pytest.raises(RuntimeError, match="Restore a backup"):
+        await asyncio.to_thread(command.downgrade, config, "base")
     await upgrade_database(postgres_database_url)
     assert await _current_revision(postgres_database_url) == HEAD_REVISION
     assert await _metadata_differences(postgres_database_url) == []

@@ -40,6 +40,7 @@ LOG_EXTRA_FIELDS = (
     "trace_id",
     "event",
     "ticket_id",
+    "project_id",
     "archive_id",
     "exception_type",
     "operator_telegram_id",

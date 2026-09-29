@@ -7,12 +7,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 from PIL import Image
+from project_support import ProjectDatabase as Database
 from sqlalchemy import select
 
 from resolvate.archive_maintenance import ArchiveMaintenance
 from resolvate.archive_media_storage import ArchiveMediaStorage, ArchiveStorageFull
 from resolvate.config import Settings
-from resolvate.database import Database
 from resolvate.models import (
     DeliveryOutbox,
     DeliveryStatus,

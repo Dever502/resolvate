@@ -6,10 +6,10 @@ from datetime import datetime
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
-from resolvate.models import Base, TicketChannel, utcnow
+from resolvate.models import ProjectScoped, TicketChannel, project_key, utcnow
 
 
-class MediaAsset(Base):
+class MediaAsset(ProjectScoped):
     __tablename__ = "media_assets"
     __table_args__ = (
         Index("ix_media_assets_ticket_created", "ticket_id", "created_at"),
@@ -31,7 +31,7 @@ class MediaAsset(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
-class TicketLifecycleEvent(Base):
+class TicketLifecycleEvent(ProjectScoped):
     __tablename__ = "ticket_lifecycle_events"
     __table_args__ = (
         Index("ix_ticket_lifecycle_event_time", "event_type", "created_at"),
@@ -48,8 +48,9 @@ class TicketLifecycleEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
-class SystemSetting(Base):
+class SystemSetting(ProjectScoped):
     __tablename__ = "system_settings"
+    project_id: Mapped[str] = project_key()
 
     key: Mapped[str] = mapped_column(String(100), primary_key=True)
     value: Mapped[str] = mapped_column(String(1000), nullable=False)
@@ -58,10 +59,11 @@ class SystemSetting(Base):
     )
 
 
-class OperatorDashboardState(Base):
+class OperatorDashboardState(ProjectScoped):
     __tablename__ = "operator_dashboard_state"
+    project_id: Mapped[str] = project_key()
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1, autoincrement=False)
     message_id: Mapped[int | None] = mapped_column(BigInteger)
     period: Mapped[str] = mapped_column(String(16), default="today", nullable=False)
     updated_at: Mapped[datetime] = mapped_column(

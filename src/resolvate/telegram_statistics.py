@@ -139,7 +139,9 @@ class TelegramStatisticsDashboard:
         await self.statistics_service.save_dashboard(message_id=message.message_id, period=period)
 
     async def handle_statistics_callback(self, callback: CallbackQuery) -> None:
-        if callback.from_user is None or not self.authorization.is_admin(callback.from_user.id):
+        if callback.from_user is None or not await self.authorization.can_operate(
+            callback.from_user.id
+        ):
             await callback.answer("Недостаточно прав.", show_alert=True)
             return
         data = callback.data or ""

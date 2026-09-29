@@ -52,7 +52,7 @@ class TelegramOperatorHandlers(
             actor is None
             or actor.is_bot
             or message.message_thread_id is None
-            or not self.authorization.is_admin(actor.id)
+            or not await self.authorization.can_operate(actor.id)
         ):
             return
         if await self.handle_quick_reply_topic_message(message):
@@ -158,7 +158,7 @@ class TelegramOperatorHandlers(
             )
             await self._handle_root_command(message)
             return
-        if not self.authorization.is_admin(message.from_user.id):
+        if not await self.authorization.can_operate(message.from_user.id):
             logger.info(
                 "Ignored operator message without authorization",
                 extra={
@@ -412,7 +412,9 @@ class TelegramOperatorHandlers(
         )
 
     async def _handle_root_command(self, message: Message) -> None:
-        if message.from_user is None or not self.authorization.is_admin(message.from_user.id):
+        if message.from_user is None or not await self.authorization.can_operate(
+            message.from_user.id
+        ):
             return
         parts = (message.text or "").split()
         command = parts[0].lower().split("@", maxsplit=1)[0] if parts else ""
@@ -426,7 +428,9 @@ class TelegramOperatorHandlers(
         )
 
     async def _handle_orphan_topic_command(self, message: Message, command: str) -> None:
-        if message.from_user is None or not self.authorization.is_admin(message.from_user.id):
+        if message.from_user is None or not await self.authorization.can_operate(
+            message.from_user.id
+        ):
             return
         parts = (message.text or "").split()
         if command != "/bindtopic" or len(parts) != 2 or message.message_thread_id is None:

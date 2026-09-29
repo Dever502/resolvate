@@ -7,11 +7,11 @@ from types import SimpleNamespace
 import pytest
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.methods import CopyMessage, EditForumTopic
+from project_support import ProjectDatabase as Database
 from pydantic import SecretStr
 from sqlalchemy import select
 
 from resolvate.config import Settings
-from resolvate.database import Database
 from resolvate.delivery import DeliveryWorker
 from resolvate.models import DeliveryOutbox, DeliveryStatus, Direction, TicketStatus
 from resolvate.services import TicketService

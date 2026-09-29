@@ -1,7 +1,7 @@
 # Example HTTPS reverse proxy for the optional Operator and Web Support APIs.
 # Replace support.example.invalid and certificate paths before use.
 # Compose publishes the Resolvate API on 127.0.0.1:8080 by default.
-# Enable API_ENABLED / WEB_API_ENABLED, or set CONSOLE_ORIGIN for the operator panel.
+# Set CONSOLE_ORIGIN; enable each project's APIs in the operator panel.
 
 server {
     listen 80;

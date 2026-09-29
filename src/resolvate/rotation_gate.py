@@ -12,7 +12,10 @@ SWITCHING_STATES = ("switching", "creating", "installing", "evicting", "deleting
 
 async def lock_rotation_gate(session: AsyncSession) -> None:
     """Short DB-only barrier shared by ingress, work claims and topic cutover."""
-    await session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": ROTATION_GATE_LOCK})
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:project, :key))"),
+        {"key": ROTATION_GATE_LOCK, "project": session.info.get("project_id") or ""},
+    )
 
 
 def ticket_is_switching(

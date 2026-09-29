@@ -96,7 +96,11 @@ def register_routes(
     @app.get("/docs", include_in_schema=False)
     async def swagger_ui() -> HTMLResponse:
         return get_swagger_ui_html(
-            openapi_url="/openapi.json",
+            openapi_url=(
+                f"/projects/{database.project_id}/openapi.json"
+                if database.project_id
+                else "/openapi.json"
+            ),
             title="Resolvate API - Docs",
         )
 

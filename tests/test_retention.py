@@ -3,11 +3,11 @@ from __future__ import annotations
 from datetime import timedelta
 
 import pytest
+from project_support import ProjectDatabase as Database
+from project_support import upgrade_database
 from sqlalchemy import select
 
-from resolvate.database import Database
 from resolvate.durable_work import DurableWorkRepository
-from resolvate.migrations import upgrade_database
 from resolvate.models import (
     DeliveryOutbox,
     DeliveryStatus,

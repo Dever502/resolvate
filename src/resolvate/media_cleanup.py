@@ -4,12 +4,14 @@ import argparse
 import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
 from sqlalchemy import select
 
 from resolvate.config import get_settings
 from resolvate.database import Database
 from resolvate.media_storage import LocalMediaStorage
+from resolvate.models import Project
 from resolvate.web_models import MediaAsset
 
 
@@ -61,15 +63,17 @@ def cleanup_media_files(
     )
 
 
-async def run(*, apply: bool) -> CleanupResult:
+async def run(*, apply: bool, project_id: UUID) -> CleanupResult:
     settings = get_settings()
     assert settings.database_url is not None
-    database = Database(settings.database_url)
+    database = Database(settings.database_url, project_id=str(project_id))
     try:
         async with database.session() as session:
+            if await session.get(Project, str(project_id)) is None:
+                raise ValueError("Project not found; no files changed")
             referenced_paths = set((await session.scalars(select(MediaAsset.storage_path))).all())
         return cleanup_media_files(
-            LocalMediaStorage(settings.data_dir),
+            LocalMediaStorage(settings.data_dir / "projects" / str(project_id)),
             referenced_paths=referenced_paths,
             apply=apply,
         )
@@ -82,12 +86,15 @@ def main() -> None:
         description="Find stale temporary and unreferenced Web media files."
     )
     parser.add_argument(
+        "--project", type=UUID, required=True, help="Project UUID from the operator panel."
+    )
+    parser.add_argument(
         "--apply",
         action="store_true",
         help="Delete candidates. Without this flag the command is read-only.",
     )
     arguments = parser.parse_args()
-    result = asyncio.run(run(apply=arguments.apply))
+    result = asyncio.run(run(apply=arguments.apply, project_id=arguments.project))
     mode = "removed" if arguments.apply else "found"
     print(
         f"{mode}: temporary={result.temporary_files}, "

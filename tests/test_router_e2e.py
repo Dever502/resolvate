@@ -52,6 +52,8 @@ class RecordingSession(BaseSession):
 
 
 class TicketServiceMustNotBeCalled:
+    database = None
+
     def __getattr__(self, name: str) -> Any:
         raise AssertionError(f"Unauthorized update reached ticket service method {name}")
 

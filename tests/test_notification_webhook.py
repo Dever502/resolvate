@@ -6,11 +6,11 @@ from datetime import UTC, datetime
 
 import httpx
 import pytest
+from project_support import ProjectDatabase as Database
 from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from resolvate.config import Settings
-from resolvate.database import Database
 from resolvate.models import NotificationOutbox, NotificationStatus
 from resolvate.notification_webhook import NotificationWebhookWorker, parse_retry_after
 from resolvate.outbox_repository import OutboxRepository

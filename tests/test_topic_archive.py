@@ -10,12 +10,12 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
 from aiogram.methods import CreateForumTopic, DeleteForumTopic, GetFile
 from aiogram.types import File
+from project_support import ProjectDatabase as Database
 from sqlalchemy import select
 
 from resolvate.archive_media_policy import CLOUD_DOWNLOAD_LIMIT_BYTES, SKIPPED_CLOUD_LIMIT
 from resolvate.archive_media_storage import ArchivedFile, ArchiveMediaStorage
 from resolvate.config import Settings
-from resolvate.database import Database
 from resolvate.durable_work import DurableWorkRepository
 from resolvate.models import (
     CustomerSummary,

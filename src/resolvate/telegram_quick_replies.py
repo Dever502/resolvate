@@ -480,7 +480,7 @@ class TelegramQuickReplyHandlers:
 
     async def handle_quick_response_delete_callback(self, callback: CallbackQuery) -> None:
         actor = callback.from_user
-        if not self.authorization.is_admin(actor.id):
+        if not await self.authorization.can_operate(actor.id):
             await callback.answer("Недостаточно прав.", show_alert=True)
             return
         try:

@@ -349,6 +349,8 @@ class TopicRotationRepository:
                         },
                         created_at=utcnow() + timedelta(microseconds=index),
                     )
-                    .on_conflict_do_nothing(index_elements=[DeliveryOutbox.idempotency_key])
+                    .on_conflict_do_nothing(
+                        index_elements=[DeliveryOutbox.project_id, DeliveryOutbox.idempotency_key]
+                    )
                 )
             await session.commit()

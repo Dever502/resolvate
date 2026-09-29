@@ -65,7 +65,7 @@ data_operation() {
 
 fingerprint() {
     compose exec -T postgres sh -eu -c \
-        'PGPASSWORD="$POSTGRES_RUNTIME_PASSWORD" psql --username="$POSTGRES_RUNTIME_USER" --dbname="$POSTGRES_DB" --tuples-only --no-align --command="SELECT (SELECT version_num FROM alembic_version) || chr(58) || (SELECT count(*) FROM users) || chr(58) || (SELECT count(*) FROM tickets) || chr(58) || (SELECT count(*) FROM ticket_messages) || chr(58) || (SELECT count(*) FROM delivery_outbox) || chr(58) || (SELECT count(*) FROM operator_actions)"'
+        'PGPASSWORD="$POSTGRES_PASSWORD" psql --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" --tuples-only --no-align --command="SELECT (SELECT version_num FROM alembic_version) || chr(58) || (SELECT count(*) FROM users) || chr(58) || (SELECT count(*) FROM tickets) || chr(58) || (SELECT count(*) FROM ticket_messages) || chr(58) || (SELECT count(*) FROM delivery_outbox) || chr(58) || (SELECT count(*) FROM operator_actions)"'
 }
 
 if [ ! -s "$state_file" ]; then

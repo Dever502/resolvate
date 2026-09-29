@@ -78,10 +78,10 @@ def test_successful_restore_starts_application_after_restore(tmp_path: Path) -> 
 
     assert result.returncode == 0
     assert log.index("compose stop resolvate") < log.index("pg_restore --clean")
-    assert log.index("pg_restore --clean") < log.index("compose rm --force --stop postgres-migrate")
-    assert log.index("compose rm --force --stop postgres-migrate") < log.index(
-        "compose up --detach --wait resolvate"
-    )
+    assert '--username="$POSTGRES_USER"' in log
+    reprovision = "compose rm --force --stop postgres-provision postgres-migrate"
+    assert log.index("pg_restore --clean") < log.index(reprovision)
+    assert log.index(reprovision) < log.index("compose up --detach --wait resolvate")
 
 
 def test_failure_injection_proves_application_stays_stopped(tmp_path: Path) -> None:

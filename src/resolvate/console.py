@@ -36,6 +36,7 @@ class Login(BaseModel):
 class NewAccount(Login):
     name: str = Field(min_length=1, max_length=100)
     role: Literal["admin", "operator"] = "operator"
+    telegram_id: int | None = Field(default=None, gt=0, le=2**52 - 1)
 
 
 class Sync(BaseModel):
@@ -59,7 +60,8 @@ def create_console(
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.state.auth = auth
     app.state.service = service
-    Actor = Annotated[ConsoleAccount, Depends(auth.require)]
+    Identity = Annotated[ConsoleAccount, Depends(auth.require)]
+    Actor = Annotated[ConsoleAccount, Depends(auth.project_actor)]
     Admin = Annotated[ConsoleAccount, Depends(auth.admin)]
 
     @app.middleware("http")
@@ -125,11 +127,11 @@ def create_console(
         return {"account": account_view(account), "csrf": digest("csrf:" + token)}
 
     @app.get("/me")
-    async def me(request: Request, actor: Actor) -> dict[str, object]:
+    async def me(request: Request, actor: Identity) -> dict[str, object]:
         return {"account": account_view(actor), "csrf": digest("csrf:" + request.cookies[COOKIE])}
 
     @app.post("/logout")
-    async def logout(request: Request, response: Response, actor: Actor) -> dict[str, bool]:
+    async def logout(request: Request, response: Response, actor: Identity) -> dict[str, bool]:
         async with database.session() as session:
             await session.execute(
                 delete(ConsoleSession).where(
@@ -157,6 +159,7 @@ def create_console(
             name=payload.name,
             password=payload.password.get_secret_value(),
             role=payload.role,
+            telegram_id=payload.telegram_id,
         )
         return account_view(created)
 

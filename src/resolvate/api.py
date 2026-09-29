@@ -370,6 +370,8 @@ def create_app(
         if app.openapi_schema is not None:
             return app.openapi_schema
         schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
+        if database.project_id:
+            schema["servers"] = [{"url": f"/projects/{database.project_id}"}]
         schemes: dict[str, object] = {}
         if operator_contract and not settings.api_unsafe_disable_auth:
             schemes["OperatorApiToken"] = {

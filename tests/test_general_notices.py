@@ -6,9 +6,9 @@ import pytest
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError, TelegramRetryAfter
 from aiogram.methods import SendMessage
+from project_support import ProjectDatabase as Database
 
 from resolvate.config import Settings
-from resolvate.database import Database
 from resolvate.models import OperationalNotice, utcnow
 from resolvate.operational_notices import OperationalNoticeRepository
 from resolvate.telegram_limits import TelegramRateLimiter

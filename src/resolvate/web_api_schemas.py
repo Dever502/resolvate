@@ -119,11 +119,13 @@ def conversation_response(ticket: TicketView) -> WebConversationResponse:
     )
 
 
-def accepted_message_response(result: WebMessageResult) -> WebAcceptedMessageResponse:
+def accepted_message_response(
+    result: WebMessageResult, project_id: str | None = None
+) -> WebAcceptedMessageResponse:
     return WebAcceptedMessageResponse(
         conversation=conversation_response(result.ticket),
         conversation_id=result.ticket.id,
-        message=message_response(result.message),
+        message=message_response(result.message, project_id),
         message_id=result.message_id,
         next_cursor=result.message.cursor,
         changed=result.changed,
@@ -132,7 +134,8 @@ def accepted_message_response(result: WebMessageResult) -> WebAcceptedMessageRes
     )
 
 
-def message_response(message: WebMessageItem) -> WebMessageResponse:
+def message_response(message: WebMessageItem, project_id: str | None = None) -> WebMessageResponse:
+    prefix = f"/projects/{project_id}" if project_id else ""
     return WebMessageResponse(
         id=message.id,
         direction=message.direction,
@@ -140,6 +143,6 @@ def message_response(message: WebMessageItem) -> WebMessageResponse:
         text=message.content,
         created_at=_utc(message.created_at),
         cursor=message.cursor,
-        media_url=(f"/api/v1/web/media/{message.media_id}" if message.media_id else None),
+        media_url=(f"{prefix}/api/v1/web/media/{message.media_id}" if message.media_id else None),
         media_mime_type=message.media_mime_type,
     )

@@ -4,11 +4,13 @@ import uuid
 
 import pytest
 from postgres_support import configured_postgres_admin_url
+from project_support import ProjectDatabase as Database
+from project_support import seed_project
 from sqlalchemy import make_url, text
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from resolvate.database import Database
+from resolvate.installation import validate_project_database
 from resolvate.migrations import upgrade_database
 from resolvate.postgres_provision import (
     PostgresProvisioningSettings,
@@ -105,11 +107,26 @@ async def test_postgres_migration_and_runtime_roles_have_least_privilege() -> No
                     ).scalars()
                 )
             assert table_owners == {migration_role}
+            async with migration_engine.connect() as connection:
+                function_owners = set(
+                    (
+                        await connection.execute(
+                            text(
+                                "SELECT r.rolname FROM pg_proc p JOIN pg_namespace n "
+                                "ON n.oid = p.pronamespace JOIN pg_roles r ON r.oid = p.proowner "
+                                "WHERE n.nspname = 'public'"
+                            )
+                        )
+                    ).scalars()
+                )
+            assert function_owners == {migration_role}
         finally:
             await migration_engine.dispose()
 
         database = Database(runtime_url)
         try:
+            await validate_project_database(database)
+            await seed_project(database)
             service = TicketService(database)
             ticket = await service.open_or_reopen(
                 telegram_user_id=123456789,

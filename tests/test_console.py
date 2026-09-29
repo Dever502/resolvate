@@ -13,6 +13,7 @@ import pytest
 from aiogram.types import Message
 from fastapi import HTTPException
 from PIL import Image
+from project_support import ProjectDatabase as Database
 from pypdf import PdfWriter
 from sqlalchemy import func, select
 from starlette.datastructures import Headers, UploadFile
@@ -20,7 +21,6 @@ from starlette.datastructures import Headers, UploadFile
 from resolvate.api import create_app
 from resolvate.config import Settings
 from resolvate.console_auth import ConsoleAuth, digest, password_hash, verify_password
-from resolvate.database import Database
 from resolvate.media_storage import LocalMediaStorage, MediaValidationError
 from resolvate.models import (
     ConsoleSend,
@@ -28,6 +28,7 @@ from resolvate.models import (
     DeliveryOutbox,
     DeliveryStatus,
     Direction,
+    ProjectMember,
     TicketMessage,
     utcnow,
 )
@@ -60,6 +61,9 @@ async def console(migrated_postgres_database_url: str, tmp_path: Path) -> AsyncI
     admin = await auth.create_account(
         login="admin", name="Администратор", password=PASSWORD, role="admin", bootstrap=True
     )
+    async with database.session() as session:
+        session.add(ProjectMember(project_id=database.project_id, account_id=admin.id))
+        await session.commit()
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url=ORIGIN, headers={"Origin": ORIGIN}
     ) as client:
@@ -117,7 +121,7 @@ async def test_auth_boundaries(console: Any) -> None:
 
 
 async def test_account_permissions_and_revocation(console: Any) -> None:
-    client, _, _, auth, _, _ = console
+    client, database, _, auth, _, _ = console
     created = await client.post(
         "/console/accounts",
         json={"login": "operator", "name": "Оператор", "password": PASSWORD, "role": "operator"},
@@ -126,6 +130,10 @@ async def test_account_permissions_and_revocation(console: Any) -> None:
     login = await client.post("/console/login", json={"login": "operator", "password": PASSWORD})
     client.headers["X-CSRF-Token"] = login.json()["csrf"]
     assert (await client.get("/console/accounts")).status_code == 403
+    assert (await client.post("/console/tickets/sync", json={})).status_code == 403
+    async with database.session() as session:
+        session.add(ProjectMember(project_id=database.project_id, account_id=created.json()["id"]))
+        await session.commit()
     assert (await client.post("/console/tickets/sync", json={})).status_code == 200
     await auth.set_active(created.json()["id"], False)
     assert (await client.get("/console/me")).status_code == 401
@@ -336,7 +344,12 @@ async def test_unread_is_per_operator_and_sessions_expire(console: Any) -> None:
     ticket_id = await customer(tickets)
     page = (await client.post(f"/console/tickets/{ticket_id}/sync", json={})).json()
     await client.post(f"/console/tickets/{ticket_id}/read/{page['items'][-1]['id']}")
-    await auth.create_account(login="second", name="Second", password=PASSWORD, role="operator")
+    second = await auth.create_account(
+        login="second", name="Second", password=PASSWORD, role="operator"
+    )
+    async with database.session() as session:
+        session.add(ProjectMember(project_id=database.project_id, account_id=second.id))
+        await session.commit()
     result = await client.post("/console/login", json={"login": "second", "password": PASSWORD})
     client.headers["X-CSRF-Token"] = result.json()["csrf"]
     assert (await client.post("/console/tickets/sync", json={})).json()["items"][0]["unread"] == 1

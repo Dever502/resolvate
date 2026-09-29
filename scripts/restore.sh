@@ -65,7 +65,7 @@ if [ "${RESOLVATE_RESTORE_FAILURE_INJECTION:-}" = "after_stop" ]; then
 fi
 
 compose exec -T postgres sh -eu -c \
-    'PGPASSWORD="$POSTGRES_MIGRATION_PASSWORD" pg_restore --clean --if-exists --exit-on-error --no-owner --no-acl --username="$POSTGRES_MIGRATION_USER" --dbname="$POSTGRES_DB"' \
+    'PGPASSWORD="$POSTGRES_PASSWORD" pg_restore --clean --if-exists --exit-on-error --no-owner --no-acl --username="$POSTGRES_USER" --dbname="$POSTGRES_DB"' \
     < "$input"
 
 if [ -n "$media_input" ]; then
@@ -73,9 +73,9 @@ if [ -n "$media_input" ]; then
         python -m resolvate.media_archive restore < "$media_input"
 fi
 
-# The restored archive may be older than the running image. Remove the successful
-# one-shot container so Compose must execute migrations again before Resolvate.
-compose rm --force --stop postgres-migrate
+# Restore bypasses RLS using the database bootstrap administrator, never the app role.
+# Reconcile ownership/permissions and migrations before restarting the application.
+compose rm --force --stop postgres-provision postgres-migrate
 compose up --detach --wait resolvate
 application_stopped=false
 trap - EXIT HUP INT TERM

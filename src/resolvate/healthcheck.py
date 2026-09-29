@@ -26,10 +26,10 @@ def heartbeats_healthy(
 
 def main() -> None:
     settings = get_settings()
-    healthy = heartbeats_healthy(
-        settings.data_dir,
-        notification_webhook_enabled=settings.notification_webhook_enabled,
-    )
+    # Project worker health is surfaced independently; a broken bot must not take
+    # down the installation console or healthy projects.
+    heartbeat = settings.data_dir / "heartbeat"
+    healthy = heartbeat.exists() and time.time() - heartbeat.stat().st_mtime <= 45
     raise SystemExit(0 if healthy else 1)
 
 

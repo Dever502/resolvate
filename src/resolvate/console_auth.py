@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 
 from resolvate.api_security import InMemoryRateLimiter
 from resolvate.database import Database
-from resolvate.models import ConsoleAccount, ConsoleSession, utcnow
+from resolvate.models import ConsoleAccount, ConsoleSession, Project, utcnow
 
 COOKIE = "resolvate_session"
 SESSION_SECONDS = 12 * 60 * 60
@@ -56,6 +56,7 @@ def account_view(account: ConsoleAccount) -> dict[str, object]:
         "name": account.display_name,
         "role": account.role,
         "active": account.active,
+        "telegram_id": account.telegram_id,
     }
 
 
@@ -98,6 +99,15 @@ class ConsoleAuth:
                 request.headers.get("x-csrf-token", ""), digest("csrf:" + token)
             ):
                 raise HTTPException(403, "Обновите страницу и повторите действие.")
+        return account
+
+    async def project_actor(self, request: Request) -> ConsoleAccount:
+        from resolvate.projects import membership
+
+        account = await self.require(request)
+        if self.database.project_id is None:
+            raise HTTPException(403, "Выберите доступный проект.")
+        await membership(self.database, account)
         return account
 
     async def admin(self, request: Request) -> ConsoleAccount:
@@ -161,13 +171,24 @@ class ConsoleAuth:
         return account, token
 
     async def create_account(
-        self, *, login: str, name: str, password: str, role: str, bootstrap: bool = False
+        self,
+        *,
+        login: str,
+        name: str,
+        password: str,
+        role: str,
+        bootstrap: bool = False,
+        telegram_id: int | None = None,
     ) -> ConsoleAccount:
         login = login.strip().casefold()
         if not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{2,63}", login):
             raise HTTPException(422, "Логин: 3–64 символа, латиница, цифры, точка, _ или -.")
         if role not in {"admin", "operator"} or not 1 <= len(name.strip()) <= 100:
             raise HTTPException(422, "Проверьте имя и роль.")
+        if role == "admin" and not bootstrap:
+            raise HTTPException(
+                409, "Администратор установки один. Используйте передачу полномочий."
+            )
         try:
             async with self.hash_slots:
                 encoded = await asyncio.to_thread(password_hash, password)
@@ -175,7 +196,9 @@ class ConsoleAuth:
             raise HTTPException(422, str(error)) from error
         async with self.database.session() as session:
             await session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": ACCOUNT_LOCK})
-            if bootstrap and await session.scalar(select(ConsoleAccount.id).limit(1)):
+            if bootstrap and await session.scalar(
+                select(ConsoleAccount.id).where(ConsoleAccount.role == "admin").limit(1)
+            ):
                 raise HTTPException(409, "Первый администратор уже создан. Используйте панель.")
             account = ConsoleAccount(
                 login=login,
@@ -183,12 +206,13 @@ class ConsoleAuth:
                 password_hash=encoded,
                 role=role,
                 active=True,
+                telegram_id=telegram_id,
             )
             session.add(account)
             try:
                 await session.commit()
             except IntegrityError as error:
-                raise HTTPException(409, "Такой логин уже существует.") from error
+                raise HTTPException(409, "Логин или Telegram ID уже используется.") from error
             return account
 
     async def set_active(self, account_id: str, active: bool) -> None:
@@ -205,6 +229,10 @@ class ConsoleAuth:
                 and sum(item.active and item.role == "admin" for item in accounts) <= 1
             ):
                 raise HTTPException(409, "Нельзя отключить последнего администратора.")
+            if not active and await session.scalar(
+                select(Project.id).where(Project.admin_id == account.id).limit(1)
+            ):
+                raise HTTPException(409, "Сначала передайте управление проектами этого аккаунта.")
             account.active = active
             if not active:
                 await session.execute(

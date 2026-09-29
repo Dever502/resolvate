@@ -54,7 +54,7 @@ if [ -n "$media_output" ]; then
 fi
 
 compose exec -T postgres sh -eu -c \
-    'PGPASSWORD="$POSTGRES_RUNTIME_PASSWORD" pg_dump --format=custom --no-owner --no-acl --username="$POSTGRES_RUNTIME_USER" --dbname="$POSTGRES_DB"' \
+    'PGPASSWORD="$POSTGRES_PASSWORD" pg_dump --format=custom --no-owner --no-acl --username="$POSTGRES_USER" --dbname="$POSTGRES_DB"' \
     > "$temporary"
 compose exec -T postgres pg_restore --list < "$temporary" >/dev/null
 

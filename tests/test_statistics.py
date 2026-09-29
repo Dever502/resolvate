@@ -8,11 +8,11 @@ from unittest.mock import AsyncMock
 import pytest
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.methods import EditMessageText
+from project_support import ProjectDatabase as Database
 from pydantic import SecretStr
 
 from resolvate.authorization import AuthorizationService
 from resolvate.config import Settings
-from resolvate.database import Database
 from resolvate.models import Direction, Ticket, TicketChannel, TicketMessage, TicketStatus, User
 from resolvate.statistics import StatisticsService, period_start
 from resolvate.telegram_limits import TelegramRateLimiter

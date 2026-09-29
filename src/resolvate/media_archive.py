@@ -6,34 +6,93 @@ import sys
 import tarfile
 import tempfile
 from pathlib import Path, PurePosixPath
+from uuid import UUID
 
 from resolvate.config import get_settings
 
 MAX_ARCHIVE_BYTES = 100 * 1024 * 1024 * 1024
+MEDIA_NAMES = ("web-media", "transcript-media")
+
+
+def _project_id(value: str) -> bool:
+    try:
+        return str(UUID(value)) == value
+    except ValueError:
+        return False
+
+
+def _media_roots(data_dir: Path) -> list[Path]:
+    roots = [data_dir / name for name in MEDIA_NAMES]
+    projects = data_dir / "projects"
+    if projects.is_dir() and not projects.is_symlink():
+        for project in sorted(projects.iterdir()):
+            if project.is_dir() and not project.is_symlink() and _project_id(project.name):
+                roots.extend(project / name for name in MEDIA_NAMES)
+    return roots
 
 
 def export_media(data_dir: Path) -> None:
-    root = data_dir / "web-media"
     with tarfile.open(fileobj=sys.stdout.buffer, mode="w|gz", format=tarfile.PAX_FORMAT) as archive:
-        if not root.is_dir():
-            return
-        for path in sorted(root.rglob("*")):
-            if path.is_symlink() or not (path.is_dir() or path.is_file()):
+        for root in _media_roots(data_dir):
+            if not root.is_dir() or root.is_symlink():
                 continue
-            archive.add(path, arcname=path.relative_to(data_dir), recursive=False)
+            for path in (root, *sorted(root.rglob("*"))):
+                if path.is_symlink() or not (path.is_dir() or path.is_file()):
+                    continue
+                archive.add(path, arcname=path.relative_to(data_dir), recursive=False)
 
 
 def _safe_member(member: tarfile.TarInfo) -> PurePosixPath:
     path = PurePosixPath(member.name)
+    allowed = bool(path.parts) and (
+        path.parts[0] in MEDIA_NAMES
+        or (
+            len(path.parts) >= 3
+            and path.parts[0] == "projects"
+            and _project_id(path.parts[1])
+            and path.parts[2] in MEDIA_NAMES
+        )
+    )
     if (
         path.is_absolute()
-        or not path.parts
-        or path.parts[0] != "web-media"
+        or not allowed
         or ".." in path.parts
+        or member.size < 0
         or not (member.isdir() or member.isfile())
     ):
         raise ValueError("media archive contains an unsafe entry")
     return path
+
+
+def _replace_media(data_dir: Path, temporary_root: Path) -> None:
+    # The application is stopped by restore.sh. Preserve project runtime files;
+    # replace only media directories and roll back all replacements on failure.
+    roots = {path.relative_to(data_dir) for path in _media_roots(data_dir)}
+    roots.update(path.relative_to(temporary_root) for path in _media_roots(temporary_root))
+    replacements: list[tuple[Path, Path, bool]] = []
+    try:
+        for relative in sorted(roots):
+            restored, current = temporary_root / relative, data_dir / relative
+            if current.is_symlink() or any(
+                parent.is_symlink() for parent in current.parents if parent != data_dir
+            ):
+                raise ValueError("media destination contains a symlink")
+            restored.mkdir(parents=True, exist_ok=True)
+            current.parent.mkdir(parents=True, exist_ok=True)
+            previous = temporary_root / "previous" / relative
+            previous.parent.mkdir(parents=True, exist_ok=True)
+            existed = current.exists()
+            if existed:
+                current.replace(previous)
+            replacements.append((current, previous, existed))
+            restored.replace(current)
+    except Exception:
+        for current, previous, existed in reversed(replacements):
+            if current.exists():
+                shutil.rmtree(current)
+            if existed:
+                previous.replace(current)
+        raise
 
 
 def import_media(data_dir: Path, *, apply: bool) -> int:
@@ -64,22 +123,7 @@ def import_media(data_dir: Path, *, apply: bool) -> int:
                     shutil.copyfileobj(source, output, length=64 * 1024)
         if apply:
             assert temporary_root is not None
-            restored = temporary_root / "web-media"
-            restored.mkdir(parents=True, exist_ok=True)
-            current = data_dir / "web-media"
-            previous = data_dir / ".web-media-previous"
-            if previous.exists():
-                shutil.rmtree(previous)
-            if current.exists():
-                current.replace(previous)
-            try:
-                restored.replace(current)
-            except Exception:
-                if previous.exists() and not current.exists():
-                    previous.replace(current)
-                raise
-            if previous.exists():
-                shutil.rmtree(previous)
+            _replace_media(data_dir, temporary_root)
         return total_size
     finally:
         if temporary_root is not None and temporary_root.exists():
@@ -87,7 +131,7 @@ def import_media(data_dir: Path, *, apply: bool) -> int:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Export, validate, or restore Web media archive.")
+    parser = argparse.ArgumentParser(description="Export, validate, or restore project media.")
     parser.add_argument("operation", choices=("export", "validate", "restore"))
     arguments = parser.parse_args()
     settings = get_settings()
@@ -95,7 +139,7 @@ def main() -> None:
         export_media(settings.data_dir)
         return
     size = import_media(settings.data_dir, apply=arguments.operation == "restore")
-    print(f"Validated Web media archive: {size} bytes", file=sys.stderr)
+    print(f"Validated media archive: {size} bytes", file=sys.stderr)
 
 
 if __name__ == "__main__":

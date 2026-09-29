@@ -10,12 +10,12 @@ from aiogram.enums import ChatType, MessageEntityType
 from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
 from aiogram.methods import DeleteMessage, EditMessageText
 from aiogram.types import Chat, Message, MessageEntity, User
+from project_support import ProjectDatabase as Database
 from pydantic import SecretStr
 from sqlalchemy import event
 
 from resolvate.authorization import AuthorizationService
 from resolvate.config import Settings
-from resolvate.database import Database
 from resolvate.models import QuickResponse
 from resolvate.quick_replies import (
     QUICK_RESPONSE_DELETED,
@@ -203,7 +203,7 @@ async def test_idle_catalogue_uses_one_query_and_full_scan_is_paginated(
             await harness._restore_valid_responses(all_responses=False)
         finally:
             event.remove(database.engine.sync_engine, "before_cursor_execute", capture)
-        assert len(queries) == 1
+        assert len(queries) == 2  # One transaction scope statement, one catalogue query.
         harness.bot.send_message.assert_not_awaited()
         harness._publish_valid_response = AsyncMock()
         await harness._restore_valid_responses(all_responses=False, verify_existing=True)

@@ -5,12 +5,12 @@ import socket
 from pathlib import Path
 
 import httpx
+from project_support import ProjectDatabase as Database
 from pydantic import SecretStr
 
 from resolvate.api import create_app
 from resolvate.api_server import ApiServer
 from resolvate.config import Settings
-from resolvate.database import Database
 from resolvate.runtime_health import RuntimeHealth
 from resolvate.services import TicketService
 from resolvate.version import PROJECT_VERSION

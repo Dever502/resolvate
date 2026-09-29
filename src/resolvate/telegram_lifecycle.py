@@ -10,6 +10,7 @@ def create_polling_task(
     bot: Bot,
     *,
     allowed_updates: list[str],
+    handle_signals: bool = True,
 ) -> asyncio.Task[None]:
     """Start polling while retaining ownership of the shared Bot session."""
 
@@ -19,6 +20,7 @@ def create_polling_task(
             allowed_updates=allowed_updates,
             handle_as_tasks=False,
             close_bot_session=False,
+            handle_signals=handle_signals,
         ),
         name="telegram-polling",
     )

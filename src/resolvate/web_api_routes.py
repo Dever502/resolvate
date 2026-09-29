@@ -228,7 +228,7 @@ def register_web_routes(
                         await media_storage.delete(stored_media)
                         stored_media = None
                     metrics.event("web_ingress", "replayed")
-                    return accepted_message_response(replay)
+                    return accepted_message_response(replay, ticket_service.database.project_id)
                 rate_limit = await user_message_limiter.consume(
                     f"web:{settings.web_identity_mode}:{identity_resource}"
                 )
@@ -296,7 +296,7 @@ def register_web_routes(
                     stored_media=stored_media,
                 )
             metrics.event("web_ingress", "replayed" if not result.changed else "accepted")
-            return accepted_message_response(result)
+            return accepted_message_response(result, ticket_service.database.project_id)
 
     @app.get(
         "/api/v1/web/conversations/{ticket_id}",
@@ -330,7 +330,9 @@ def register_web_routes(
             ) from error
         metrics.event("web_polling", "empty" if not page.items else "messages")
         return WebMessagesResponse(
-            items=[message_response(item) for item in page.items],
+            items=[
+                message_response(item, ticket_service.database.project_id) for item in page.items
+            ],
             next_cursor=page.next_cursor,
         )
 

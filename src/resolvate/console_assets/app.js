@@ -3,6 +3,8 @@
 const $ = (id) => document.getElementById(id);
 const state = {
   account: null,
+  project: null,
+  projects: [],
   csrf: "",
   ticket: null,
   detail: null,
@@ -37,6 +39,11 @@ function fail(error) {
   notice(error.message || "Не удалось выполнить действие.");
 }
 async function api(path, { method = "GET", data, form, key } = {}) {
+  const scoped = /^(tickets(?:\/|$)|media\/|retry\/|replies(?:\?|$))/.test(path);
+  if (scoped) {
+    if (!state.project) throw new Error("Выберите доступный проект.");
+    path = `projects/${state.project}/${path}`;
+  }
   const headers = {};
   if (method !== "GET") headers["X-CSRF-Token"] = state.csrf;
   if (data !== undefined) headers["Content-Type"] = "application/json";
@@ -83,12 +90,15 @@ function timeLabel(value) {
 function showLogin() {
   state.epoch++;
   state.account = null;
+  state.project = null;
+  state.projects = [];
   state.csrf = "";
   state.ticket = null;
   state.drafts.clear();
   state.messages.clear();
   state.tickets.clear();
   $("accounts-dialog").close();
+  $("projects-dialog").close();
   $("workspace").hidden = true;
   $("login-screen").hidden = false;
   $("message-list").replaceChildren();
@@ -101,14 +111,14 @@ async function enter(result) {
   state.csrf = result.csrf;
   $("account-name").textContent = result.account.name;
   $("account-role").textContent =
-    result.account.role === "admin" ? "Администратор" : "Оператор";
+    result.account.role === "admin" ? "Администратор установки" : "Сотрудник";
   $("accounts-open").hidden = result.account.role !== "admin";
   $("login-screen").hidden = true;
   $("workspace").hidden = false;
   $("dialogue").hidden = true;
   $("empty").hidden = false;
   $("workspace").classList.remove("open-chat");
-  await syncTickets();
+  await refreshProjects();
 }
 $("login-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -136,6 +146,7 @@ $("logout").onclick = async () => {
 };
 
 async function syncTickets() {
+  if (!state.project) return;
   const listEpoch = ++state.listEpoch;
   const epoch = state.epoch,
     query = $("search").value,
@@ -290,7 +301,7 @@ function renderMessage(item) {
   );
   const bubble = node("div", "bubble");
   if (item.media_id) {
-    const url = `/console/media/${encodeURIComponent(item.media_id)}`;
+    const url = `/console/projects/${state.project}/media/${encodeURIComponent(item.media_id)}`;
     if (item.mime?.startsWith("image/")) {
       const image = node("img");
       image.src = url;
@@ -500,6 +511,8 @@ $("composer").onsubmit = async (event) => {
   form.set("text", item.text);
   if (item.file) form.set("file", item.file);
   state.sending = true;
+  $("project-select").disabled = true;
+  $("projects-open").disabled = true;
   $("send").disabled = true;
   $("message-text").disabled = true;
   $("attach").disabled = true;
@@ -518,6 +531,8 @@ $("composer").onsubmit = async (event) => {
     fail(error);
   } finally {
     state.sending = false;
+    $("project-select").disabled = false;
+    $("projects-open").disabled = false;
     $("send").disabled = false;
     $("message-text").disabled = false;
     $("attach").disabled = false;
@@ -636,6 +651,26 @@ async function refreshAccounts() {
         button.disabled = false;
       }
     };
+    const identity = node("form", "identity-form");
+    const telegramId = node("input");
+    telegramId.type = "number";
+    telegramId.min = "1";
+    telegramId.value = account.telegram_id || "";
+    telegramId.placeholder = "Telegram ID";
+    telegramId.setAttribute("aria-label", `Telegram ID: ${account.login}`);
+    const save = node("button", "quiet", "Сохранить ID");
+    save.type = "submit";
+    identity.append(telegramId, save);
+    identity.onsubmit = async (event) => {
+      event.preventDefault();
+      save.disabled = true;
+      try {
+        await api(`accounts/${account.id}/identity/telegram`, {method:"POST", data:{telegram_id:telegramId.value ? Number(telegramId.value) : null}});
+        await refreshAccounts();
+      } catch (error) { $("account-error").textContent = error.message; }
+      finally { save.disabled = false; }
+    };
+    description.append(identity);
     row.append(description, button);
     $("account-list").append(row);
   }
@@ -658,9 +693,11 @@ $("account-form").onsubmit = async (event) => {
   event.submitter.disabled = true;
   $("account-error").textContent = "";
   try {
+    const values = Object.fromEntries(new FormData(event.target));
+    values.telegram_id = values.telegram_id ? Number(values.telegram_id) : null;
     await api("accounts", {
       method: "POST",
-      data: Object.fromEntries(new FormData(event.target)),
+      data: values,
     });
     event.target.reset();
     await refreshAccounts();
@@ -670,6 +707,295 @@ $("account-form").onsubmit = async (event) => {
     event.submitter.disabled = false;
   }
 };
+function selectProject(id) {
+  if (state.sending) return;
+  state.epoch++;
+  state.listEpoch++;
+  state.searchEpoch++;
+  state.project = id || null;
+  state.ticket = null;
+  state.detail = null;
+  state.pages = 1;
+  state.before = null;
+  state.older = false;
+  state.replies = [];
+  // Never carry drafts, attachments or cached results into a different project.
+  state.drafts.clear();
+  state.messages.clear();
+  state.tickets.clear();
+  $("ticket-list").replaceChildren();
+  $("message-list").replaceChildren();
+  $("message-text").value = "";
+  $("file").value = "";
+  $("search").value = "";
+  $("customer-fields").replaceChildren();
+  $("customer-card").hidden = true;
+  $("reply-options").hidden = true;
+  $("attachment").hidden = true;
+  $("dialogue").hidden = true;
+  $("more-tickets").hidden = true;
+  $("empty").hidden = false;
+  $("workspace").classList.remove("open-chat");
+  $("empty-title").textContent = id ? "Выберите диалог" : "Нет активного проекта";
+  $("empty-description").textContent = id
+    ? "Здесь появится история обращения."
+    : "Откройте «Проекты» или попросите администратора выдать доступ.";
+  $("project-select").value = id || "";
+  notice();
+}
+async function refreshProjects(initial = true) {
+  const account = state.account;
+  const projects = await api("projects");
+  if (state.account !== account) return;
+  const changed = JSON.stringify(projects) !== JSON.stringify(state.projects);
+  state.projects = projects;
+  if (!changed && !initial) return;
+  const available = projects.filter((project) => project.role && project.active);
+  $("project-select").replaceChildren(node("option", "", "Выберите проект"));
+  $("project-select").firstChild.value = "";
+  for (const project of available) {
+    const option = node("option", "", project.name);
+    option.value = project.id;
+    $("project-select").append(option);
+  }
+  const current = available.find((project) => project.id === state.project);
+  if (!current) selectProject(initial ? available[0]?.id : null);
+  else $("project-select").value = current.id;
+  if (initial) await syncTickets();
+}
+$("project-select").onchange = () => {
+  selectProject($("project-select").value);
+  syncTickets().catch(fail);
+};
+
+let managedProject = null;
+let managementEpoch = 0;
+const projectError = (error) => { $("project-error").textContent = error.message; };
+
+async function renderProjects() {
+  await refreshProjects(false);
+  $("project-list").replaceChildren();
+  const owner = state.account.role === "admin";
+  $("project-create-form").hidden = !owner;
+  for (const project of state.projects) {
+    const row = node("div", "project-row");
+    const description = node("div");
+    description.append(node("strong", "", project.name), node("span", "muted small",
+      `${project.active ? "Активен" : "Отключён"} · ${project.role === "admin" ? "Вы — администратор" : project.role ? "Вы — оператор" : "Доступ к перепискам не выдан"}`));
+    row.append(description);
+    const actions = node("div", "row-actions");
+    if (project.role && project.active) {
+      const open = node("button", "secondary", "Открыть");
+      open.onclick = () => {
+        selectProject(project.id);
+        $("projects-dialog").close();
+        syncTickets().catch(fail);
+      };
+      actions.append(open);
+    }
+    if (owner || project.role === "admin") {
+      const manage = node("button", "quiet", "Настроить");
+      manage.onclick = () => openManagement(project).catch(projectError);
+      actions.append(manage);
+    }
+    if (owner) {
+      const active = node("button", "quiet", project.active ? "Отключить" : "Включить");
+      active.onclick = async () => {
+        active.disabled = true;
+        try {
+          await api(`projects/${project.id}/active`, {method: "POST", data: {active: !project.active}});
+          await renderProjects();
+        } catch (error) { projectError(error); }
+        finally { active.disabled = false; }
+      };
+      actions.append(active);
+      if (!project.role) {
+        const join = node("button", "quiet", "Выдать себе доступ");
+        join.onclick = async () => {
+          try {
+            await api(`projects/${project.id}/members`, {method: "POST", data: {login: state.account.login}});
+            await renderProjects();
+          } catch (error) { projectError(error); }
+        };
+        actions.append(join);
+      }
+    }
+    row.append(actions);
+    $("project-list").append(row);
+  }
+  if (!state.projects.length) $("project-list").append(node("p", "muted", "Пока нет доступных проектов."));
+}
+async function openManagement(project) {
+  managedProject = project;
+  managementEpoch++;
+  $("project-error").textContent = "";
+  $("managed-project-name").textContent = project.name;
+  $("project-management").hidden = false;
+  $("project-admin-form").hidden = state.account.role !== "admin";
+  $("settings-tab").hidden = project.role !== "admin";
+  $("project-settings-form").reset();
+  $("project-setting-fields").replaceChildren();
+  $("members-tab").click();
+  await refreshMembers();
+}
+async function refreshMembers() {
+  const id = managedProject.id, epoch = managementEpoch;
+  const members = await api(`projects/${id}/members`);
+  if (epoch !== managementEpoch) return;
+  $("member-list").replaceChildren();
+  for (const member of members) {
+    const row = node("div", "account-row"), description = node("div");
+    description.append(node("strong", "", member.name), node("span", "small muted",
+      `${member.login} · ${member.role === "admin" ? "Администратор проекта" : "Оператор"}${member.active ? "" : " · аккаунт отключён"}`));
+    row.append(description);
+    if (member.role !== "admin") {
+      const remove = node("button", "quiet", "Отозвать доступ");
+      remove.onclick = async () => {
+        remove.disabled = true;
+        try {
+          await api(`projects/${id}/members/remove`, {method: "POST", data: {login: member.login}});
+          if (epoch === managementEpoch) await refreshMembers();
+          await refreshProjects(false);
+        } catch (error) { projectError(error); }
+        finally { remove.disabled = false; }
+      };
+      row.append(remove);
+    }
+    $("member-list").append(row);
+  }
+}
+function managementTab(settings) {
+  $("members-section").hidden = settings;
+  $("project-settings-form").hidden = !settings;
+  for (const [id, selected] of [["members-tab", !settings], ["settings-tab", settings]]) {
+    $(id).classList.toggle("selected", selected);
+    $(id).setAttribute("aria-pressed", String(selected));
+  }
+}
+$("members-tab").onclick = () => managementTab(false);
+const settingSections = [
+  ["Telegram", [
+    ["support_bot_token", "Токен бота", "password"],
+    ["support_group_id", "ID группы поддержки", "number"],
+  ]],
+  ["API для вашего сайта", [
+    ["web_api_enabled", "Принимать обращения через API", "checkbox"],
+    ["web_api_token", "Ключ Web API", "password"],
+    ["web_identity_mode", "Идентификация клиентов", "identity"],
+    ["api_enabled", "Разрешить Operator API", "checkbox"],
+    ["api_admin_token", "Ключ Operator API", "password"],
+  ]],
+  ["Remnawave", [
+    ["remnawave_enabled", "Включить интеграцию", "checkbox"],
+    ["remnawave_base_url", "Адрес API", "url"],
+    ["remnawave_api_token", "Ключ интеграции", "password"],
+  ]],
+  ["Webhook", [
+    ["notification_webhook_enabled", "Отправлять события", "checkbox"],
+    ["notification_webhook_url", "Адрес получателя", "url"],
+    ["notification_webhook_secret", "Секрет подписи", "password"],
+  ]],
+];
+$("settings-tab").onclick = async () => {
+  if (!managedProject || managedProject.role !== "admin") return;
+  const id = managedProject.id, epoch = managementEpoch;
+  try {
+    const values = await api(`projects/${id}/settings`);
+    if (epoch !== managementEpoch) return;
+    const fields = $("project-setting-fields");
+    fields.replaceChildren();
+    fields.append(node("p", "muted small", `Базовый адрес API: ${location.origin}/projects/${id}/api/v1`));
+    for (const [title, settings] of settingSections) {
+      const section = node("fieldset");
+      section.append(node("legend", "", title));
+      for (const [key, label, type] of settings) {
+        const wrapper = node("label", type === "checkbox" ? "checkbox-label" : "", label);
+        const input = node(type === "identity" ? "select" : "input");
+        input.name = key;
+        if (type === "identity") {
+          for (const [value, text] of [["external_id", "ID на вашем сайте"], ["email", "Email"]]) {
+            const option = node("option", "", text); option.value = value; input.append(option);
+          }
+          input.value = values[key] || "external_id";
+        } else {
+          input.type = type;
+          if (type === "checkbox") input.checked = Boolean(values[key]);
+          else if (type === "password") {
+            input.autocomplete = "new-password";
+            input.placeholder = values[key] ? "Ключ сохранён" : "Не настроено";
+          } else input.value = values[key] ?? "";
+        }
+        wrapper.append(input);
+        section.append(wrapper);
+      }
+      fields.append(section);
+    }
+    managementTab(true);
+  } catch (error) { projectError(error); }
+};
+$("projects-open").onclick = async () => {
+  $("project-error").textContent = "";
+  $("project-management").hidden = true;
+  $("projects-dialog").showModal();
+  try { await renderProjects(); } catch (error) { projectError(error); }
+};
+$("projects-close").onclick = () => {
+  managementEpoch++;
+  $("project-settings-form").reset();
+  $("projects-dialog").close();
+};
+function managementForm(id, perform) {
+  $(id).onsubmit = async (event) => {
+    event.preventDefault();
+    event.submitter.disabled = true;
+    $("project-error").textContent = "";
+    try {
+      await perform(Object.fromEntries(new FormData(event.target)), event.target);
+    } catch (error) { projectError(error); }
+    finally { event.submitter.disabled = false; }
+  };
+}
+managementForm("project-create-form", async (values, form) => {
+  await api("projects", {method: "POST", data: values});
+  form.reset();
+  await renderProjects();
+});
+managementForm("member-form", async (values, form) => {
+  await api(`projects/${managedProject.id}/members`, {method: "POST", data: values});
+  form.reset();
+  await refreshMembers();
+});
+managementForm("project-admin-form", async (values, form) => {
+  const id = managedProject.id;
+  await api(`projects/${id}/admin`, {method: "POST", data: values});
+  form.reset();
+  await renderProjects();
+  await openManagement(state.projects.find((project) => project.id === id));
+});
+managementForm("project-settings-form", async (_, form) => {
+  const settings = {};
+  for (const input of form.elements) {
+    if (!input.name) continue;
+    if (input.type === "checkbox") settings[input.name] = input.checked;
+    else if (input.type === "password") { if (input.value) settings[input.name] = input.value; }
+    else settings[input.name] = input.type === "number" ? Number(input.value) : input.value || null;
+  }
+  await api(`projects/${managedProject.id}/settings`, {method: "POST", data: {settings}});
+  form.reset();
+  await $("settings-tab").onclick();
+  $("project-error").textContent = "Подключения сохранены. Активный проект перезапустится автоматически.";
+});
+$("owner-transfer-form").onsubmit = async (event) => {
+  event.preventDefault();
+  event.submitter.disabled = true;
+  try {
+    await api("installation/admin", {method: "POST", data: Object.fromEntries(new FormData(event.target))});
+    event.target.reset();
+    showLogin();
+  } catch (error) { $("account-error").textContent = error.message; }
+  finally { event.submitter.disabled = false; }
+};
+
 async function poll() {
   if (
     state.account &&
@@ -680,6 +1006,7 @@ async function poll() {
   ) {
     state.syncing = true;
     try {
+      await refreshProjects(false);
       await syncTickets();
       if (state.ticket) {
         await syncDetail(state.ticket, state.epoch);

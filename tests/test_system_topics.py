@@ -4,8 +4,8 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
+from project_support import ProjectDatabase as Database
 
-from resolvate.database import Database
 from resolvate.telegram_system_topics import (
     QUICK_REPLIES_TOPIC,
     QUICK_REPLIES_TOPIC_NAME,

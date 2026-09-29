@@ -9,12 +9,12 @@ import pytest
 from fastapi import Request
 from fastapi.routing import APIRoute
 from httpx import ASGITransport, AsyncClient
+from project_support import ProjectDatabase as Database
 from pydantic import SecretStr
 from sqlalchemy import func, select, text
 
 from resolvate.api import API_TICKET_CLOSED_TEXT, client_key_from_request, create_app
 from resolvate.config import Settings
-from resolvate.database import Database
 from resolvate.metrics import MetricsRegistry
 from resolvate.models import (
     DeliveryOutbox,

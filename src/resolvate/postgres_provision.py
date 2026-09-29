@@ -182,6 +182,25 @@ async def provision_postgres_roles(settings: PostgresProvisioningSettings) -> No
                     )
                 )
 
+            # Backups restored by the bootstrap role also own trigger functions.
+            # Reassign application routines, excluding extension-owned objects.
+            await cursor.execute(
+                "SELECT n.nspname, p.proname, pg_get_function_identity_arguments(p.oid) "
+                "FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
+                "WHERE n.nspname = 'public' AND p.prokind IN ('f', 'p') "
+                "AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_proc'::regclass "
+                "AND d.objid = p.oid AND d.deptype = 'e')"
+            )
+            for schema_name, routine_name, arguments in await cursor.fetchall():
+                await cursor.execute(
+                    sql.SQL("ALTER ROUTINE {}.{}({}) OWNER TO {}").format(
+                        sql.Identifier(str(schema_name)),
+                        sql.Identifier(str(routine_name)),
+                        sql.SQL(str(arguments)),
+                        sql.Identifier(settings.migration_role),
+                    )
+                )
+
             await cursor.execute(
                 sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(
                     sql.Identifier(settings.runtime_role)

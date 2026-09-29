@@ -9,13 +9,13 @@ from typing import Literal
 
 import httpx
 import pytest
+from project_support import ProjectDatabase as Database
 from pydantic import SecretStr
 from sqlalchemy import func, select
 
 from resolvate import web_api_routes
 from resolvate.api import create_app
 from resolvate.config import Settings
-from resolvate.database import Database
 from resolvate.models import (
     DeliveryOutbox,
     Direction,
@@ -800,7 +800,8 @@ async def test_web_photo_is_validated_persisted_and_downloadable(
             headers={"X-API-Token": WEB_TOKEN},
         )
         media_url = page.json()["items"][0]["media_url"]
-        assert media_url.startswith("/api/v1/web/media/")
+        assert media_url.startswith(f"/projects/{database.project_id}/api/v1/web/media/")
+        media_url = media_url.removeprefix(f"/projects/{database.project_id}")
 
         downloaded = await client.get(media_url, headers={"X-API-Token": WEB_TOKEN})
         assert downloaded.status_code == 200
@@ -875,6 +876,7 @@ async def test_transient_media_link_check_keeps_committed_file(
 
         assert created.status_code == 200
         media_url = created.json()["message"]["media_url"]
+        media_url = media_url.removeprefix(f"/projects/{database.project_id}")
         assert len(list((tmp_path / "web-media" / "assets").rglob("*.png"))) == 1
 
         monkeypatch.setattr(service, "get_media", original_get_media)

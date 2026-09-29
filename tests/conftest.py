@@ -25,8 +25,20 @@ async def postgres_database_url() -> AsyncIterator[str]:
 
 
 @pytest.fixture
-async def migrated_postgres_database_url(postgres_database_url: str) -> str:
+async def migrated_postgres_database_url(
+    postgres_database_url: str, request: pytest.FixtureRequest
+) -> str:
     """Return an isolated PostgreSQL database upgraded to the current schema."""
 
     await upgrade_database(postgres_database_url)
+    if request.module.__name__ != "test_projects":
+        from project_support import seed_project
+
+        from resolvate.database import Database
+
+        database = Database(postgres_database_url)
+        try:
+            await seed_project(database)
+        finally:
+            await database.dispose()
     return postgres_database_url

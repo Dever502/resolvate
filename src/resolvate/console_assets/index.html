@@ -11,8 +11,8 @@
     <main id="login-screen" class="login-screen">
       <form id="login-form" class="login-card">
         <div class="brand"><span class="brand-mark">R</span> Resolvate</div>
-        <h1>Рады видеть вас</h1>
-        <p class="muted">Войдите, чтобы продолжить работу с обращениями.</p>
+        <h1>Вход в поддержку</h1>
+        <p class="muted">Ваши проекты и обращения — в одном месте.</p>
         <label
           >Логин<input
             name="login"
@@ -39,8 +39,11 @@
       <aside class="sidebar">
         <header class="sidebar-head">
           <div class="brand"><span class="brand-mark">R</span> Resolvate</div>
-          <span class="muted small">Поддержка</span>
+          <button id="projects-open" class="quiet">Проекты</button>
         </header>
+        <label class="project-picker">Проект
+          <select id="project-select" aria-label="Текущий проект"></select>
+        </label>
         <div class="list-controls">
           <input
             id="search"
@@ -62,19 +65,15 @@
             <strong id="account-name"></strong
             ><span id="account-role" class="muted small"></span>
           </div>
-          <button id="accounts-open" class="quiet" hidden>Команда</button
+          <button id="accounts-open" class="quiet" hidden>Аккаунты</button
           ><button id="logout" class="quiet">Выйти</button>
         </footer>
       </aside>
       <main class="conversation">
         <div id="global-error" class="notice" role="alert" hidden></div>
         <div id="empty" class="empty">
-          <span class="empty-icon">↗</span>
-          <h1>Каждый вопрос важен</h1>
-          <p>
-            Выберите диалог слева, чтобы прочитать историю<br />и помочь
-            клиенту.
-          </p>
+          <h1 id="empty-title">Выберите диалог</h1>
+          <p id="empty-description">Здесь появится история обращения.</p>
         </div>
         <section id="dialogue" class="dialogue" hidden>
           <header class="dialogue-head">
@@ -145,8 +144,7 @@
               </button>
             </form>
             <div class="composer-hint">
-              <span>Enter — отправить · Shift + Enter — новая строка</span
-              ><span>Resolvate</span>
+              <span>Enter — отправить · Shift + Enter — новая строка</span>
             </div>
           </div>
         </section>
@@ -168,8 +166,8 @@
     <dialog id="accounts-dialog">
       <header>
         <div>
-          <h2>Команда поддержки</h2>
-          <p class="muted">Доступ к общим диалогам и готовым ответам.</p>
+          <h2>Учётные записи</h2>
+          <p class="muted">Создание аккаунта не даёт доступа к проектам.</p>
         </div>
         <button id="accounts-close" class="quiet" aria-label="Закрыть">
           ×
@@ -203,15 +201,57 @@
               maxlength="128"
               autocomplete="new-password" /></label
           ><label
-            >Роль<select name="role">
-              <option value="operator">Оператор</option>
-              <option value="admin">Администратор</option>
-            </select></label
+            >Telegram ID · необязательно<input name="telegram_id" type="number" min="1" /></label
           >
         </div>
         <p id="account-error" class="error" role="alert"></p>
         <button class="primary">Создать учётную запись</button>
       </form>
+      <form id="owner-transfer-form" class="separated">
+        <h3>Передать управление установкой</h3>
+        <p class="muted">Вы потеряете права администратора установки. Обе сессии будут завершены.</p>
+        <label>Логин нового администратора<input name="login" required minlength="3" maxlength="64" /></label>
+        <button class="secondary">Передать полномочия</button>
+      </form>
+    </dialog>
+    <dialog id="projects-dialog" class="management-dialog">
+      <header><h2>Проекты</h2><button id="projects-close" class="quiet" aria-label="Закрыть">×</button></header>
+      <p class="muted">Отдельные клиенты, команда и подключения для каждого проекта.</p>
+      <p id="project-error" class="error" role="alert"></p>
+      <div id="project-list"></div>
+      <form id="project-create-form" class="separated" hidden>
+        <h3>Новый проект</h3>
+        <div class="form-grid">
+          <label>Название<input name="name" required maxlength="100" /></label>
+          <label>Логин администратора<input name="admin_login" required minlength="3" maxlength="64" /></label>
+        </div>
+        <p class="muted small">Сначала создайте аккаунт администратора в разделе «Учётные записи».</p>
+        <button class="primary">Создать проект</button>
+      </form>
+      <section id="project-management" class="separated" hidden>
+        <h3 id="managed-project-name"></h3>
+        <nav class="tabs" aria-label="Управление проектом">
+          <button id="members-tab" class="selected" aria-pressed="true">Участники</button>
+          <button id="settings-tab" aria-pressed="false">Подключения</button>
+        </nav>
+        <section id="members-section">
+          <div id="member-list"></div>
+          <form id="member-form">
+            <label>Добавить оператора по логину<input name="login" required minlength="3" maxlength="64" /></label>
+            <button class="primary">Выдать доступ</button>
+          </form>
+          <form id="project-admin-form" class="separated" hidden>
+            <label>Передать проект другому администратору<input name="login" required minlength="3" maxlength="64" /></label>
+            <p class="muted small">Предыдущий администратор потеряет доступ к этому проекту.</p>
+            <button class="secondary">Передать проект</button>
+          </form>
+        </section>
+        <form id="project-settings-form" hidden>
+          <p class="muted small">Секреты не отображаются. Пустое поле ключа сохраняет прежний ключ.</p>
+          <div id="project-setting-fields"></div>
+          <button class="primary">Сохранить подключения</button>
+        </form>
+      </section>
     </dialog>
   </body>
 </html>

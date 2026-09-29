@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+from collections.abc import Callable
+from contextlib import AsyncExitStack
 from functools import partial
 from ipaddress import ip_address
 
@@ -11,22 +13,21 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramAPIError
+from fastapi import FastAPI
 from pydantic import ValidationError
 from sqlalchemy import select
 
 from resolvate.api import create_app
-from resolvate.api_server import ApiServer
 from resolvate.archive_maintenance import ArchiveMaintenance
 from resolvate.archive_media_storage import ArchiveMediaStorage
-from resolvate.config import Settings, get_settings
+from resolvate.config import Settings
 from resolvate.database import Database
 from resolvate.delivery import DeliveryWorker
 from resolvate.durable_work import DurableWorkRepository
 from resolvate.heartbeat import Heartbeat
-from resolvate.logging_config import configure_logging
+from resolvate.integration_transport import IntegrationTransport
 from resolvate.media_storage import LocalMediaStorage
 from resolvate.metrics import MetricsRegistry
-from resolvate.migrations import upgrade_database
 from resolvate.models import Ticket
 from resolvate.notification_webhook import NotificationWebhookWorker
 from resolvate.operational_notices import OperationalNoticeRepository
@@ -40,7 +41,7 @@ from resolvate.runtime_defaults import (
     TELEGRAM_MIN_REQUEST_INTERVAL_SECONDS,
 )
 from resolvate.runtime_health import RuntimeHealth
-from resolvate.runtime_supervision import shutdown_runtime, supervise_ingress
+from resolvate.runtime_supervision import shutdown_runtime
 from resolvate.services import TicketService
 from resolvate.telegram_adapter import TelegramSupportAdapter
 from resolvate.telegram_archive_media import TelegramArchiveMedia
@@ -158,16 +159,22 @@ async def validate_support_group(bot: Bot, support_group_id: int) -> None:
     logger.info("Configured support group passed preflight checks", extra=extra)
 
 
-async def run() -> None:
-    settings = get_settings()
-    configure_logging(settings.log_level)
-    assert settings.migration_database_url is not None
+async def run_project(
+    settings: Settings, database: Database, publish: Callable[[FastAPI], None], stop: asyncio.Event
+) -> None:
+    async with AsyncExitStack() as resources:
+        await _run_project(settings, database, publish, stop, resources)
+
+
+async def _run_project(
+    settings: Settings,
+    database: Database,
+    publish: Callable[[FastAPI], None],
+    stop: asyncio.Event,
+    resources: AsyncExitStack,
+) -> None:
     validate_api_settings(settings)
     validate_operator_access(settings)
-    if settings.migrations_at_startup:
-        await upgrade_database(settings.migration_database_url)
-
-    database = Database(settings.database_url)
     runtime_health = RuntimeHealth()
     runtime_health.register("database")
     runtime_health.register("telegram_ingress", progress_timeout_seconds=45)
@@ -187,7 +194,9 @@ async def run() -> None:
     )
     runtime_health.ready("database")
     metrics = MetricsRegistry()
-    http_client = httpx.AsyncClient()
+    http_client = await resources.enter_async_context(
+        httpx.AsyncClient(transport=IntegrationTransport(), trust_env=False)
+    )
     ticket_service = TicketService(database)
     if settings.web_api_enabled:
         await ticket_service.validate_web_identity_mode(settings.web_identity_mode)
@@ -227,18 +236,14 @@ async def run() -> None:
             "Topic provisioning requires explicit recovery",
             extra={"event": "topic_provisioning_recovery_required", "ticket_id": ticket_id},
         )
-    api_server: ApiServer | None = None
     bot = Bot(
         token=settings.support_bot_token.get_secret_value(),
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
-    try:
-        await validate_support_group(bot, settings.support_group_id)
-    except Exception:
-        await bot.session.close()
-        await http_client.aclose()
-        await database.dispose()
-        raise
+    resources.push_async_callback(bot.session.close)
+    await validate_support_group(bot, settings.support_group_id)
+    if stop.is_set():
+        return
     limiter = TelegramRateLimiter(TELEGRAM_MIN_REQUEST_INTERVAL_SECONDS)
     user_message_limiter = UserMessageRateLimiter(
         per_minute=settings.user_messages_per_minute,
@@ -305,6 +310,7 @@ async def run() -> None:
         media_storage=web_media_storage,
     )
     adapter.topic_archive = topic_archive
+    resources.push_async_callback(adapter.shutdown_quick_reply_runtime)
     adapter.router.message.outer_middleware(TranscriptIngressMiddleware(topic_archive))
     adapter.router.edited_message.outer_middleware(TranscriptIngressMiddleware(topic_archive))
     adapter.recover_quick_replies_topic = partial(system_topics.recover, QUICK_REPLIES_TOPIC)
@@ -315,21 +321,21 @@ async def run() -> None:
     await adapter.ensure_statistics_dashboard()
     quick_response_topic_worker = QuickResponseTopicRefreshWorker(adapter)
     statistics_worker = StatisticsDashboardRefreshWorker(adapter)
+    if stop.is_set():
+        return
 
-    if settings.api_enabled or settings.web_api_enabled or settings.console_origin:
-        api_server = ApiServer(
-            create_app(
-                database=database,
-                ticket_service=ticket_service,
-                settings=settings,
-                runtime_health=runtime_health,
-                metrics=metrics,
-                user_message_limiter=user_message_limiter,
-                media_storage=web_media_storage,
-            ),
-            settings,
-            runtime_health,
+    publish(
+        create_app(
+            database=database,
+            ticket_service=ticket_service,
+            settings=settings,
+            runtime_health=runtime_health,
+            metrics=metrics,
+            user_message_limiter=user_message_limiter,
+            media_storage=web_media_storage,
         )
+    )
+    runtime_health.ready("api")
 
     reconciliation_worker = ReconciliationWorker(
         repository=durable_work,
@@ -394,22 +400,44 @@ async def run() -> None:
     quick_response_topic_worker_task = asyncio.create_task(
         quick_response_topic_worker.run(), name="quick-response-topic-refresh-worker"
     )
-    api_task = api_server.start() if api_server is not None else None
+    api_task = None
     polling_task = create_polling_task(
         dispatcher,
         bot,
         allowed_updates=dispatcher.resolve_used_update_types(),
+        handle_signals=False,
     )
-
+    stop_task = asyncio.create_task(stop.wait())
     try:
         logger.info("Starting resolvate")
-        await supervise_ingress(polling_task, api_task, dispatcher.stop_polling)
+        watched = {
+            polling_task,
+            stop_task,
+            ingress_worker_task,
+            reconciliation_worker_task,
+            worker_task,
+            rotation_task,
+            maintenance_task,
+            general_notices_task,
+            statistics_worker_task,
+            quick_response_topic_worker_task,
+        }
+        if notification_worker_task is not None:
+            watched.add(notification_worker_task)
+        done, _ = await asyncio.wait(watched, return_when=asyncio.FIRST_COMPLETED)
+        for finished in done:
+            if finished is not stop_task:
+                await finished
+        if polling_task.done():
+            await polling_task
     finally:
+        stop_task.cancel()
+        await asyncio.gather(stop_task, return_exceptions=True)
         await shutdown_runtime(
             polling_task=polling_task,
             stop_polling=dispatcher.stop_polling,
             api_task=api_task,
-            request_api_stop=(api_server.request_stop if api_server is not None else None),
+            request_api_stop=None,
             worker_tasks=(
                 general_notices_task,
                 maintenance_task,
@@ -434,12 +462,7 @@ async def run() -> None:
                 quick_response_topic_worker.stop,
                 *((notification_worker.stop,) if notification_worker is not None else ()),
             ),
-            close_resources=(
-                adapter.shutdown_quick_reply_runtime,
-                bot.session.close,
-                http_client.aclose,
-                database.dispose,
-            ),
+            close_resources=(),
         )
 
 
@@ -463,6 +486,8 @@ def format_configuration_error(error: ValidationError) -> str:
 
 
 def main() -> None:
+    from resolvate.installation import run
+
     try:
         asyncio.run(run())
     except ValidationError as error:

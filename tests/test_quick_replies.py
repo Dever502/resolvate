@@ -3,8 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from project_support import ProjectDatabase as Database
 
-from resolvate.database import Database
 from resolvate.models import QuickResponse
 from resolvate.quick_replies import (
     QUICK_RESPONSE_DELETED,

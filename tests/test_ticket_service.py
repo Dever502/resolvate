@@ -3,10 +3,10 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from project_support import ProjectDatabase as Database
 from sqlalchemy import event, select
 from sqlalchemy.exc import IntegrityError
 
-from resolvate.database import Database
 from resolvate.durable_work import DurableWorkRepository
 from resolvate.models import (
     DeliveryOutbox,
@@ -145,7 +145,7 @@ async def test_ticket_listing_eager_loads_users_and_identities(
         )
 
     assert len(tickets) == 3
-    assert len(statements) == 2
+    assert len(statements) == 3  # Transaction scope + eager tickets and identities; no N+1.
     assert tickets[0].telegram_user_id == 1100
 
 

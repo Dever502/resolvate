@@ -4,8 +4,8 @@ from collections.abc import AsyncIterator
 from datetime import timedelta
 
 import pytest
+from project_support import ProjectDatabase as Database
 
-from resolvate.database import Database
 from resolvate.models import DeliveryOutbox, DeliveryStatus, Direction, utcnow
 from resolvate.services import DeliveryJob, TicketService
 

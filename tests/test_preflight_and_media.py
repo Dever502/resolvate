@@ -556,7 +556,7 @@ async def test_bindtopic_replaces_uncertain_claim_and_attaches_with_fresh_token(
     )
 
     class FakeAuthorization:
-        def is_admin(self, telegram_user_id: int) -> bool:
+        async def can_operate(self, telegram_user_id: int) -> bool:
             return telegram_user_id == 7
 
     class FakeTicketService:

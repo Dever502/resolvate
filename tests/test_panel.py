@@ -5,11 +5,11 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from project_support import ProjectDatabase as Database
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.dml import Update
 
-from resolvate.database import Database
 from resolvate.durable_work import MAX_RECONCILIATION_ATTEMPTS, DurableWorkRepository
 from resolvate.models import (
     DeliveryOutbox,
