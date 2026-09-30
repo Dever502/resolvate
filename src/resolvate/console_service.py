@@ -55,7 +55,15 @@ class ConsoleService:
         self.database, self.tickets, self.settings = database, tickets, settings
 
     async def list_tickets(
-        self, account: ConsoleAccount, *, archived: bool, query: str, limit: int, offset: int
+        self,
+        account: ConsoleAccount,
+        *,
+        archived: bool,
+        query: str,
+        limit: int,
+        offset: int,
+        folder_id: str | None = None,
+        unfiled: bool = False,
     ) -> list[dict[str, Any]]:
         read_at = (
             select(ConsoleRead.through_at)
@@ -98,6 +106,10 @@ class ConsoleService:
             if archived
             else Ticket.status != TicketStatus.CLOSED
         )
+        if folder_id:
+            statement = statement.where(Ticket.folder_id == folder_id)
+        elif unfiled:
+            statement = statement.where(Ticket.folder_id.is_(None))
         if query:
             pattern = (
                 "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
@@ -131,6 +143,8 @@ class ConsoleService:
                 "time": ticket.last_activity_at.isoformat(),
                 "preview": (preview or "Вложение")[:180],
                 "unread": count,
+                "folder_id": ticket.folder_id,
+                "folder_revision": ticket.folder_revision,
             }
             for ticket, user, count, preview in rows
         ]

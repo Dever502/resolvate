@@ -20,6 +20,7 @@ from resolvate.authorization import AuthorizationService
 from resolvate.config import Settings
 from resolvate.console_admin import recover
 from resolvate.console_auth import ConsoleAuth
+from resolvate.console_folders import ConsoleFolders
 from resolvate.database import Database
 from resolvate.installation import (
     ProjectManager,
@@ -32,6 +33,8 @@ from resolvate.models import (
     ConsoleSession,
     InboundUpdate,
     Project,
+    Ticket,
+    TicketFolder,
     User,
     UserIdentity,
 )
@@ -314,6 +317,37 @@ async def test_explicit_memberships_roles_and_revocation(installation: Any) -> N
         await auth.create_account(login="another", name="Another", password=PASSWORD, role="admin")
 
 
+async def test_folder_database_boundary_rejects_cross_project_references(installation: Any) -> None:
+    database, _, _, _, alice, bob, first, second, _ = installation
+    a, b = database.for_project(first.id), database.for_project(second.id)
+    folder_a = await ConsoleFolders(a).create(alice, "Папка")
+    folder_b = await ConsoleFolders(b).create(bob, "Папка")
+    ticket = await TicketService(a).open_or_reopen(
+        telegram_user_id=555, display_name="Client", username=None
+    )
+    async with database.session() as session:
+        assert (await session.execute(text("SELECT * FROM ticket_folders"))).all() == []
+    async with a.session() as session:
+        assert (await session.get(TicketFolder, folder_b["id"])) is None
+        assert (await session.execute(text("SELECT id FROM ticket_folders"))).scalars().all() == [
+            folder_a["id"]
+        ]
+        with pytest.raises(DBAPIError):
+            await session.execute(
+                text("UPDATE tickets SET folder_id = :folder WHERE id = :ticket"),
+                {"folder": folder_b["id"], "ticket": ticket.id},
+            )
+        await session.rollback()
+    await ConsoleFolders(a).move(alice, ticket.id, folder_a["id"], 0)
+    async with a.session() as session:
+        await session.execute(
+            text("DELETE FROM ticket_folders WHERE id = :id"), {"id": folder_a["id"]}
+        )
+        await session.commit()
+        assert (await session.get(Ticket, ticket.id)).folder_id is None
+    assert len(await ConsoleFolders(b).list()) == 1
+
+
 async def test_project_configuration_has_no_ambient_secrets(
     installation: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -431,6 +465,7 @@ async def test_cross_project_http_and_api_tokens(installation: Any, tmp_path: Pa
     manager = ProjectManager(database, settings)
     tokens = {first.id: "a" * 40, second.id: "b" * 40}
     ticket_ids = {}
+    folder_ids = {}
     for project in (first, second):
         scoped = database.for_project(project.id)
         tickets = TicketService(scoped)
@@ -438,6 +473,7 @@ async def test_cross_project_http_and_api_tokens(installation: Any, tmp_path: Pa
             telegram_user_id=555, display_name=project.name, username=None
         )
         ticket_ids[project.id] = ticket.id
+        folder_ids[project.id] = (await ConsoleFolders(scoped).create(alice, "Общая папка"))["id"]
         config = settings.model_copy(
             update={
                 "api_enabled": True,
@@ -464,6 +500,36 @@ async def test_cross_project_http_and_api_tokens(installation: Any, tmp_path: Pa
             own = f"/console/projects/{first.id}"
             other = f"/console/projects/{second.id}"
             assert (await client.get(f"{own}/tickets/{ticket_ids[first.id]}")).status_code == 200
+            own_folders = await client.get(f"{own}/folders")
+            assert own_folders.status_code == 200
+            assert [f["id"] for f in own_folders.json()] == [folder_ids[first.id]]
+            assert (await client.get(f"{other}/folders")).status_code == 403
+            assert (
+                await client.post(
+                    f"{own}/folders/{folder_ids[second.id]}/delete", json={"revision": 0}
+                )
+            ).status_code == 404
+            assert (
+                await client.post(
+                    f"{own}/folders/{folder_ids[second.id]}/rename",
+                    json={"name": "Чужая", "revision": 0},
+                )
+            ).status_code == 404
+            assert (
+                await client.post(
+                    f"{own}/tickets/{ticket_ids[first.id]}/folder",
+                    json={"folder_id": folder_ids[second.id], "revision": 0},
+                )
+            ).status_code == 404
+            assert (
+                await client.post(
+                    f"{own}/tickets/{ticket_ids[second.id]}/folder",
+                    json={"folder_id": folder_ids[first.id], "revision": 0},
+                )
+            ).status_code == 404
+            assert (
+                await client.post(f"{own}/tickets/sync", json={"folder_id": folder_ids[second.id]})
+            ).json()["items"] == []
             assert (await client.get(f"{other}/tickets/{ticket_ids[second.id]}")).status_code == 403
             assert (await client.get(f"{own}/tickets/{ticket_ids[second.id]}")).status_code == 404
             assert (

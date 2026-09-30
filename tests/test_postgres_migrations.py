@@ -18,7 +18,7 @@ from resolvate.models import Base
 
 pytestmark = pytest.mark.postgres
 
-HEAD_REVISION = "0006_project_branding"
+HEAD_REVISION = "0007_ticket_folders"
 EXPECTED_QUERY_INDEXES = {
     "ix_tickets_status_updated",
     "ix_tickets_status_last_activity",
@@ -73,6 +73,7 @@ def test_repository_has_one_head_above_postgresql_baseline() -> None:
     assert scripts.get_heads() == [HEAD_REVISION]
     assert [revision.revision for revision in scripts.walk_revisions()] == [
         HEAD_REVISION,
+        "0006_project_branding",
         "0005_projects",
         "0004_operator_console",
         "0003_notice_delivery",
@@ -90,9 +91,12 @@ async def test_fresh_upgrade_exactly_matches_orm_metadata(
     assert await _metadata_differences(postgres_database_url) == []
 
 
-async def test_branding_upgrade_preserves_existing_project_data(postgres_database_url: str) -> None:
+@pytest.mark.parametrize("start", ["0005_projects", "0006_project_branding"])
+async def test_branding_and_folders_upgrade_preserves_existing_data(
+    postgres_database_url: str, start: str
+) -> None:
     config = build_alembic_config(postgres_database_url)
-    await asyncio.to_thread(command.upgrade, config, "0005_projects")
+    await asyncio.to_thread(command.upgrade, config, start)
     engine = create_async_engine(postgres_database_url)
     try:
         async with engine.begin() as connection:
@@ -122,12 +126,25 @@ async def test_branding_upgrade_preserves_existing_project_data(postgres_databas
                 VALUES (1, 'project', 'Existing customer', now(), now())
             """)
             )
+            await connection.execute(
+                text("""
+                INSERT INTO tickets (id, project_id, user_id, channel, status,
+                    created_at, updated_at, last_activity_at, close_cycle)
+                VALUES ('ticket', 'project', 1, 'telegram', 'closed', now(), now(), now(), 2)
+            """)
+            )
         await upgrade_database(postgres_database_url)
         async with engine.connect() as connection:
             row = (
                 await connection.execute(text("SELECT name, revision, logo_sha256 FROM projects"))
             ).one()
             assert tuple(row) == ("Existing project", 9, None)
+            ticket = (
+                await connection.execute(
+                    text("SELECT id, status, close_cycle, folder_id, folder_revision FROM tickets")
+                )
+            ).one()
+            assert tuple(ticket) == ("ticket", "closed", 2, None, 0)
             assert await connection.scalar(text("SELECT count(*) FROM project_members")) == 1
             assert (
                 await connection.scalar(text("SELECT display_name FROM users"))

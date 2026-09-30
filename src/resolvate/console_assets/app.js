@@ -1,6 +1,84 @@
 "use strict";
 
 const $ = (id) => document.getElementById(id);
+
+// A browser-local layout preference, independent of accounts and project data.
+(() => {
+  const root = document.documentElement;
+  const handle = $("sidebar-resizer");
+  const storageKey = "resolvate.sidebar-width";
+  let preferred = null;
+  let drag = null;
+  try {
+    const saved = Number(localStorage.getItem(storageKey));
+    if (Number.isFinite(saved) && saved > 0) preferred = saved;
+  } catch { /* Storage may be unavailable in private/restricted browser contexts. */ }
+
+  function limits() {
+    const style = getComputedStyle(root);
+    const min = parseFloat(style.getPropertyValue("--sidebar-width")) * parseFloat(style.fontSize);
+    return {min, max: Math.max(min, root.clientWidth / 3)};
+  }
+  function render() {
+    const {min, max} = limits();
+    const width = Math.min(max, Math.max(min, preferred ?? min));
+    root.style.setProperty("--sidebar-preferred-width", `${width}px`);
+    handle.setAttribute("aria-valuemin", String(Math.round(min)));
+    handle.setAttribute("aria-valuemax", String(Math.round(max)));
+    handle.setAttribute("aria-valuenow", String(Math.round(width)));
+    handle.setAttribute("aria-valuetext", `${Math.round(width)} пикселей`);
+    const disabled = root.clientWidth <= 700 || max <= min;
+    handle.setAttribute("aria-disabled", String(disabled));
+    handle.tabIndex = disabled ? -1 : 0;
+  }
+  function save() {
+    try {
+      if (preferred === null) localStorage.removeItem(storageKey);
+      else localStorage.setItem(storageKey, String(preferred));
+    } catch { /* Resizing still works without persistence. */ }
+  }
+  function setWidth(width) {
+    const {min, max} = limits();
+    preferred = Math.min(max, Math.max(min, width));
+    render();
+  }
+  function finish(event) {
+    if (!drag || (event && event.pointerId !== drag.id)) return;
+    const id = drag.id;
+    drag = null;
+    root.classList.remove("resizing-sidebar");
+    if (handle.hasPointerCapture(id)) handle.releasePointerCapture(id);
+    save();
+  }
+  handle.addEventListener("pointerdown", event => {
+    if (!event.isPrimary || event.button !== 0 || handle.getAttribute("aria-disabled") === "true") return;
+    event.preventDefault();
+    handle.focus({preventScroll: true});
+    drag = {id: event.pointerId, x: event.clientX, width: $("ticket-sidebar").getBoundingClientRect().width};
+    handle.setPointerCapture(event.pointerId);
+    root.classList.add("resizing-sidebar");
+  });
+  handle.addEventListener("pointermove", event => {
+    if (drag && event.pointerId === drag.id) setWidth(drag.width + event.clientX - drag.x);
+  });
+  for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) handle.addEventListener(type, finish);
+  window.addEventListener("blur", () => finish());
+  window.addEventListener("resize", () => { finish(); render(); });
+  handle.addEventListener("keydown", event => {
+    if (handle.getAttribute("aria-disabled") === "true") return;
+    const {min, max} = limits();
+    const width = $("ticket-sidebar").getBoundingClientRect().width;
+    const step = event.shiftKey ? 40 : 10;
+    const values = {ArrowLeft: width - step, ArrowRight: width + step, Home: min, End: max};
+    if (!(event.key in values)) return;
+    event.preventDefault();
+    setWidth(values[event.key]);
+    save();
+  });
+  handle.addEventListener("dblclick", () => { preferred = null; render(); save(); });
+  render();
+})();
+
 const imageViewer = new ImageViewer();
 let passwordTarget = null;
 let passwordBusy = false;
@@ -26,6 +104,12 @@ const state = {
   searchEpoch: 0,
   listEpoch: 0,
   loadingOlder: false,
+  folders: [],
+  folderFilter: "",
+  folderRequest: 0,
+  detailRequest: 0,
+  folderMoveBusy: false,
+  folderContext: 0,
 };
 
 function node(tag, className, text) {
@@ -39,6 +123,8 @@ const iconPaths = {
   resolve: "M6 20V5h6a5 5 0 0 1 0 10H6m6 0 6 5",
   search: "M10.5 17a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13Zm5-1 5 5",
   settings: "M4 7h7m4 0h5M4 17h3m4 0h9M11 4v6M7 14v6",
+  folder: "M3 7V5h6l2 2h10v13H3Z",
+  archive: "M3 3h18v5H3Zm2 5v13h14V8m-10 4h6",
   users: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m18 0v-2a4 4 0 0 0-3-3.87M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm7-7.87a4 4 0 0 1 0 7.75",
   lock: "M7 10V7a5 5 0 0 1 10 0v3M5 10h14v11H5Zm7 4v3",
   logout: "M9 4H4v16h5m5-13 5 5-5 5m-7-5h12",
@@ -94,7 +180,7 @@ function fail(error) {
   notice(error.message || "Не удалось выполнить действие.");
 }
 async function api(path, { method = "GET", data, form, key } = {}) {
-  const scoped = /^(tickets(?:\/|$)|media\/|retry\/|replies(?:\?|$))/.test(path);
+  const scoped = /^(folders(?:\/|$)|tickets(?:\/|$)|media\/|retry\/|replies(?:\?|$))/.test(path);
   if (scoped) {
     if (!state.project) throw new Error("Выберите доступный проект.");
     path = `projects/${state.project}/${path}`;
@@ -117,11 +203,13 @@ async function api(path, { method = "GET", data, form, key } = {}) {
   }
   if (!response.ok) {
     if (response.status === 401 && path !== "login") showLogin();
-    throw new Error(
+    const error = new Error(
       typeof result.detail === "string"
         ? result.detail
         : "Запрос не выполнен. Повторите позже.",
     );
+    error.status = response.status;
+    throw error;
   }
   return result;
 }
@@ -146,6 +234,7 @@ function showLogin() {
   state.epoch++;
   state.account = null;
   state.project = null;
+  resetFolders();
   state.projects = [];
   state.csrf = "";
   state.ticket = null;
@@ -272,12 +361,278 @@ $("password-form").onsubmit = async (event) => {
   }
 };
 
+let folderEdit = null, folderDelete = null, folderBusy = false;
+
+function resetFolderForm() {
+  folderEdit = null;
+  $("folder-form").reset();
+  $("folder-form-label").textContent = "Новая папка";
+  $("folder-save").textContent = "Создать";
+  $("folder-cancel").hidden = true;
+}
+function resetFolders() {
+  state.folderContext++;
+  state.folders = [];
+  state.folderFilter = "";
+  state.folderRequest++;
+  state.detailRequest++;
+  state.folderMoveBusy = false;
+  folderDelete = null;
+  $("folders-dialog").close();
+  $("folder-delete-dialog").close();
+  resetFolderForm();
+  $("folder-list").replaceChildren();
+  $("folder-move-status").textContent = "";
+  $("folder-error").textContent = "";
+  renderFolderOptions();
+  $("ticket-folder").disabled = true;
+}
+function fillFolderSelect(select, entries, selected) {
+  const signature = JSON.stringify(entries);
+  if (select.dataset.options !== signature) {
+    select.replaceChildren(...entries.map(([value, name]) => {
+      const option = node("option", "", name);
+      option.value = value;
+      return option;
+    }));
+    select.dataset.options = signature;
+  }
+  select.value = selected;
+}
+function renderFolderOptions() {
+  renderFolderTabs();
+  $("folders-open").disabled = !state.project;
+  renderTicketFolder();
+}
+function renderFolderTabs() {
+  const list = $("folder-tabs");
+  const focused = list.contains(document.activeElement) ? document.activeElement : null;
+  const previousSelection = list.querySelector('[aria-selected="true"]')?.dataset.folder;
+  const existing = new Map([...list.children].map(button => [button.dataset.folder, button]));
+  const entries = [["", "Все"], ["unfiled", "Без папки"], ...state.folders.map(f => [f.id, f.name])];
+  const retainFocus = focused && entries.some(([id]) => id === focused.dataset.folder);
+  let previous = null, selected;
+  for (const [id, name] of entries) {
+    let button = existing.get(id);
+    if (!button) {
+      button = node("button", "folder-tab");
+      button.type = "button";
+      button.dataset.folder = id;
+      button.setAttribute("role", "tab");
+      button.setAttribute("aria-controls", "ticket-list");
+      button.onclick = () => {
+        if (state.folderFilter === id) return;
+        state.folderFilter = id;
+        state.pages = 1;
+        renderFolderTabs();
+        syncTickets().catch(fail);
+      };
+    }
+    existing.delete(id);
+    if (button.textContent !== name) button.textContent = name;
+    button.title = name;
+    button.disabled = !state.project;
+    const active = id === state.folderFilter;
+    button.setAttribute("aria-selected", String(active));
+    button.tabIndex = (retainFocus ? button === focused : active) ? 0 : -1;
+    if (active) selected = button;
+    const next = previous ? previous.nextSibling : list.firstChild;
+    if (next !== button) list.insertBefore(button, next);
+    previous = button;
+  }
+  for (const button of existing.values()) button.remove();
+  // Polling must not rebuild focused tabs or reset a user's manual scroll position.
+  if (retainFocus && document.activeElement !== focused) focused.focus({preventScroll: true});
+  if (focused && !list.contains(focused)) selected?.focus({preventScroll: true});
+  if (previousSelection !== state.folderFilter || (focused && !list.contains(focused))) {
+    selected?.scrollIntoView({block: "nearest", inline: "nearest"});
+  }
+}
+$("folder-tabs").addEventListener("keydown", event => {
+  const buttons = [...$("folder-tabs").querySelectorAll("button:not(:disabled)")];
+  const index = buttons.indexOf(document.activeElement);
+  if (index < 0) return;
+  let next;
+  if (event.key === "ArrowRight") next = (index + 1) % buttons.length;
+  else if (event.key === "ArrowLeft") next = (index - 1 + buttons.length) % buttons.length;
+  else if (event.key === "Home") next = 0;
+  else if (event.key === "End") next = buttons.length - 1;
+  else return;
+  event.preventDefault();
+  buttons.forEach((button, index) => { button.tabIndex = index === next ? 0 : -1; });
+  buttons[next].focus({preventScroll: true});
+  buttons[next].scrollIntoView({block: "nearest", inline: "nearest"});
+});
+$("folder-tabs").addEventListener("focusout", event => {
+  if (!$("folder-tabs").contains(event.relatedTarget)) {
+    for (const button of $("folder-tabs").children) {
+      button.tabIndex = button.getAttribute("aria-selected") === "true" ? 0 : -1;
+    }
+  }
+});
+$("folder-tabs").addEventListener("wheel", event => {
+  const list = $("folder-tabs");
+  if (event.ctrlKey || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
+  const scale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? list.clientWidth : 1;
+  const next = Math.max(0, Math.min(list.scrollWidth - list.clientWidth, list.scrollLeft + event.deltaY * scale));
+  if (next !== list.scrollLeft) {
+    event.preventDefault();
+    list.scrollLeft = next;
+  }
+}, {passive: false});
+function renderTicketFolder() {
+  if (state.folderMoveBusy) return;
+  const entries = [["", "Без папки"], ...state.folders.map(f => [f.id, f.name])];
+  const selected = state.detail?.folder_id || "";
+  // A detail response can precede the next folder-list poll. Never display a false
+  // "unfiled" assignment while the actual folder name is still being fetched.
+  if (selected && !state.folders.some(f => f.id === selected)) entries.push([selected, "Папка…"]);
+  fillFolderSelect($("ticket-folder"), entries, selected);
+  $("ticket-folder").disabled = !state.detail || !state.ticket;
+}
+function renderFolderList() {
+  if (!$("folders-dialog").open) return;
+  const rows = state.folders.map(folder => {
+    const row = node("div", "folder-row");
+    const rename = node("button", "quiet", "Изменить");
+    rename.type = "button";
+    rename.setAttribute("aria-label", `Переименовать папку ${folder.name}`);
+    rename.onclick = () => {
+      if (folderBusy) return;
+      folderEdit = {...folder};
+      $("folder-name").value = folder.name;
+      $("folder-form-label").textContent = "Название папки";
+      $("folder-save").textContent = "Сохранить";
+      $("folder-cancel").hidden = false;
+      $("folder-error").textContent = "";
+      $("folder-name").focus();
+    };
+    const remove = node("button", "quiet", "Удалить");
+    remove.type = "button";
+    remove.setAttribute("aria-label", `Удалить папку ${folder.name}`);
+    remove.onclick = () => {
+      if (folderBusy) return;
+      folderDelete = {...folder};
+      $("folder-delete-name").textContent = folder.name;
+      $("folder-delete-dialog").showModal();
+      $("folder-delete-cancel").focus();
+    };
+    row.append(node("strong", "", folder.name), rename, remove);
+    return row;
+  });
+  $("folder-list").replaceChildren(...rows);
+  if (!rows.length) $("folder-list").append(node("p", "muted", "Папок пока нет. Создайте первую ниже."));
+}
+async function refreshFolders() {
+  if (!state.project) return;
+  const project = state.project, request = ++state.folderRequest;
+  const folders = await api("folders");
+  if (project !== state.project || request !== state.folderRequest) return;
+  const changed = JSON.stringify(folders) !== JSON.stringify(state.folders);
+  state.folders = folders;
+  if (state.folderFilter && state.folderFilter !== "unfiled" && !folders.some(f => f.id === state.folderFilter)) {
+    state.folderFilter = "";
+    state.pages = 1;
+    notice("Папка удалена другим оператором. Показаны все диалоги.");
+  }
+  renderFolderOptions();
+  if (changed) renderFolderList();
+}
+$("folders-open").onclick = async () => {
+  resetFolderForm();
+  $("folder-error").textContent = "";
+  $("folders-dialog").showModal();
+  renderFolderList();
+  try { await refreshFolders(); } catch (error) { statusText("folder-error", error.message); }
+};
+$("folders-close").onclick = () => $("folders-dialog").close();
+$("folder-cancel").onclick = resetFolderForm;
+$("folder-delete-cancel").onclick = () => $("folder-delete-dialog").close();
+async function changeFolder(perform, button, deletedId = null) {
+  if (folderBusy) return;
+  const project = state.project, context = state.folderContext;
+  folderBusy = true;
+  state.folderRequest++;
+  button.disabled = true;
+  $("folder-error").textContent = "";
+  try {
+    await perform();
+    if (context !== state.folderContext) return;
+    if (deletedId && state.folderFilter === deletedId) {
+      state.folderFilter = "";
+      state.pages = 1;
+    }
+    resetFolderForm();
+    statusText("folder-error", "Изменения сохранены для всей команды.", true);
+  } catch (error) {
+    if (context !== state.folderContext) return;
+    if (error.status === 409 || error.status === 404) resetFolderForm();
+    statusText("folder-error", error.message);
+  } finally {
+    folderBusy = false;
+    button.disabled = false;
+    if (context === state.folderContext) {
+      $("folder-delete-dialog").close();
+      try {
+        await refreshFolders();
+        if (project === state.project) {
+          renderFolderList();
+          await syncTickets();
+          if (state.ticket) await syncDetail(state.ticket, state.epoch);
+        }
+      } catch (error) { if (project === state.project) statusText("folder-error", error.message); }
+    }
+  }
+}
+$("folder-form").onsubmit = (event) => {
+  event.preventDefault();
+  const name = $("folder-name").value, editing = folderEdit;
+  return changeFolder(() => api(editing ? `folders/${editing.id}/rename` : "folders", {
+    method: "POST", data: editing ? {name, revision: editing.revision} : {name},
+  }), event.submitter);
+};
+$("folder-delete-confirm").onclick = () => {
+  const target = folderDelete;
+  if (!target) return;
+  return changeFolder(() => api(`folders/${target.id}/delete`, {
+    method: "POST", data: {revision: target.revision},
+  }), $("folder-delete-confirm"), target.id);
+};
+$("ticket-folder").onchange = async () => {
+  if (!state.detail || state.folderMoveBusy) return;
+  const project = state.project, ticket = state.ticket, epoch = state.epoch;
+  const revision = state.detail.folder_revision, folder_id = $("ticket-folder").value || null;
+  state.folderMoveBusy = true;
+  state.detailRequest++;
+  $("ticket-folder").disabled = true;
+  $("folder-move-status").textContent = "Сохраняем…";
+  try {
+    await api(`tickets/${ticket}/folder`, {method: "POST", data: {folder_id, revision}});
+    if (epoch === state.epoch) $("folder-move-status").textContent = "Сохранено для команды";
+  } catch (error) {
+    if (epoch === state.epoch) $("folder-move-status").textContent = error.message;
+  } finally {
+    if (epoch === state.epoch && project === state.project) {
+      state.folderMoveBusy = false;
+      try {
+        await syncDetail(ticket, epoch);
+        await syncTickets();
+      } catch (error) { if (epoch === state.epoch) fail(error); }
+      renderTicketFolder();
+    }
+  }
+};
+
 async function syncTickets() {
   if (!state.project) return;
+  const project = state.project, account = state.account;
+  await refreshFolders();
+  if (project !== state.project || account !== state.account) return;
   const listEpoch = ++state.listEpoch;
   const epoch = state.epoch,
     query = $("search").value,
-    archived = state.archived;
+    archived = state.archived,
+    folderFilter = state.folderFilter;
   const order = [];
   for (let page = 0; page < state.pages; page++) {
     const result = await api("tickets/sync", {
@@ -287,13 +642,16 @@ async function syncTickets() {
         query,
         archived,
         offset: page * 50,
+        folder_id: folderFilter && folderFilter !== "unfiled" ? folderFilter : null,
+        unfiled: folderFilter === "unfiled",
       },
     });
     if (
       listEpoch !== state.listEpoch ||
       epoch !== state.epoch ||
       query !== $("search").value ||
-      archived !== state.archived
+      archived !== state.archived ||
+      folderFilter !== state.folderFilter
     )
       return;
     for (const item of result.items) state.tickets.set(item.id, item);
@@ -368,6 +726,10 @@ async function openTicket(id) {
   saveDraft();
   state.epoch++;
   state.ticket = id;
+  state.detail = null;
+  state.folderMoveBusy = false;
+  $("folder-move-status").textContent = "";
+  renderTicketFolder();
   const epoch = state.epoch;
   state.messages.clear();
   state.before = null;
@@ -389,9 +751,11 @@ async function openTicket(id) {
   $("message-text").focus();
 }
 async function syncDetail(id, epoch) {
+  const request = ++state.detailRequest;
   const detail = await api(`tickets/${id}`);
-  if (epoch !== state.epoch || id !== state.ticket) return;
+  if (epoch !== state.epoch || id !== state.ticket || request !== state.detailRequest) return;
   state.detail = detail;
+  renderTicketFolder();
   $("customer-name").textContent =
     detail.display_name || detail.username || "Клиент";
   $("customer-avatar").textContent = initials($("customer-name").textContent);
@@ -630,22 +994,17 @@ document.addEventListener("keydown", (event) => {
     $("customer-close").click();
   }
 });
-for (const [id, archived] of [
-  ["active-tab", false],
-  ["archive-tab", true],
-])
-  $(id).onclick = () => {
-    state.archived = archived;
-    state.pages = 1;
-    for (const [tab, selected] of [
-      ["active-tab", !archived],
-      ["archive-tab", archived],
-    ]) {
-      $(tab).classList.toggle("selected", selected);
-      $(tab).setAttribute("aria-pressed", String(selected));
-    }
-    syncTickets().catch(fail);
-  };
+$("archive-toggle").onclick = () => {
+  state.archived = !state.archived;
+  state.pages = 1;
+  $("inbox-title").textContent = state.archived ? "Архив" : "Диалоги";
+  const button = $("archive-toggle");
+  const label = state.archived ? "К активным диалогам" : "Открыть архив";
+  button.setAttribute("aria-label", label);
+  button.title = label;
+  button.replaceChildren(icon(state.archived ? "back" : "archive"));
+  syncTickets().catch(fail);
+};
 let searchTimer;
 $("search").addEventListener("input", () => {
   clearTimeout(searchTimer);
@@ -910,6 +1269,7 @@ function selectProject(id) {
   state.listEpoch++;
   state.searchEpoch++;
   state.project = id || null;
+  resetFolders();
   state.ticket = null;
   state.detail = null;
   state.pages = 1;

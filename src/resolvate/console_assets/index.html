@@ -52,8 +52,11 @@
         <button id="projects-open" class="quiet"><span data-icon="settings"></span> Проекты</button>
       </header>
       <div class="workspace-body">
-      <aside class="sidebar" aria-label="Список диалогов">
-        <header class="inbox-heading"><h1>Диалоги</h1></header>
+      <aside id="ticket-sidebar" class="sidebar" aria-label="Список диалогов">
+        <header class="inbox-heading">
+          <h1 id="inbox-title">Диалоги</h1>
+          <button id="archive-toggle" class="quiet" aria-label="Открыть архив" title="Открыть архив" aria-controls="ticket-list"><span data-icon="archive"></span></button>
+        </header>
         <div class="list-controls">
           <div class="search-field">
           <span data-icon="search"></span>
@@ -65,13 +68,12 @@
             maxlength="100"
           />
           </div>
-          <nav class="tabs" aria-label="Список обращений">
-            <button id="active-tab" class="selected" aria-pressed="true">
-              Активные</button
-            ><button id="archive-tab" aria-pressed="false">Архив</button>
-          </nav>
+          <div class="folder-filter-row">
+            <div id="folder-tabs" class="folder-tabs" role="tablist" aria-label="Папки диалогов" aria-orientation="horizontal"></div>
+            <button id="folders-open" class="quiet" aria-label="Управление общими папками" title="Общие папки"><span data-icon="folder"></span></button>
+          </div>
         </div>
-        <div id="ticket-list" class="ticket-list" aria-label="Диалоги"></div>
+        <div id="ticket-list" class="ticket-list" role="tabpanel" aria-label="Диалоги" tabindex="0"></div>
         <button id="more-tickets" class="quiet">Показать ещё</button>
         <footer class="sidebar-foot">
           <div class="account-summary">
@@ -88,6 +90,8 @@
           </div>
         </footer>
       </aside>
+      <div id="sidebar-resizer" class="sidebar-resizer" role="separator" tabindex="0" aria-label="Ширина списка диалогов" aria-orientation="vertical" aria-controls="ticket-sidebar" aria-valuemin="324" aria-valuemax="324" aria-valuenow="324" title="Потяните для изменения ширины; двойной щелчок — сброс"></div>
+      <div class="conversation-column">
       <main class="conversation">
         <div id="global-error" class="notice" role="alert" hidden></div>
         <div id="empty" class="empty">
@@ -108,6 +112,11 @@
             ><span id="closed-label" class="pill" hidden>В архиве</span
             ><button id="lifecycle" class="secondary">Завершить</button>
           </header>
+          <div class="ticket-folder-row">
+            <label for="ticket-folder">Папка</label>
+            <select id="ticket-folder" aria-label="Переместить диалог в папку"><option value="">Без папки</option></select>
+            <span id="folder-move-status" class="muted small" role="status"></span>
+          </div>
           <div id="messages" class="messages" aria-label="Переписка">
             <button id="older" class="quiet older">Предыдущие сообщения</button>
             <div id="message-list"></div>
@@ -169,6 +178,7 @@
           </div>
         </section>
       </main>
+      </div>
       <aside id="customer-card" class="customer-card" aria-labelledby="customer-card-title" hidden>
         <header>
           <h2 id="customer-card-title">О клиенте</h2>
@@ -184,6 +194,32 @@
       </aside>
       </div>
     </div>
+    <dialog id="folders-dialog" class="preferences" aria-labelledby="folders-title">
+      <header>
+        <div><h2 id="folders-title">Общие папки</h2><p>Для всей команды текущего проекта.</p></div>
+        <button id="folders-close" class="quiet" aria-label="Закрыть папки"><span data-icon="close"></span></button>
+      </header>
+      <div class="preferences-body">
+        <p id="folder-error" class="error" role="alert"></p>
+        <div id="folder-list" class="folder-list"></div>
+        <form id="folder-form">
+          <label><span id="folder-form-label">Новая папка</span><input id="folder-name" name="name" required maxlength="80" autocomplete="off" /></label>
+          <div class="row-actions">
+            <button id="folder-save" class="primary" type="submit">Создать</button>
+            <button id="folder-cancel" class="quiet" type="button" hidden>Отмена</button>
+          </div>
+        </form>
+      </div>
+    </dialog>
+    <dialog id="folder-delete-dialog" aria-labelledby="folder-delete-title" aria-describedby="folder-delete-description">
+      <h2 id="folder-delete-title">Удалить папку?</h2>
+      <p id="folder-delete-description">Папка исчезнет у всей команды. Диалоги и история сохранятся в «Без папки».</p>
+      <p id="folder-delete-name" class="folder-delete-name"></p>
+      <div class="row-actions">
+        <button id="folder-delete-cancel" class="secondary">Отмена</button>
+        <button id="folder-delete-confirm" class="danger">Удалить папку</button>
+      </div>
+    </dialog>
     <dialog id="password-dialog" aria-labelledby="password-title">
       <header>
         <h2 id="password-title">Сменить пароль</h2>

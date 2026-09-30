@@ -121,3 +121,44 @@ def test_console_rating_card_does_not_link_back_to_current_ticket() -> None:
     assert "data.display_name" in rating
     assert 'node("a"' not in rating
     assert "openTicket(" not in rating
+
+
+def test_folder_filters_are_tabs_and_ticket_assignment_is_separate(
+    template: ConsoleTemplate,
+) -> None:
+    controls = {attrs.get("id"): (tag, attrs) for tag, attrs, _ in template.elements}
+    assert controls["folder-tabs"][1]["role"] == "tablist"
+    assert controls["folder-tabs"][1]["aria-orientation"] == "horizontal"
+    assert controls["ticket-list"][1]["role"] == "tabpanel"
+    assert controls["ticket-folder"][0] == "select"
+    assert "folder-filter" not in controls
+
+
+def test_folder_tabs_are_above_ticket_list_inside_sidebar() -> None:
+    source = ASSETS.joinpath("index.html").read_text(encoding="utf-8")
+    sidebar = source.split('<aside id="ticket-sidebar"', 1)[1].split("</aside>", 1)[0]
+    assert sidebar.index('id="folder-tabs"') < sidebar.index('id="ticket-list"')
+    column = source.split('<div class="conversation-column">', 1)[1]
+    assert 'id="folder-tabs"' not in column
+
+
+def test_archive_action_is_in_heading_without_bottom_status_tabs(template: ConsoleTemplate) -> None:
+    source = ASSETS.joinpath("index.html").read_text(encoding="utf-8")
+    assert 'id="active-tab"' not in source
+    assert 'id="archive-tab"' not in source
+    assert source.index('id="archive-toggle"') < source.index('id="folder-tabs"')
+    for _, attrs, ancestors in template.elements:
+        if attrs.get("id") == "archive-toggle":
+            assert ancestors[-2:] == ("aside", "header")
+            assert attrs["aria-label"] == "Открыть архив"
+            assert attrs["aria-controls"] == "ticket-list"
+
+
+def test_sidebar_resize_control_is_accessible(template: ConsoleTemplate) -> None:
+    controls = {attrs.get("id"): attrs for _, attrs, _ in template.elements}
+    handle = controls["sidebar-resizer"]
+    assert handle["role"] == "separator"
+    assert handle["aria-orientation"] == "vertical"
+    assert handle["aria-controls"] == "ticket-sidebar"
+    assert handle["tabindex"] == "0"
+    assert all(key in handle for key in ("aria-valuemin", "aria-valuemax", "aria-valuenow"))

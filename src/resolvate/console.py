@@ -15,6 +15,7 @@ from starlette.datastructures import UploadFile
 from resolvate.archive_media_storage import ArchiveStorageFull
 from resolvate.config import Settings
 from resolvate.console_auth import COOKIE, SESSION_SECONDS, ConsoleAuth, account_view, digest
+from resolvate.console_folders import ConsoleFolders
 from resolvate.console_service import ConsoleService, delta
 from resolvate.database import Database
 from resolvate.media_storage import LocalMediaStorage, MediaValidationError
@@ -51,6 +52,25 @@ class Sync(BaseModel):
     query: str = Field(default="", max_length=100)
     offset: int = Field(default=0, ge=0, le=100_000)
     before: str | None = Field(default=None, max_length=200)
+    folder_id: uuid.UUID | None = None
+    unfiled: bool = False
+
+
+class FolderName(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+
+
+class FolderRevision(BaseModel):
+    revision: int = Field(ge=0, le=2**31 - 1)
+
+
+class RenameFolder(FolderName, FolderRevision):
+    pass
+
+
+class MoveToFolder(BaseModel):
+    folder_id: uuid.UUID | None
+    revision: int = Field(ge=0, le=2**31 - 1)
 
 
 def create_console(
@@ -63,6 +83,7 @@ def create_console(
     assert settings.console_origin is not None
     auth = ConsoleAuth(database, settings.console_origin)
     service = ConsoleService(database, tickets, settings)
+    folders = ConsoleFolders(database)
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.state.auth = auth
     app.state.service = service
@@ -208,14 +229,58 @@ def create_console(
 
     @app.post("/tickets/sync")
     async def ticket_list(payload: Sync, actor: Actor) -> dict[str, Any]:
+        if payload.folder_id and payload.unfiled:
+            raise HTTPException(422, "Выберите папку или диалоги без папки.")
         rows = await service.list_tickets(
-            actor, archived=payload.archived, query=payload.query, limit=50, offset=payload.offset
+            actor,
+            archived=payload.archived,
+            query=payload.query,
+            limit=50,
+            offset=payload.offset,
+            folder_id=str(payload.folder_id) if payload.folder_id else None,
+            unfiled=payload.unfiled,
         )
         return delta(rows, payload.known)
 
     @app.get("/tickets/{ticket_id}")
     async def ticket_detail(ticket_id: uuid.UUID, actor: Actor) -> dict[str, Any]:
-        return asdict(await tickets.get_ticket(str(ticket_id)))
+        return {
+            **asdict(await tickets.get_ticket(str(ticket_id))),
+            **await folders.ticket(str(ticket_id)),
+        }
+
+    @app.get("/folders")
+    async def folder_list(actor: Actor) -> list[dict[str, Any]]:
+        return await folders.list()
+
+    @app.post("/folders")
+    async def create_folder(payload: FolderName, actor: Actor) -> dict[str, Any]:
+        return await folders.create(actor, payload.name)
+
+    @app.post("/folders/{folder_id}/rename")
+    async def rename_folder(
+        folder_id: uuid.UUID, payload: RenameFolder, actor: Actor
+    ) -> dict[str, bool]:
+        await folders.change(actor, str(folder_id), payload.revision, name=payload.name)
+        return {"ok": True}
+
+    @app.post("/folders/{folder_id}/delete")
+    async def delete_folder(
+        folder_id: uuid.UUID, payload: FolderRevision, actor: Actor
+    ) -> dict[str, bool]:
+        await folders.change(actor, str(folder_id), payload.revision)
+        return {"ok": True}
+
+    @app.post("/tickets/{ticket_id}/folder")
+    async def move_ticket(
+        ticket_id: uuid.UUID, payload: MoveToFolder, actor: Actor
+    ) -> dict[str, Any]:
+        return await folders.move(
+            actor,
+            str(ticket_id),
+            str(payload.folder_id) if payload.folder_id else None,
+            payload.revision,
+        )
 
     @app.post("/tickets/{ticket_id}/sync")
     async def messages(ticket_id: uuid.UUID, payload: Sync, actor: Actor) -> dict[str, Any]:

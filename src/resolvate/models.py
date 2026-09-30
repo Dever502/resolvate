@@ -129,11 +129,24 @@ class UserIdentity(ProjectScoped):
     user: Mapped[User] = relationship(back_populates="identities")
 
 
+class TicketFolder(ProjectScoped):
+    __tablename__ = "ticket_folders"
+    __table_args__ = (
+        UniqueConstraint("project_id", "name_key", name="uq_ticket_folders_project_name"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String(80))
+    name_key: Mapped[str] = mapped_column(String(240))
+    revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+
 class Ticket(ProjectScoped):
     __tablename__ = "tickets"
     __table_args__ = (
         Index("ix_tickets_status_updated", "status", "updated_at"),
         Index("ix_tickets_status_last_activity", "status", "last_activity_at"),
+        Index("ix_tickets_project_folder", "project_id", "folder_id"),
         UniqueConstraint("user_id", "channel", name="uq_ticket_user_channel"),
         UniqueConstraint("project_id", "topic_id", name="uq_tickets_project_topic"),
     )
@@ -161,6 +174,10 @@ class Ticket(ProjectScoped):
     )
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     close_cycle: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    folder_id: Mapped[str | None] = mapped_column(
+        ForeignKey("ticket_folders.id", ondelete="SET NULL")
+    )
+    folder_revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     user: Mapped[User] = relationship(back_populates="tickets")
     messages: Mapped[list[TicketMessage]] = relationship(
