@@ -34,6 +34,58 @@ function node(tag, className, text) {
   if (text !== undefined) element.textContent = text;
   return element;
 }
+// Local, decorative icons. No remote fonts, HTML interpolation or icon dependency.
+const iconPaths = {
+  resolve: "M6 20V5h6a5 5 0 0 1 0 10H6m6 0 6 5",
+  search: "M10.5 17a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13Zm5-1 5 5",
+  settings: "M4 7h7m4 0h5M4 17h3m4 0h9M11 4v6M7 14v6",
+  users: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m18 0v-2a4 4 0 0 0-3-3.87M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm7-7.87a4 4 0 0 1 0 7.75",
+  lock: "M7 10V7a5 5 0 0 1 10 0v3M5 10h14v11H5Zm7 4v3",
+  logout: "M9 4H4v16h5m5-13 5 5-5 5m-7-5h12",
+  chat: "M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-6 4V6a2 2 0 0 1 2-2Zm2 5h10M7 13h6",
+  back: "m14 6-6 6 6 6",
+  info: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Zm0-11v6m0-10h.01",
+  close: "m6 6 12 12M6 18 18 6",
+  attach: "m8 13 6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l9-9a2 2 0 0 1 3 3l-9 9",
+  send: "M12 20V4m-6 6 6-6 6 6",
+  plus: "M12 5v14M5 12h14",
+  minus: "M5 12h14",
+  check: "m5 12 4 4L19 6",
+  star: "m12 3 2.78 5.63L21 9.53l-4.5 4.39 1.06 6.2L12 17.2l-5.56 2.92 1.06-6.2L3 9.53l6.22-.9Z",
+};
+function icon(name, className = "") {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("class", `icon ${className}`.trim());
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  const path = document.createElementNS(svg.namespaceURI, "path");
+  path.setAttribute("d", iconPaths[name]);
+  svg.append(path);
+  return svg;
+}
+for (const placeholder of document.querySelectorAll("[data-icon]")) {
+  placeholder.replaceWith(icon(placeholder.dataset.icon, placeholder.className));
+}
+function initials(name) {
+  return (String(name || "").match(/[\p{L}\p{N}][\p{L}\p{M}\p{N}]*/gu) || ["?"]).slice(0, 2)
+    .map((part) => [...part][0] || "").join("").toLocaleUpperCase("ru");
+}
+function avatarTone(identity) {
+  // A stable visual cue, not a status or a permission indicator.
+  let hash = 0;
+  for (const char of String(identity)) hash = (hash * 31 + char.codePointAt(0)) >>> 0;
+  return ["sage", "clay", "slate", "sand"][hash % 4];
+}
+function resizeComposer() {
+  const field = $("message-text");
+  field.style.height = "auto";
+  if (field.getClientRects().length) field.style.height = `${Math.min(160, field.scrollHeight)}px`;
+}
+function statusText(id, text, success = false) {
+  $(id).textContent = text;
+  $(id).classList.toggle("success", success);
+}
 function notice(text = "") {
   $("global-error").textContent = text;
   $("global-error").hidden = !text;
@@ -117,6 +169,7 @@ async function enter(result) {
   state.account = result.account;
   state.csrf = result.csrf;
   $("account-name").textContent = result.account.name;
+  $("account-avatar").textContent = initials(result.account.name);
   $("account-role").textContent =
     result.account.role === "admin" ? "Администратор установки" : "Сотрудник";
   $("accounts-open").hidden = result.account.role !== "admin";
@@ -148,7 +201,7 @@ $("login-form").addEventListener("submit", async (event) => {
     event.target.reset();
     await enter(result);
   } catch (error) {
-    $("login-error").textContent = error.message;
+    statusText("login-error", error.message);
   } finally {
     button.disabled = false;
   }
@@ -207,9 +260,9 @@ $("password-form").onsubmit = async (event) => {
     closePassword();
     if (own) {
       showLogin();
-      $("login-error").textContent = "Пароль изменён. Войдите с новым паролем.";
+      statusText("login-error", "Пароль изменён. Войдите с новым паролем.", true);
     } else {
-      $("account-error").textContent = "Пароль сотрудника изменён. Старые сессии завершены.";
+      statusText("account-error", "Пароль сотрудника изменён. Старые сессии завершены.", true);
     }
   } catch (error) {
     $("password-error").textContent = error.message;
@@ -251,12 +304,20 @@ async function syncTickets() {
   for (const id of state.tickets.keys())
     if (!unique.includes(id)) state.tickets.delete(id);
   const fragment = document.createDocumentFragment();
+  const focusedTicket = $("ticket-list").contains(document.activeElement)
+    ? document.activeElement.closest(".ticket")?.dataset.id : null;
   for (const id of unique) {
     const item = state.tickets.get(id),
       button = node(
         "button",
         "ticket" + (id === state.ticket ? " selected" : ""),
       );
+    button.dataset.id = id;
+    button.classList.toggle("unread", Boolean(item.unread));
+    if (id === state.ticket) button.setAttribute("aria-current", "true");
+    const avatar = node("span", `avatar ${avatarTone(id)}`, initials(item.name));
+    avatar.setAttribute("aria-hidden", "true");
+    const copy = node("div", "ticket-copy");
     const top = node("div", "ticket-top"),
       preview = node("div", "ticket-preview");
     top.append(
@@ -268,7 +329,8 @@ async function syncTickets() {
       preview.append(
         node("span", "count", item.unread > 99 ? "99+" : item.unread),
       );
-    button.append(top, preview);
+    copy.append(top, preview);
+    button.append(avatar, copy);
     button.onclick = () => openTicket(id).catch(fail);
     fragment.append(button);
   }
@@ -281,6 +343,10 @@ async function syncTickets() {
       ),
     );
   $("ticket-list").replaceChildren(fragment);
+  if (focusedTicket) {
+    [...$("ticket-list").children].find((item) => item.dataset.id === focusedTicket)
+      ?.focus({preventScroll: true});
+  }
 }
 function draft() {
   if (!state.drafts.has(state.ticket))
@@ -309,12 +375,14 @@ async function openTicket(id) {
   $("message-list").replaceChildren();
   $("reply-options").hidden = true;
   $("customer-card").hidden = true;
+  $("customer-open").setAttribute("aria-expanded", "false");
   $("message-text").value = draft().text;
   $("file").value = "";
   renderFile();
   $("dialogue").hidden = false;
   $("empty").hidden = true;
   $("workspace").classList.add("open-chat");
+  resizeComposer();
   await syncDetail(id, epoch);
   await syncMessages(true);
   await syncTickets();
@@ -326,6 +394,8 @@ async function syncDetail(id, epoch) {
   state.detail = detail;
   $("customer-name").textContent =
     detail.display_name || detail.username || "Клиент";
+  $("customer-avatar").textContent = initials($("customer-name").textContent);
+  $("customer-avatar").className = `avatar ${avatarTone(id)}`;
   $("customer-channel").textContent =
     detail.channel === "telegram" ? "Telegram" : "Сайт · API";
   const closed = detail.status === "closed";
@@ -333,7 +403,7 @@ async function syncDetail(id, epoch) {
   $("lifecycle").textContent = closed ? "Возобновить" : "Завершить";
   const fields = [
     ["Имя", detail.display_name],
-    ["Канал", detail.channel],
+    ["Канал", detail.channel === "telegram" ? "Telegram" : "Сайт · API"],
     ["Username", detail.username],
     ["Email", detail.email],
     ["Идентификатор", detail.identity_value],
@@ -410,18 +480,31 @@ function renderMessage(item) {
     }
   } else if (item.attachment)
     bubble.append(node("span", "muted", "Вложение недоступно в Web"));
-  if (item.text) bubble.append(document.createTextNode(item.text));
   if (item.rating) {
     bubble.classList.add("rating-card");
-    const link = node("a", "ticket-link", "📂 Перейти к тикету");
-    const project = state.project;
-    link.href = `/console/?project=${encodeURIComponent(project)}&ticket=${encodeURIComponent(item.rating.ticket_id)}`;
-    link.onclick = (event) => {
-      if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
-      event.preventDefault();
-      if (state.project === project) openTicket(item.rating.ticket_id).catch(fail);
-    };
-    bubble.append(link);
+    const data = item.rating;
+    bubble.append(node("p", "rating-title", "Оценка поддержки"));
+    const value = node("div", "rating-value"), stars = node("span", "rating-stars");
+    stars.setAttribute("aria-hidden", "true");
+    for (let index = 1; index <= 5; index++) stars.append(icon("star", index <= data.score ? "filled" : ""));
+    const score = node("strong", "", `${data.score}/5`);
+    score.setAttribute("aria-label", `Оценка: ${data.score} из 5`);
+    value.append(stars, score);
+    bubble.append(value, node("div", "rating-customer", data.display_name || data.username || "Клиент"));
+    for (const [label, content] of [
+      ["", data.username ? `@${data.username}` : null],
+      ["Telegram ID: ", data.telegram_user_id],
+      ["Email: ", data.email],
+      ["ID клиента: ", data.telegram_user_id == null ? data.identity_value : null],
+    ]) {
+      if (content != null && content !== "") bubble.append(node("span", "rating-identity", label + content));
+    }
+  } else if (item.system && item.text === "✅ Обращение закрыто") {
+    const event = node("span", "system-event");
+    event.append(icon("check"), document.createTextNode("Обращение закрыто"));
+    bubble.append(event);
+  } else if (item.text) {
+    bubble.append(document.createTextNode(item.text));
   }
   element.append(meta, bubble);
   if (item.failed?.length) {
@@ -535,10 +618,18 @@ $("more-tickets").onclick = () => {
 $("back").onclick = () => $("workspace").classList.remove("open-chat");
 $("customer-open").onclick = () => {
   $("customer-card").hidden = !$("customer-card").hidden;
+  $("customer-open").setAttribute("aria-expanded", String(!$("customer-card").hidden));
 };
 $("customer-close").onclick = () => {
   $("customer-card").hidden = true;
+  $("customer-open").setAttribute("aria-expanded", "false");
+  $("customer-open").focus();
 };
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !document.querySelector("dialog[open]") && !$("customer-card").hidden) {
+    $("customer-close").click();
+  }
+});
 for (const [id, archived] of [
   ["active-tab", false],
   ["archive-tab", true],
@@ -619,6 +710,7 @@ $("composer").onsubmit = async (event) => {
     await api(`tickets/${id}/send`, { method: "POST", form, key: item.key });
     state.drafts.delete(id);
     $("message-text").value = "";
+    resizeComposer();
     $("file").value = "";
     renderFile();
     notice();
@@ -642,6 +734,7 @@ function chooseReply(index) {
   const reply = state.replies[index];
   if (!reply) return;
   $("message-text").value = reply.text;
+  resizeComposer();
   draft().key = null;
   saveDraft();
   $("reply-options").hidden = true;
@@ -649,6 +742,7 @@ function chooseReply(index) {
 }
 let replyTimer;
 $("message-text").oninput = () => {
+  resizeComposer();
   if (!state.ticket) return;
   draft().key = null;
   saveDraft();
@@ -744,7 +838,7 @@ async function refreshAccounts() {
         );
         await refreshAccounts();
       } catch (error) {
-        $("account-error").textContent = error.message;
+        statusText("account-error", error.message);
       } finally {
         button.disabled = false;
       }
@@ -765,13 +859,15 @@ async function refreshAccounts() {
       try {
         await api(`accounts/${account.id}/identity/telegram`, {method:"POST", data:{telegram_id:telegramId.value ? Number(telegramId.value) : null}});
         await refreshAccounts();
-      } catch (error) { $("account-error").textContent = error.message; }
+      } catch (error) { statusText("account-error", error.message); }
       finally { save.disabled = false; }
     };
     description.append(identity);
     const resetPassword = node("button", "secondary", "Сбросить пароль");
     resetPassword.onclick = () => openPassword(account);
-    row.append(description, resetPassword, button);
+    const actions = node("div", "row-actions");
+    actions.append(resetPassword, button);
+    row.append(description, actions);
     $("account-list").append(row);
   }
 }
@@ -781,7 +877,7 @@ $("accounts-open").onclick = async () => {
   try {
     await refreshAccounts();
   } catch (error) {
-    $("account-error").textContent = error.message;
+    statusText("account-error", error.message);
   }
 };
 $("accounts-close").onclick = () => {
@@ -802,7 +898,7 @@ $("account-form").onsubmit = async (event) => {
     event.target.reset();
     await refreshAccounts();
   } catch (error) {
-    $("account-error").textContent = error.message;
+    statusText("account-error", error.message);
   } finally {
     event.submitter.disabled = false;
   }
@@ -831,6 +927,7 @@ function selectProject(id) {
   $("search").value = "";
   $("customer-fields").replaceChildren();
   $("customer-card").hidden = true;
+  $("customer-open").setAttribute("aria-expanded", "false");
   $("reply-options").hidden = true;
   $("attachment").hidden = true;
   $("dialogue").hidden = true;
@@ -850,6 +947,7 @@ function logoSource(project) {
 }
 function renderProjectLogo() {
   const project = state.projects.find((item) => item.id === state.project);
+  $("project-initial").textContent = initials(project?.name || "R");
   const image = $("project-logo");
   image.hidden = !project?.logo;
   if (project?.logo) {
@@ -887,13 +985,14 @@ $("project-select").onchange = () => {
 
 let managedProject = null;
 let managementEpoch = 0;
-const projectError = (error) => { $("project-error").textContent = error.message; };
+const projectError = (error) => statusText("project-error", error.message);
 
 async function renderProjects() {
   await refreshProjects(false);
   $("project-list").replaceChildren();
   const owner = state.account.role === "admin";
   $("project-create-form").hidden = !owner;
+  $("project-create-section").hidden = !owner;
   for (const project of state.projects) {
     const row = node("div", "project-row");
     const description = node("div");
@@ -948,7 +1047,12 @@ async function openManagement(project) {
   $("project-error").textContent = "";
   $("managed-project-name").textContent = project.name;
   $("project-management").hidden = false;
+  $("projects-overview").hidden = true;
+  $("projects-back").hidden = false;
+  $("projects-title").textContent = "Настройки проекта";
+  $("projects-dialog").querySelector(".preferences-body").scrollTop = 0;
   $("project-admin-form").hidden = state.account.role !== "admin";
+  $("project-admin-section").hidden = state.account.role !== "admin";
   $("settings-tab").hidden = project.role !== "admin";
   $("branding-tab").hidden = project.role !== "admin";
   $("project-branding-form").reset();
@@ -956,6 +1060,7 @@ async function openManagement(project) {
   $("project-settings-form").reset();
   $("project-setting-fields").replaceChildren();
   $("members-tab").click();
+  $("members-tab").focus();
   await refreshMembers();
 }
 async function refreshMembers() {
@@ -1097,23 +1202,40 @@ $("settings-tab").onclick = async () => {
 };
 $("projects-open").onclick = async () => {
   $("project-error").textContent = "";
-  $("project-management").hidden = true;
+  projectsOverview();
   $("projects-dialog").showModal();
   try { await renderProjects(); } catch (error) { projectError(error); }
+};
+function projectsOverview() {
+  managedProject = null;
+  managementEpoch++;
+  $("project-management").hidden = true;
+  $("projects-overview").hidden = false;
+  $("projects-back").hidden = true;
+  $("projects-title").textContent = "Проекты";
+  $("project-settings-form").reset();
+  $("project-branding-form").reset();
+}
+$("projects-back").onclick = () => {
+  projectsOverview();
+  $("project-error").textContent = "";
+  $("project-list").querySelector("button")?.focus();
 };
 $("projects-close").onclick = () => {
   managementEpoch++;
   $("project-settings-form").reset();
   $("projects-dialog").close();
 };
+$("projects-dialog").addEventListener("close", () => { if (!$("projects-dialog").open) projectsOverview(); });
 function managementForm(id, perform) {
   $(id).onsubmit = async (event) => {
     event.preventDefault();
+    const epoch = managementEpoch;
     event.submitter.disabled = true;
     $("project-error").textContent = "";
     try {
       await perform(Object.fromEntries(new FormData(event.target)), event.target);
-    } catch (error) { projectError(error); }
+    } catch (error) { if (epoch === managementEpoch) projectError(error); }
     finally { event.submitter.disabled = false; }
   };
 }
@@ -1123,18 +1245,22 @@ managementForm("project-create-form", async (values, form) => {
   await renderProjects();
 });
 managementForm("member-form", async (values, form) => {
+  const epoch = managementEpoch;
   await api(`projects/${managedProject.id}/members`, {method: "POST", data: values});
+  if (epoch !== managementEpoch) return;
   form.reset();
   await refreshMembers();
 });
 managementForm("project-admin-form", async (values, form) => {
-  const id = managedProject.id;
+  const id = managedProject.id, epoch = managementEpoch;
   await api(`projects/${id}/admin`, {method: "POST", data: values});
   form.reset();
   await renderProjects();
+  if (epoch !== managementEpoch) return;
   await openManagement(state.projects.find((project) => project.id === id));
 });
 managementForm("project-settings-form", async (_, form) => {
+  const id = managedProject.id, epoch = managementEpoch;
   const settings = {};
   for (const input of form.elements) {
     if (!input.name) continue;
@@ -1142,10 +1268,12 @@ managementForm("project-settings-form", async (_, form) => {
     else if (input.type === "password") { if (input.value) settings[input.name] = input.value; }
     else settings[input.name] = input.type === "number" ? Number(input.value) : input.value || null;
   }
-  await api(`projects/${managedProject.id}/settings`, {method: "POST", data: {settings}});
+  await api(`projects/${id}/settings`, {method: "POST", data: {settings}});
+  if (epoch !== managementEpoch) return;
   form.reset();
   await $("settings-tab").onclick();
-  $("project-error").textContent = "Подключения сохранены. Активный проект перезапустится автоматически.";
+  if (epoch !== managementEpoch) return;
+  statusText("project-error", "Подключения сохранены. Активный проект перезапустится автоматически.", true);
 });
 $("owner-transfer-form").onsubmit = async (event) => {
   event.preventDefault();
@@ -1154,7 +1282,7 @@ $("owner-transfer-form").onsubmit = async (event) => {
     await api("installation/admin", {method: "POST", data: Object.fromEntries(new FormData(event.target))});
     event.target.reset();
     showLogin();
-  } catch (error) { $("account-error").textContent = error.message; }
+  } catch (error) { statusText("account-error", error.message); }
   finally { event.submitter.disabled = false; }
 };
 
