@@ -4,8 +4,13 @@ import re
 from collections import Counter
 from html.parser import HTMLParser
 from importlib.resources import files
+from unittest.mock import MagicMock
 
+import httpx
 import pytest
+
+from resolvate.config import Settings
+from resolvate.console import create_console
 
 ASSETS = files("resolvate").joinpath("console_assets")
 VOID_TAGS = {
@@ -69,11 +74,14 @@ def test_console_controls_and_accessibility_references_resolve(template: Console
         for key in ("for", "aria-labelledby", "aria-describedby", "aria-controls"):
             for target in (attrs.get(key) or "").split():
                 assert target in counts, f"Unresolved {key}={target}"
-    for name in ("app.js", "image_viewer.js"):
+    for name in ("app.js", "image_viewer.js", "theme.js"):
         source = ASSETS.joinpath(name).read_text(encoding="utf-8")
-        # Literal references in both controllers must match the actual template.
-        targets = re.findall(r'(?<![\w$.])(?:\$|get)\("([^"\n]+)"\)', source)
-        assert targets
+        # Literal DOM references in the controllers must match the actual template.
+        targets = re.findall(
+            r'(?:(?<![\w$.])(?:\$|get)|document\.getElementById)\("([^"\n]+)"\)', source
+        )
+        if name != "theme.js":
+            assert targets
         assert set(targets) <= counts.keys(), set(targets) - counts.keys()
 
 
@@ -102,8 +110,45 @@ def test_console_loads_only_packaged_scripts_and_styles(template: ConsoleTemplat
         source = attrs.get("src" if tag == "script" else "href") or ""
         assert re.fullmatch(r"assets/[a-z_]+\.(?:js|css)", source)
         assert ASSETS.joinpath(source.removeprefix("assets/")).is_file()
-        if tag == "script":
+        if tag == "script" and source != "assets/theme.js":
             assert "defer" in attrs
+
+
+def test_theme_bootstraps_before_styles_without_inline_script() -> None:
+    source = ASSETS.joinpath("index.html").read_text(encoding="utf-8")
+    assert source.index('src="assets/theme.js"') < source.index('href="assets/app.css"')
+    assert 'data-theme="dark"' in ASSETS.joinpath("app.css").read_text(encoding="utf-8")
+
+
+def test_theme_switches_use_buttons_without_a_menu(template: ConsoleTemplate) -> None:
+    buttons = [
+        attrs
+        for tag, attrs, _ in template.elements
+        if "data-theme-toggle" in attrs and tag == "button"
+    ]
+    assert len(buttons) == 1  # Only the authenticated workspace.
+    assert all(attrs.get("aria-label") and "aria-haspopup" not in attrs for attrs in buttons)
+    assert all(attrs.get("id") != "theme-dialog" for _, attrs, _ in template.elements)
+    source = ASSETS.joinpath("index.html").read_text(encoding="utf-8")
+    login = source.split('id="login-screen"', 1)[1].split("</main>", 1)[0]
+    assert "data-theme-toggle" not in login
+
+
+async def test_theme_script_is_publicly_served_with_strict_csp() -> None:
+    database = MagicMock()
+    settings = Settings(_env_file=None, console_origin="https://support.example.com")
+    app = create_console(database, MagicMock(), settings, MagicMock(), lambda _: "test")
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="https://support.example.com"
+    ) as client:
+        response = await client.get("/assets/theme.js")
+        assert response.status_code == 200
+        assert response.text == ASSETS.joinpath("theme.js").read_text(encoding="utf-8")
+        assert "javascript" in response.headers["content-type"]
+        assert "script-src 'self'" in response.headers["content-security-policy"]
+        assert "unsafe-inline" not in response.headers["content-security-policy"]
+        assert (await client.get("/assets/not_public.js")).status_code == 404
+    database.session.assert_not_called()
 
 
 def test_console_appbar_reading_order_matches_project_first_layout() -> None:

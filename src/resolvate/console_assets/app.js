@@ -125,6 +125,7 @@ const iconPaths = {
   settings: "M4 7h7m4 0h5M4 17h3m4 0h9M11 4v6M7 14v6",
   folder: "M3 7V5h6l2 2h10v13H3Z",
   archive: "M3 3h18v5H3Zm2 5v13h14V8m-10 4h6",
+  appearance: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 0v18m3-16v14m3-11v8",
   users: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m18 0v-2a4 4 0 0 0-3-3.87M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm7-7.87a4 4 0 0 1 0 7.75",
   lock: "M7 10V7a5 5 0 0 1 10 0v3M5 10h14v11H5Zm7 4v3",
   logout: "M9 4H4v16h5m5-13 5 5-5 5m-7-5h12",

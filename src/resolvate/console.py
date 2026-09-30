@@ -134,7 +134,7 @@ def create_console(
 
     @app.get("/assets/{name}")
     async def asset(name: str) -> FileResponse:
-        if name not in {"app.js", "app.css", "image_viewer.js"}:
+        if name not in {"app.js", "app.css", "image_viewer.js", "theme.js"}:
             raise HTTPException(404)
         return FileResponse(ASSETS / name)
 
