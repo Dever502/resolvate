@@ -78,22 +78,15 @@ class DurableTelegramIngressMiddleware(BaseMiddleware):
             decision = await self.inbound_limiter.consume(f"telegram:{message.from_user.id}")
             if not decision.allowed:
                 if decision.notify_operators:
-                    try:
-                        # Same ordered queue as admitted messages: even an immediate burst
-                        # on a new conversation is reported after its ticket is created.
-                        await self.repository.enqueue_inbound_update(
-                            event.update_id,
-                            {
-                                "resolvate_event": "rate_limit",
-                                "telegram_user_id": message.from_user.id,
-                            },
-                            ordering_key=update_ordering_key(event),
-                        )
-                    except Exception:
-                        await self.inbound_limiter.retry_operator_notice(
-                            f"telegram:{message.from_user.id}"
-                        )
-                        raise
+                    # Same ordered queue as admitted messages: even an immediate burst
+                    # on a new conversation is reported after its ticket is created.
+                    await self._persist(
+                        event,
+                        {
+                            "resolvate_event": "rate_limit",
+                            "telegram_user_id": message.from_user.id,
+                        },
+                    )
                     self.wake_worker()
                 await self._reject_rate_limited_message(
                     message, decision.retry_after_seconds, decision.notify_client
@@ -102,15 +95,39 @@ class DurableTelegramIngressMiddleware(BaseMiddleware):
                     self.poll_progress.admitted(event.update_id)
                 return None
         payload = event.model_dump(mode="json", exclude_none=True)
-        await self.repository.enqueue_inbound_update(
-            event.update_id,
-            payload,
-            ordering_key=update_ordering_key(event),
-        )
+        await self._persist(event, payload)
         if self.poll_progress is not None:
             self.poll_progress.admitted(event.update_id)
         self.wake_worker()
         return None
+
+    async def _persist(self, event: Update, payload: dict[str, Any]) -> None:
+        # aiogram catches handler exceptions and still advances getUpdates.offset.
+        # Keep this sequential polling call pending until durable admission succeeds.
+        # Retry only persistence: repeating admission would consume the user's quota
+        # again and could replace an accepted message with a rate-limit rejection.
+        delay = 1.0
+        ordering_key = update_ordering_key(event)
+        while True:
+            try:
+                await self.repository.enqueue_inbound_update(
+                    event.update_id, payload, ordering_key=ordering_key
+                )
+                return  # Includes a duplicate after an uncertain successful commit.
+            except asyncio.CancelledError:
+                raise  # Shutdown must leave the update unacknowledged in Telegram.
+            except Exception as error:
+                logger.warning(
+                    "Telegram admission failed; polling waits for persistence",
+                    extra={
+                        "event": "telegram_admission_retry",
+                        "telegram_update_id": event.update_id,
+                        "exception_type": type(error).__name__,
+                        "retry_after_seconds": delay,
+                    },
+                )
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 5.0)
 
     async def _reject_rate_limited_message(
         self, message: Message, retry_after_seconds: int, notify_user: bool

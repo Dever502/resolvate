@@ -14,6 +14,7 @@ from sqlalchemy import delete, select, update
 from resolvate.archive_media_policy import CLOUD_DOWNLOAD_LIMIT_BYTES
 from resolvate.archive_media_storage import ArchiveMediaStorage
 from resolvate.archive_retention import ArchiveRetention
+from resolvate.media_cleanup import referenced_media_paths
 from resolvate.models import TicketMessage, TranscriptMedia, utcnow
 from resolvate.runtime_supervision import wait_for_event
 from resolvate.topic_archive import TopicArchiveRepository
@@ -203,16 +204,7 @@ class ArchiveMaintenance:
         cutoff = now.timestamp() - 86400
         async with self.archives.media_lock:
             async with self.archives.database.session() as session:
-                referenced = set(
-                    (
-                        await session.scalars(
-                            select(TranscriptMedia.storage_path).where(
-                                TranscriptMedia.storage_path.is_not(None)
-                            )
-                        )
-                    ).all()
-                )
-                referenced.update((await session.scalars(select(MediaAsset.storage_path))).all())
+                referenced = await referenced_media_paths(session)
 
             def cleanup() -> None:
                 for path in self.storage.root.glob("*/*"):
@@ -236,7 +228,7 @@ class ArchiveMaintenance:
             await asyncio.to_thread(
                 cleanup_media_files,
                 LocalMediaStorage(self.storage.data_dir),
-                referenced_paths={path for path in referenced if path is not None},
+                referenced_paths=referenced,
                 apply=True,
                 now=now,
             )

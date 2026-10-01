@@ -347,12 +347,27 @@ DB-only backup принимает один путь и не останавлив
 Перед обновлением всегда создавайте backup. Не запускайте старый image поверх новой схемы без
 явно поддерживаемого downgrade.
 
-Проверка orphan/temp Web-файлов безопасна по умолчанию; удаление требует явного флага:
+Проверка orphan/temp Web-файлов безопасна по умолчанию: учитываются ссылки как из текущих
+сообщений, так и из архивов выбранного проекта. Без `--apply` файлы не удаляются:
 
 ```bash
 sh scripts/production-compose.sh exec resolvate python -m resolvate.media_cleanup --project "$PROJECT_ID"
-sh scripts/production-compose.sh exec resolvate python -m resolvate.media_cleanup --project "$PROJECT_ID" --apply
 ```
+
+Ручной `--apply` выполняйте только при остановленном приложении (и других процессах,
+пишущих в его медиа/БД), чтобы новые ссылки не появились между проверкой и удалением.
+PostgreSQL должен оставаться запущенным. Для работающего приложения используйте штатную
+фоновую очистку: она синхронизирована с записью вложений.
+
+```bash
+sh scripts/production-compose.sh stop resolvate
+sh scripts/production-compose.sh run --rm --no-deps --entrypoint python resolvate \
+  -m resolvate.media_cleanup --project "$PROJECT_ID" --apply
+sh scripts/production-compose.sh start resolvate
+```
+
+При ошибке очистки проверьте её вывод и запустите приложение вручную. Логотипы проектов
+и медиа соседних проектов эта команда не очищает.
 
 `scripts/drill_production_data_path.sh` проверяет deploy, rollback, backup и restore только на
 изолированном стенде. Его отчёты и дампы могут содержать чувствительные данные.
