@@ -249,6 +249,7 @@ def test_image_security_floors_apply_to_builder_and_runtime() -> None:
         assert "'libcrypto3>=3.5.8-r0'" in stage
         assert "'libssl3>=3.5.8-r0'" in stage
         assert "'libuuid>=2.42.3-r1'" in stage
+        assert "'pcre2>=10.49-r0'" in stage
         assert "--allow-untrusted" not in stage
 
 
