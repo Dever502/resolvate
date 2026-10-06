@@ -318,6 +318,76 @@ async def test_explicit_memberships_roles_and_revocation(installation: Any) -> N
         await auth.create_account(login="another", name="Another", password=PASSWORD, role="admin")
 
 
+async def test_member_candidates_are_minimal_authorized_and_filtered(installation: Any) -> None:
+    database, settings, auth, owner, alice, bob, first, second, service = installation
+    await service.change_member(owner, first.id, "owner")
+    candidates = await service.member_candidates(alice, first.id)
+    assert candidates == [{"id": bob.id, "login": "bob", "name": "Bob"}]
+    assert await service.member_candidates(owner, first.id, " BO ") == candidates
+    assert await service.member_candidates(alice, first.id, "%") == []
+    assert await service.member_candidates(alice, first.id, "_") == []
+    with pytest.raises(HTTPException) as denied:
+        await service.member_candidates(bob, first.id)
+    assert denied.value.status_code == 403
+    with pytest.raises(HTTPException) as denied:
+        await service.member_candidates(alice, second.id)
+    assert denied.value.status_code == 403
+
+    app = create_installation(database, settings, ProjectManager(database, settings))
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url=ORIGIN, headers={"Origin": ORIGIN}
+    ) as client:
+        path = f"/console/projects/{first.id}/member-candidates"
+        assert (await client.get(path)).status_code == 401
+        response = await client.post(
+            "/console/login", json={"login": "alice", "password": PASSWORD}
+        )
+        client.headers["X-CSRF-Token"] = response.json()["csrf"]
+        assert (await client.get(path, params={"q": "bOb"})).json() == candidates
+        assert (await client.get(path, params={"q": "x" * 101})).status_code == 422
+        assert (await client.get("/console/accounts")).status_code == 403
+        assert (
+            await client.get(f"/console/projects/{second.id}/member-candidates")
+        ).status_code == 403
+        # Searching is read-only; selection must be followed by an explicit grant.
+        assert len(await service.members(alice, first.id)) == 2
+        assert (
+            await client.post(f"/console/projects/{first.id}/members", json={"login": "bob"})
+        ).status_code == 200
+        assert (await client.get(path)).json() == []
+        # Membership alone must not grant access to the employee directory.
+        await client.post("/console/login", json={"login": "bob", "password": PASSWORD})
+        assert (await client.get(path)).status_code == 403
+    await service.change_member(alice, first.id, "bob", remove=True)
+    async with database.session() as session:
+        row = await session.get(ConsoleAccount, bob.id)
+        assert row is not None
+        row.active = False
+        await session.commit()
+    assert await service.member_candidates(alice, first.id) == []
+
+
+async def test_member_candidates_search_names_and_limit_results(installation: Any) -> None:
+    database, _, _, owner, alice, _, first, _, service = installation
+    async with database.session() as session:
+        session.add_all(
+            ConsoleAccount(
+                login=f"candidate{i:03}",
+                display_name=f"Employee {i}",
+                password_hash="unused-test-hash",
+                role="operator",
+                active=True,
+            )
+            for i in range(55)
+        )
+        await session.commit()
+    candidates = await service.member_candidates(owner, first.id, "candidate")
+    assert len(candidates) == 50
+    assert [row["login"] for row in candidates] == sorted(row["login"] for row in candidates)
+    found = await service.member_candidates(alice, first.id, "eMPLOyee 54")
+    assert len(found) == 1 and found[0]["login"] == "candidate054"
+
+
 async def test_folder_database_boundary_rejects_cross_project_references(installation: Any) -> None:
     database, _, _, _, alice, bob, first, second, _ = installation
     a, b = database.for_project(first.id), database.for_project(second.id)

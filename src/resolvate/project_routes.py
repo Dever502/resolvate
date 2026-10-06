@@ -1,7 +1,7 @@
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 from starlette.datastructures import UploadFile
 
@@ -73,6 +73,12 @@ def register_project_routes(app: FastAPI, auth: ConsoleAuth, service: ProjectSer
     @app.get("/projects/{project_id}/members")
     async def members(project_id: UUID, actor: Actor) -> list[dict[str, Any]]:
         return await service.members(actor, str(project_id))
+
+    @app.get("/projects/{project_id}/member-candidates")
+    async def member_candidates(
+        project_id: UUID, actor: Actor, q: str = Query(default="", max_length=100)
+    ) -> list[dict[str, str]]:
+        return await service.member_candidates(actor, str(project_id), q)
 
     @app.post("/projects/{project_id}/members")
     async def add_member(project_id: UUID, payload: TargetLogin, actor: Actor) -> dict[str, bool]:

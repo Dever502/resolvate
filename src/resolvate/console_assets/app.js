@@ -1451,6 +1451,107 @@ let managedProject = null;
 let managementEpoch = 0;
 const projectError = (error) => statusText("project-error", error.message);
 
+let memberSearchRequest = 0, memberSearchTimer = null, memberSearchController = null;
+let memberCandidates = [], memberCandidateIndex = -1;
+function closeMemberPicker() {
+  clearTimeout(memberSearchTimer);
+  memberSearchController?.abort();
+  memberSearchController = null;
+  memberSearchRequest++;
+  $("member-options").hidden = true;
+  $("member-search").setAttribute("aria-expanded", "false");
+  $("member-search").removeAttribute("aria-activedescendant");
+  memberCandidates = [];
+  memberCandidateIndex = -1;
+}
+function resetMemberPicker() {
+  closeMemberPicker();
+  $("member-search").value = "";
+  $("member-login").value = "";
+  $("member-search-status").textContent = "";
+  $("member-options").replaceChildren();
+}
+function chooseMember(index) {
+  const account = memberCandidates[index];
+  if (!account) return;
+  $("member-login").value = account.login;
+  $("member-search").value = `${account.name} · ${account.login}`;
+  closeMemberPicker();
+  $("member-search-status").textContent = "Нажмите «Выдать доступ», чтобы добавить сотрудника.";
+}
+async function searchMembers() {
+  if (!managedProject) return;
+  memberSearchController?.abort();
+  const controller = new AbortController();
+  memberSearchController = controller;
+  const request = ++memberSearchRequest, epoch = managementEpoch, id = managedProject.id;
+  const query = $("member-login").value ? "" : $("member-search").value.trim();
+  $("member-search-status").textContent = "Загрузка сотрудников…";
+  try {
+    const candidates = await api(`projects/${id}/member-candidates?q=${encodeURIComponent(query)}`, {signal: controller.signal});
+    if (request !== memberSearchRequest || epoch !== managementEpoch || !state.account) return;
+    memberCandidates = candidates;
+    memberCandidateIndex = -1;
+    $("member-search").removeAttribute("aria-activedescendant");
+    $("member-options").replaceChildren(...candidates.map((account, index) => {
+      const option = node("button", "member-option");
+      option.type = "button";
+      option.id = `member-option-${index}`;
+      option.tabIndex = -1;
+      option.setAttribute("role", "option");
+      option.setAttribute("aria-selected", "false");
+      option.append(node("strong", "", account.name), node("span", "muted small", account.login));
+      option.onmousedown = event => event.preventDefault();
+      option.onclick = () => chooseMember(index);
+      return option;
+    }));
+    $("member-options").hidden = !candidates.length;
+    $("member-search").setAttribute("aria-expanded", String(Boolean(candidates.length)));
+    $("member-search-status").textContent = !candidates.length ? "Нет доступных сотрудников по этому запросу."
+      : candidates.length === 50 ? "Показаны первые 50 сотрудников. Уточните поиск." : "Выберите сотрудника из списка.";
+  } catch (error) {
+    if (request === memberSearchRequest && epoch === managementEpoch && error.name !== "AbortError") {
+      $("member-search-status").textContent = "Не удалось загрузить сотрудников. Нажмите на поле, чтобы повторить.";
+    }
+  } finally {
+    if (memberSearchController === controller) memberSearchController = null;
+  }
+}
+$("member-search").addEventListener("focus", searchMembers);
+$("member-search").addEventListener("click", () => {
+  if ($("member-options").hidden && !memberSearchController) searchMembers();
+});
+$("member-search").addEventListener("input", () => {
+  $("member-login").value = "";
+  closeMemberPicker();
+  $("member-search-status").textContent = "Поиск…";
+  memberSearchTimer = setTimeout(searchMembers, 200);
+});
+$("member-picker").addEventListener("focusout", event => {
+  if (!$("member-picker").contains(event.relatedTarget)) closeMemberPicker();
+});
+$("member-search").addEventListener("keydown", event => {
+  if (event.key === "Escape") {
+    event.preventDefault(); event.stopPropagation(); closeMemberPicker();
+  } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    if ($("member-options").hidden) { searchMembers(); return; }
+    memberCandidateIndex = memberCandidateIndex < 0
+      ? event.key === "ArrowDown" ? 0 : memberCandidates.length - 1
+      : (memberCandidateIndex + (event.key === "ArrowDown" ? 1 : -1) + memberCandidates.length) % memberCandidates.length;
+    for (const [index, option] of [...$("member-options").children].entries()) {
+      option.setAttribute("aria-selected", String(index === memberCandidateIndex));
+      if (index === memberCandidateIndex) {
+        $("member-search").setAttribute("aria-activedescendant", option.id);
+        option.scrollIntoView({block: "nearest"});
+      }
+    }
+  } else if (event.key === "Enter" && !$("member-options").hidden) {
+    event.preventDefault();
+    if (memberCandidateIndex >= 0) chooseMember(memberCandidateIndex);
+  }
+});
+
 async function renderProjects() {
   await refreshProjects(false);
   $("project-list").replaceChildren();
@@ -1528,6 +1629,7 @@ async function openManagement(project) {
   await refreshMembers();
 }
 async function refreshMembers() {
+  resetMemberPicker();
   const id = managedProject.id, epoch = managementEpoch;
   const members = await api(`projects/${id}/members`);
   if (epoch !== managementEpoch) return;
@@ -1554,6 +1656,7 @@ async function refreshMembers() {
   }
 }
 function managementTab(tab) {
+  closeMemberPicker();
   $("members-section").hidden = tab !== "members";
   $("project-settings-form").hidden = tab !== "settings";
   $("project-branding-form").hidden = tab !== "branding";
@@ -1607,7 +1710,7 @@ $("branding-remove").onclick = () => changeBranding(true);
 const settingSections = [
   ["Telegram", [
     ["support_bot_token", "Токен бота", "password"],
-    ["support_group_id", "ID группы поддержки", "number"],
+    ["support_group_id", "ID группы поддержки", "text"],
   ]],
   ["API для вашего сайта", [
     ["web_api_enabled", "Принимать обращения через API", "checkbox"],
@@ -1643,6 +1746,12 @@ $("settings-tab").onclick = async () => {
         const wrapper = node("label", type === "checkbox" ? "checkbox-label" : "", label);
         const input = node(type === "identity" ? "select" : "input");
         input.name = key;
+        if (key === "support_group_id") {
+          input.pattern = "-[0-9]+|0";
+          input.maxLength = 17;
+          input.placeholder = "-100…";
+          input.title = "Отрицательный ID супергруппы, например -1001234567890.";
+        }
         if (type === "identity") {
           for (const [value, text] of [["external_id", "ID на вашем сайте"], ["email", "Email"]]) {
             const option = node("option", "", text); option.value = value; input.append(option);
@@ -1671,6 +1780,7 @@ $("projects-open").onclick = async () => {
   try { await renderProjects(); } catch (error) { projectError(error); }
 };
 function projectsOverview() {
+  resetMemberPicker();
   managedProject = null;
   managementEpoch++;
   $("project-management").hidden = true;
@@ -1709,6 +1819,7 @@ managementForm("project-create-form", async (values, form) => {
   await renderProjects();
 });
 managementForm("member-form", async (values, form) => {
+  if (!values.login) throw new Error("Выберите сотрудника из списка.");
   const epoch = managementEpoch;
   await api(`projects/${managedProject.id}/members`, {method: "POST", data: values});
   if (epoch !== managementEpoch) return;
@@ -1730,7 +1841,8 @@ managementForm("project-settings-form", async (_, form) => {
     if (!input.name) continue;
     if (input.type === "checkbox") settings[input.name] = input.checked;
     else if (input.type === "password") { if (input.value) settings[input.name] = input.value; }
-    else settings[input.name] = input.type === "number" ? Number(input.value) : input.value || null;
+    else settings[input.name] = input.type === "number" || input.name === "support_group_id"
+      ? Number(input.value) : input.value || null;
   }
   await api(`projects/${id}/settings`, {method: "POST", data: {settings}});
   if (epoch !== managementEpoch) return;

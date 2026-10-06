@@ -234,6 +234,32 @@ class ProjectService:
                 for row in rows
             ]
 
+    async def member_candidates(
+        self, actor: ConsoleAccount, project_id: str, query: str = ""
+    ) -> list[dict[str, str]]:
+        """Expose only directory names to people allowed to grant project access."""
+        async with self.database.session() as session:
+            current = await self._actor(session, actor)
+            project = await session.get(Project, project_id)
+            if project is None or (current.role != "admin" and project.admin_id != current.id):
+                raise HTTPException(403, "Недостаточно прав.")
+            candidates = select(ConsoleAccount).where(
+                ConsoleAccount.active.is_(True),
+                ConsoleAccount.id != project.admin_id,
+                ConsoleAccount.id.not_in(
+                    select(ProjectMember.account_id).where(ProjectMember.project_id == project_id)
+                ),
+            )
+            if query.strip():
+                candidates = candidates.where(
+                    or_(
+                        ConsoleAccount.login.icontains(query.strip(), autoescape=True),
+                        ConsoleAccount.display_name.icontains(query.strip(), autoescape=True),
+                    )
+                )
+            rows = await session.scalars(candidates.order_by(ConsoleAccount.login).limit(50))
+            return [{"id": row.id, "login": row.login, "name": row.display_name} for row in rows]
+
     async def change_member(
         self, actor: ConsoleAccount, project_id: str, login: str, *, remove: bool = False
     ) -> None:
