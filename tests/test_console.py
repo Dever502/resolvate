@@ -267,7 +267,9 @@ async def test_send_sync_idempotency_lifecycle(console: Any) -> None:
         assert client_job.payload["text"] == "Поможем <script>"
         assert "parse_mode" not in client_job.payload
         assert mirror.payload["parse_mode"] == "HTML"
-        assert "<blockquote>Поможем &lt;script&gt;</blockquote>" in mirror.payload["text"]
+        assert mirror.payload["text"] == (
+            "<b>👤 ПОДДЕРЖКА · Администратор</b>\n\nПоможем &lt;script&gt;"
+        )
     page = (await client.post(f"/console/tickets/{ticket_id}/sync", json={})).json()
     assert len(page["items"]) == 2 and page["items"][-1]["author"] == "Администратор"
     unchanged = (

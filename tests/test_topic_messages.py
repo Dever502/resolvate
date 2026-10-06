@@ -31,11 +31,10 @@ def test_mirror_escapes_and_splits_without_losing_customer_content(
         header, body = formatted.split("\n\n", 1)
         assert "&lt;b&gt;Иван &amp; Пётр&lt;/b&gt;" in header
         assert ("ПОДДЕРЖКА" if operator else "КЛИЕНТ") in header
-        if operator:
-            assert body.startswith("<blockquote>") and body.endswith("</blockquote>")
-            body = body.removeprefix("<blockquote>").removesuffix("</blockquote>")
+        assert header.startswith("<b>👤 ")
+        assert "<" not in body  # Plain escaped content, no formatting wrappers.
         recovered.append(html.unescape(body))
-        plain = html.unescape(re.sub(r"</?(?:b|blockquote)>", "", formatted))
+        plain = html.unescape(re.sub(r"</?b>", "", formatted))
         limit = 1024 if index == 0 and kind != "send_text" else 4096
         assert len(plain.encode("utf-16-le")) // 2 <= limit
         if index:

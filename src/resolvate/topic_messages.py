@@ -23,7 +23,7 @@ def topic_deliveries(
     operator: bool = False,
 ) -> list[DeliveryOutbox]:
     """Escape HTML and split without dropping text or exceeding Telegram limits."""
-    label = "🟦 ПОДДЕРЖКА" if operator else "👤 КЛИЕНТ"
+    label = "👤 ПОДДЕРЖКА" if operator else "👤 КЛИЕНТ"
     name = " ".join((author or "").split())[:80]
     heading = f"{label} · {name}" if name else label
     header = f"<b>{html.escape(heading)}</b>\n\n"
@@ -71,8 +71,6 @@ def topic_deliveries(
             end += 1
         part, remaining = remaining[:end], remaining[end:]
         body = html.escape(part)
-        if operator and body:
-            body = f"<blockquote>{body}</blockquote>"
         part_payload.update(text=header + body, parse_mode="HTML")
         jobs.append(
             DeliveryOutbox(
