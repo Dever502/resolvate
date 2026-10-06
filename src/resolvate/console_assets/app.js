@@ -110,6 +110,10 @@ const state = {
   detailRequest: 0,
   folderMoveBusy: false,
   folderContext: 0,
+  chatCache: new Map(),
+  historyUpdatedAt: 0,
+  opening: null,
+  messageRequest: 0,
 };
 
 function node(tag, className, text) {
@@ -180,7 +184,7 @@ function notice(text = "") {
 function fail(error) {
   notice(error.message || "Не удалось выполнить действие.");
 }
-async function api(path, { method = "GET", data, form, key } = {}) {
+async function api(path, { method = "GET", data, form, key, signal } = {}) {
   const scoped = /^(folders(?:\/|$)|tickets(?:\/|$)|media\/|retry\/|replies(?:\?|$))/.test(path);
   if (scoped) {
     if (!state.project) throw new Error("Выберите доступный проект.");
@@ -194,6 +198,7 @@ async function api(path, { method = "GET", data, form, key } = {}) {
     method,
     headers,
     credentials: "same-origin",
+    signal,
     body: form || (data !== undefined ? JSON.stringify(data) : undefined),
   });
   let result;
@@ -232,6 +237,7 @@ function timeLabel(value) {
     : date.toLocaleDateString("ru", { day: "numeric", month: "short" });
 }
 function showLogin() {
+  resetChatCache();
   state.epoch++;
   state.account = null;
   state.project = null;
@@ -724,6 +730,11 @@ function renderFile() {
 async function openTicket(id) {
   if (state.sending) return;
   saveDraft();
+  rememberChat();
+  state.opening?.abort();
+  const controller = new AbortController();
+  state.opening = controller;
+  imageViewer.close();
   state.epoch++;
   state.ticket = id;
   state.detail = null;
@@ -731,10 +742,31 @@ async function openTicket(id) {
   $("folder-move-status").textContent = "";
   renderTicketFolder();
   const epoch = state.epoch;
-  state.messages.clear();
-  state.before = null;
-  state.older = false;
+  const cached = state.chatCache.get(id);
+  const snapshot = cached && Date.now() - cached.updatedAt < 120000 ? cached : null;
+  state.messages = new Map(snapshot?.messages);
+  state.historyUpdatedAt = snapshot?.updatedAt || 0;
+  state.before = snapshot?.before || null;
+  state.older = snapshot?.older || false;
+  state.loadingOlder = false;
+  $("older").disabled = false;
+  $("older").hidden = !state.older;
   $("message-list").replaceChildren();
+  const preview = state.tickets.get(id);
+  renderDetail(snapshot?.detail || {
+    display_name: preview?.name, channel: preview?.channel, status: preview?.status,
+  }, id);
+  state.detail = null; // Cached metadata must not enable actions before authorization refresh.
+  $("lifecycle").disabled = true;
+  renderTicketFolder();
+  renderMessages();
+  $("messages").scrollTop = $("messages").scrollHeight;
+  for (const button of $("ticket-list").querySelectorAll(".ticket")) {
+    const selected = button.dataset.id === id;
+    button.classList.toggle("selected", selected);
+    if (selected) button.setAttribute("aria-current", "true");
+    else button.removeAttribute("aria-current");
+  }
   $("reply-options").hidden = true;
   $("customer-card").hidden = true;
   $("customer-open").setAttribute("aria-expanded", "false");
@@ -745,17 +777,58 @@ async function openTicket(id) {
   $("empty").hidden = true;
   $("workspace").classList.add("open-chat");
   resizeComposer();
-  await syncDetail(id, epoch);
-  await syncMessages(true);
-  await syncTickets();
-  $("message-text").focus();
+  $("messages").scrollTop = $("messages").scrollHeight;
+  $("message-text").focus({preventScroll: true});
+  try {
+    await Promise.all([
+      syncDetail(id, epoch, controller.signal),
+      syncMessages(true, false, controller.signal),
+    ]);
+  } catch (error) {
+    if (epoch !== state.epoch || controller.signal.aborted) return;
+    controller.abort();
+    if ([401, 403, 404].includes(error.status)) {
+      state.chatCache.delete(id);
+      state.messages.clear();
+      state.historyUpdatedAt = 0;
+      state.detail = null;
+      renderDetail({}, id);
+      $("lifecycle").disabled = true;
+      renderTicketFolder();
+      $("message-list").replaceChildren();
+    }
+    throw error;
+  } finally {
+    if (state.opening === controller) state.opening = null;
+  }
 }
-async function syncDetail(id, epoch) {
+// In-memory only, scoped to the current account/project. Bound both age and size.
+function resetChatCache() {
+  state.opening?.abort();
+  state.opening = null;
+  state.chatCache.clear();
+  state.historyUpdatedAt = 0;
+}
+function rememberChat() {
+  if (!state.ticket) return;
+  state.chatCache.delete(state.ticket);
+  if (!state.historyUpdatedAt || state.messages.size > 200) return;
+  state.chatCache.set(state.ticket, {
+    messages: new Map(state.messages), detail: state.detail,
+    before: state.before, older: state.older, updatedAt: state.historyUpdatedAt,
+  });
+  while (state.chatCache.size > 20) state.chatCache.delete(state.chatCache.keys().next().value);
+}
+async function syncDetail(id, epoch, signal) {
   const request = ++state.detailRequest;
-  const detail = await api(`tickets/${id}`);
-  if (epoch !== state.epoch || id !== state.ticket || request !== state.detailRequest) return;
+  const detail = await api(`tickets/${id}`, {signal});
+  if (signal?.aborted || epoch !== state.epoch || id !== state.ticket || request !== state.detailRequest) return;
   state.detail = detail;
   renderTicketFolder();
+  renderDetail(detail, id);
+  $("lifecycle").disabled = false;
+}
+function renderDetail(detail, id) {
   $("customer-name").textContent =
     detail.display_name || detail.username || "Клиент";
   $("customer-avatar").textContent = initials($("customer-name").textContent);
@@ -772,12 +845,15 @@ async function syncDetail(id, epoch) {
     ["Email", detail.email],
     ["Идентификатор", detail.identity_value],
     ["Remnawave ID", detail.remnawave_user_uuid],
-    ["Первое обращение", new Date(detail.created_at).toLocaleString("ru")],
+    ["Первое обращение", detail.created_at ? new Date(detail.created_at).toLocaleString("ru") : null],
   ];
   $("customer-fields").replaceChildren();
   for (const [key, value] of fields)
     if (value)
       $("customer-fields").append(node("dt", "", key), node("dd", "", value));
+  for (const author of $("message-list").querySelectorAll("[data-customer-author]")) {
+    author.textContent = $("customer-name").textContent;
+  }
 }
 function renderMessage(item) {
   const outgoing = item.direction === "operator_to_user";
@@ -807,6 +883,7 @@ function renderMessage(item) {
       }),
     ),
   );
+  if (!outgoing && !item.system) meta.firstChild.dataset.customerAuthor = "";
   const bubble = node("div", "bubble");
   if (item.media_id) {
     const url = `/console/projects/${state.project}/media/${encodeURIComponent(item.media_id)}`;
@@ -899,18 +976,21 @@ function renderMessage(item) {
   }
   return element;
 }
-async function syncMessages(initial = false, older = false) {
+async function syncMessages(initial = false, older = false, signal) {
   const id = state.ticket,
     epoch = state.epoch;
   if (!id) return;
+  const request = ++state.messageRequest;
+  const hadHistory = Boolean(state.historyUpdatedAt);
   const result = await api(`tickets/${id}/sync`, {
     method: "POST",
+    signal,
     data: {
       known: older ? {} : known(state.messages),
       before: older ? state.before : null,
     },
   });
-  if (epoch !== state.epoch || id !== state.ticket) return;
+  if (signal?.aborted || epoch !== state.epoch || id !== state.ticket || request !== state.messageRequest) return;
   const area = $("messages"),
     height = area.scrollHeight,
     top = area.scrollTop;
@@ -922,11 +1002,35 @@ async function syncMessages(initial = false, older = false) {
   for (const item of result.items) state.messages.set(item.id, item);
   if (!older)
     for (const removed of result.removed) state.messages.delete(removed);
-  if (initial || older) {
+  if (older || result.reset || (initial && !hadHistory)) {
     state.before = result.before;
     state.older = result.has_older;
   }
   $("older").hidden = !state.older;
+  state.historyUpdatedAt = Date.now();
+  const ordered = renderMessages();
+  if (initial || (bottom && !older)) area.scrollTop = area.scrollHeight;
+  else if (older) area.scrollTop = top + area.scrollHeight - height;
+  if (ordered.some((item) => item.uncertain))
+    notice(
+      "Результат одной из отправок неизвестен. Проверьте Telegram перед повторной отправкой.",
+    );
+  if (
+    ordered.length &&
+    !document.hidden &&
+    $("dialogue").getClientRects().length &&
+    (bottom || initial) &&
+    !older
+  ) {
+    // A receipt must not hold up rendering or start a full list/folder reload.
+    api(`tickets/${id}/read/${ordered[ordered.length - 1].id}`, {
+      method: "POST", signal,
+    }).catch(error => {
+      if (!signal?.aborted && epoch === state.epoch) fail(error);
+    });
+  }
+}
+function renderMessages() {
   const existing = new Map(
     [...$("message-list").children].map((element) => [
       element.dataset.id,
@@ -949,26 +1053,11 @@ async function syncMessages(initial = false, older = false) {
     if (next !== element) list.insertBefore(element, next);
     previous = element;
   }
-  if (initial || (bottom && !older)) area.scrollTop = area.scrollHeight;
-  else if (older) area.scrollTop = top + area.scrollHeight - height;
-  if (ordered.some((item) => item.uncertain))
-    notice(
-      "Результат одной из отправок неизвестен. Проверьте Telegram перед повторной отправкой.",
-    );
-  if (
-    ordered.length &&
-    !document.hidden &&
-    $("dialogue").getClientRects().length &&
-    (bottom || initial) &&
-    !older
-  ) {
-    await api(`tickets/${id}/read/${ordered[ordered.length - 1].id}`, {
-      method: "POST",
-    });
-  }
+  return ordered;
 }
 $("older").onclick = async () => {
-  if (state.loadingOlder || state.syncing) return;
+  if (state.loadingOlder || state.syncing || state.opening) return;
+  const epoch = state.epoch;
   state.loadingOlder = true;
   $("older").disabled = true;
   try {
@@ -976,8 +1065,10 @@ $("older").onclick = async () => {
   } catch (error) {
     fail(error);
   } finally {
-    state.loadingOlder = false;
-    $("older").disabled = false;
+    if (epoch === state.epoch) {
+      state.loadingOlder = false;
+      $("older").disabled = false;
+    }
   }
 };
 $("messages").addEventListener("scroll", () => {
@@ -1272,6 +1363,7 @@ $("account-form").onsubmit = async (event) => {
 };
 function selectProject(id) {
   if (state.sending) return;
+  resetChatCache();
   imageViewer.close();
   state.epoch++;
   state.listEpoch++;
@@ -1659,16 +1751,17 @@ async function poll() {
     state.account &&
     !document.hidden &&
     !state.syncing &&
+    !state.opening &&
     !state.sending &&
     !state.loadingOlder
   ) {
+    const epoch = state.epoch;
     state.syncing = true;
     try {
       await refreshProjects(false);
       await syncTickets();
-      if (state.ticket) {
-        await syncDetail(state.ticket, state.epoch);
-        await syncMessages();
+      if (state.ticket && epoch === state.epoch && !state.opening) {
+        await Promise.all([syncDetail(state.ticket, epoch), syncMessages()]);
       }
     } catch (error) {
       fail(error);
