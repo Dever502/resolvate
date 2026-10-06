@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
+from resolvate.models import TicketMessage
 from resolvate.service_types import TicketView
 from resolvate.system_messages import rating_data, rating_text
 from resolvate.telegram_constants import TICKET_CLOSED_SUMMARY_TEXT
@@ -64,6 +65,63 @@ def media_metadata(message: Message) -> dict[str, object] | None:
     metadata = {"telegram_content_type": content_type}
     metadata.update(attachment_metadata(message, content_type))
     return metadata
+
+
+def reply_presentation(message: Message) -> dict[str, object]:
+    """Persist formatting with the authorized content, never read it from a live copy."""
+    entities = getattr(
+        message, "entities" if message.text is not None else "caption_entities", None
+    )
+    return {
+        "telegram_entities": [
+            entity.model_dump(mode="json", exclude_none=True) for entity in entities or []
+        ],
+        "has_media_spoiler": bool(getattr(message, "has_media_spoiler", False)),
+        "show_caption_above_media": bool(getattr(message, "show_caption_above_media", False)),
+    }
+
+
+def operator_reply_snapshot(message: TicketMessage) -> dict[str, object]:
+    """Reconstruct only the accepted revision, including pre-upgrade queued replies."""
+    metadata = message.media or {}
+    snapshot: dict[str, object] = {
+        "message_id": message.source_message_id,
+        "date": int(message.created_at.timestamp()),
+        "chat": {"id": message.source_chat_id, "type": "supergroup"},
+    }
+    kind = metadata.get("telegram_content_type", "text")
+    entities = metadata.get("telegram_entities", [])
+    if kind == "text":
+        if not message.content:
+            raise ValueError("Accepted operator reply has no text")
+        snapshot.update(text=message.content, entities=entities)
+    elif kind in {"photo", "video", "document", "voice"}:
+        if not metadata.get("file_id"):
+            raise ValueError("Accepted operator reply has no Telegram file")
+        attachment = {
+            field: metadata[field]
+            for field in (
+                "file_id",
+                "file_unique_id",
+                "file_size",
+                "file_name",
+                "mime_type",
+                "width",
+                "height",
+                "duration",
+            )
+            if field in metadata
+        }
+        snapshot[kind] = [attachment] if kind == "photo" else attachment
+        snapshot.update(
+            caption=message.content,
+            caption_entities=entities,
+            has_media_spoiler=metadata.get("has_media_spoiler", False),
+            show_caption_above_media=metadata.get("show_caption_above_media", False),
+        )
+    else:
+        raise ValueError("Unsupported accepted operator reply")
+    return snapshot
 
 
 def rating_keyboard(ticket_id: str, close_cycle: int) -> InlineKeyboardMarkup:

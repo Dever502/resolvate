@@ -27,6 +27,7 @@ from resolvate.service_types import DeliveryJob
 from resolvate.services import TicketService
 from resolvate.telegram_errors import is_missing_topic_error
 from resolvate.telegram_limits import TelegramRateLimiter
+from resolvate.telegram_message_utils import operator_reply_snapshot
 from resolvate.telegram_transcript import canonical_message_context
 
 logger = logging.getLogger(__name__)
@@ -296,7 +297,19 @@ class DeliveryWorker:
                     return
                 payload.pop("prepare_reopened_context", None)
             await self.limiter.wait()
-            if payload.get("kind", "copy") == "send_text":
+            if (
+                payload.get("kind", "copy") == "copy"
+                and Direction(job.direction) is Direction.OPERATOR_TO_USER
+            ):
+                accepted = await self.ticket_service.get_operator_reply(
+                    job.ticket_id,
+                    _payload_int(payload, "source_chat_id"),
+                    _payload_int(payload, "source_message_id"),
+                )
+                delivered_message_id = await self._send_snapshot(
+                    {**payload, "snapshot": operator_reply_snapshot(accepted)}, target_thread_id
+                )
+            elif payload.get("kind", "copy") == "send_text":
                 reply_markup_payload = payload.get("reply_markup")
                 reply_markup = (
                     InlineKeyboardMarkup.model_validate(reply_markup_payload)
@@ -621,6 +634,13 @@ class DeliveryWorker:
                 update={
                     "caption": message.caption,
                     "caption_entities": message.caption_entities,
+                }
+            )
+        if message.photo is not None or message.video is not None:
+            method = method.model_copy(
+                update={
+                    "has_spoiler": bool(message.has_media_spoiler),
+                    "show_caption_above_media": bool(message.show_caption_above_media),
                 }
             )
         if method.__api_method__ == "forwardMessage":

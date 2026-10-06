@@ -45,6 +45,23 @@ class OperatorMessageResult:
 class TicketMessageService(TicketServiceBase):
     """Atomic message persistence and outbox enqueue operations."""
 
+    async def get_operator_reply(
+        self, ticket_id: str, source_chat_id: int, source_message_id: int
+    ) -> TicketMessage:
+        async with self.database.session() as session:
+            message = await session.scalar(
+                select(TicketMessage).where(
+                    TicketMessage.ticket_id == ticket_id,
+                    TicketMessage.direction == Direction.OPERATOR_TO_USER,
+                    TicketMessage.source_chat_id == source_chat_id,
+                    TicketMessage.source_message_id == source_message_id,
+                )
+            )
+            if message is None:
+                # Never fall back to mutable Telegram/transcript content for operator replies.
+                raise TicketNotFoundError(ticket_id)
+            return message
+
     async def _delivery_ticket(
         self,
         session: AsyncSession,

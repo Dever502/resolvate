@@ -4,7 +4,7 @@ import logging
 import secrets
 import time
 import uuid
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from ipaddress import ip_address, ip_network
 from typing import Any
 
@@ -12,6 +12,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, 
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
 
 from resolvate.api_idempotency import ApiIdempotencyConflictError
 from resolvate.api_routes import API_TICKET_CLOSED_TEXT as API_TICKET_CLOSED_TEXT
@@ -33,10 +34,11 @@ from resolvate.services import TicketService
 from resolvate.trace import trace_id_var
 from resolvate.user_message_limits import UserMessageRateLimiter
 from resolvate.version import PROJECT_VERSION
-from resolvate.web_api_routes import register_web_routes
+from resolvate.web_api_routes import _limit_request_body, register_web_routes
 
 logger = logging.getLogger(__name__)
 MAX_FORWARDED_HOPS = 32
+MAX_API_JSON_REQUEST_BYTES = 64 * 1024
 
 
 def _valid_ip_text(value: str) -> str | None:
@@ -125,6 +127,8 @@ def create_app(
         request: Request,
         x_api_token: str | None = Header(default=None, alias="X-API-Token"),
     ) -> None:
+        if getattr(request.state, "api_admitted", False):
+            return
         configured_tokens: tuple[tuple[str, str], ...]
         is_web_path = request.url.path.startswith("/api/v1/web")
         is_operator_path = request.url.path.startswith("/api/v1/tickets")
@@ -193,6 +197,32 @@ def create_app(
                 headers={"Retry-After": str(retry_after)},
             )
 
+    class AdmittedRoute(APIRoute):
+        def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
+            handler = super().get_route_handler()
+
+            async def admitted_handler(request: Request) -> Response:
+                # FastAPI dependencies run AFTER typed JSON parsing. Admit here instead,
+                # leaving the dependency in place for the API contract and OpenAPI.
+                await require_api_token(request, request.headers.get("X-API-Token"))
+                request.state.api_admitted = True
+                # The upload route has its own larger streaming bound after admission.
+                if self.path != "/api/v1/web/messages":
+                    length = request.headers.get("content-length")
+                    if length is not None:
+                        try:
+                            size = int(length)
+                        except ValueError as error:
+                            raise HTTPException(400, "Invalid Content-Length") from error
+                        if size < 0:
+                            raise HTTPException(400, "Invalid Content-Length")
+                        if size > MAX_API_JSON_REQUEST_BYTES:
+                            raise HTTPException(413, "Payload too large")
+                    _limit_request_body(request, MAX_API_JSON_REQUEST_BYTES)
+                return await handler(request)
+
+            return admitted_handler
+
     app = FastAPI(
         title="Resolvate API",
         version=PROJECT_VERSION,
@@ -201,6 +231,7 @@ def create_app(
         openapi_url=None,
         dependencies=[Depends(require_api_token)],
     )
+    app.router.route_class = AdmittedRoute
     app.router.add_event_handler("startup", lambda: runtime_health.ready("api"))
 
     def error_response(

@@ -14,9 +14,9 @@ from resolvate.media_storage import (
     MediaValidationError,
     StoredMedia,
 )
-from resolvate.models import Ticket, TicketMessage, TranscriptMedia
+from resolvate.models import Direction, Ticket, TicketMessage, TranscriptMedia
 from resolvate.rotation_gate import lock_rotation_gate
-from resolvate.telegram_message_utils import media_metadata, message_text
+from resolvate.telegram_message_utils import media_metadata, message_text, reply_presentation
 from resolvate.web_models import MediaAsset
 
 UNSUPPORTED_ATTACHMENT = (
@@ -142,4 +142,6 @@ async def record_edit(
                 await attach_media(session, current, saved)
             current.content = message_text(message)
             current.media = {**(current.media or {}), "edited_at": edited_at}
+            if current.direction == Direction.OPERATOR_TO_USER:
+                current.media = {**current.media, **reply_presentation(message)}
             await session.commit()

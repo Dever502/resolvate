@@ -27,6 +27,7 @@ from resolvate.telegram_message_utils import (
     message_command,
     message_text,
     rating_keyboard,
+    reply_presentation,
 )
 from resolvate.telegram_message_utils import (
     command_key as build_command_key,
@@ -361,6 +362,7 @@ class TelegramOperatorHandlers(
                 stored_media = await save_attachment(message, self.bot, self.media_storage)
                 operator_media = {
                     **(media_metadata(message) or {}),
+                    **reply_presentation(message),
                     "operator_name": message.from_user.full_name,
                 }
                 if stored_media:
