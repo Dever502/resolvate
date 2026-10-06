@@ -1756,6 +1756,8 @@ let eventsRetryAt = 0;
 let pollTimer = null;
 let refreshRequested = false;
 let lastRefresh = 0;
+// A start that failed after sign-in is finished by the next refresh, like a normal start.
+let initialRefresh = false;
 
 function stopEvents() {
   eventSource?.close();
@@ -1831,7 +1833,8 @@ async function poll() {
     const epoch = state.epoch;
     state.syncing = true;
     try {
-      await refreshProjects(false);
+      await refreshProjects(initialRefresh);
+      initialRefresh = false;
       await syncTickets();
       if (state.ticket && epoch === state.epoch && !state.opening) {
         await Promise.all([syncDetail(state.ticket, epoch), syncMessages()]);
@@ -1844,7 +1847,15 @@ async function poll() {
   }
   schedulePoll(refreshRequested ? 500 : eventsReady ? 30000 : 3000);
 }
+// Only 401 ends the session (api() then shows the login form); other errors keep it.
 api("me")
   .then(enter)
-  .catch(() => showLogin())
+  .catch(error => {
+    if (state.account) {
+      initialRefresh = true;
+      fail(error);
+    } else if (error.status !== 401) {
+      statusText("login-error", error.status ? error.message : "Нет связи с сервером. Обновите страницу позже.");
+    }
+  })
   .finally(poll);

@@ -96,3 +96,50 @@ test('a fully closed stream retries after backoff while polling remains availabl
   await f.context.poll();
   assert.equal(f.sources.length, 2);
 });
+
+function start(respond, enterError) {
+  const calls = {showLogin:0, fail:[], status:[], projects:[]};
+  const state = {account:null, project:null, epoch:0};
+  const showLogin = () => { calls.showLogin++; state.account = null; };
+  const context = vm.createContext({
+    state, document:{hidden:false, addEventListener() {}}, window:{addEventListener() {}},
+    Date:{now:() => 10000}, setTimeout:() => 1, clearTimeout() {},
+    api: () => respond(showLogin), showLogin,
+    enter: async result => { state.account = result.account; if (enterError) throw enterError; },
+    fail: error => calls.fail.push(error.message),
+    statusText: (id, text) => calls.status.push([id, text]),
+    refreshProjects: async initial => { calls.projects.push(initial); },
+    syncTickets: async () => {}, syncDetail: async () => {}, syncMessages: async () => {},
+    notice() {}, selectProject() {},
+  });
+  vm.runInContext(source.slice(source.indexOf('let eventSource = null;')), context);
+  return {calls, context};
+}
+const settle = async () => { for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve)); };
+const failure = (message, status) => Object.assign(new Error(message), {status});
+
+test('a start error after sign-in keeps the session; the next refresh repeats the initial selection', async () => {
+  const f = start(() => Promise.resolve({account:{id:'operator'}}), failure('Внутренняя ошибка сервера.', 500));
+  await settle();
+  assert.equal(f.calls.showLogin, 0);
+  assert.deepEqual(f.calls.fail, ['Внутренняя ошибка сервера.']);
+  assert.deepEqual(f.calls.projects, [true]);
+  await f.context.poll();
+  assert.deepEqual(f.calls.projects, [true, false]);
+});
+
+test('a failed session check other than 401 keeps the login form and says why', async () => {
+  const limited = start(() => Promise.reject(failure('Слишком много запросов.', 429)));
+  const offline = start(() => Promise.reject(new TypeError('Failed to fetch')));
+  await settle();
+  assert.equal(limited.calls.showLogin + offline.calls.showLogin, 0);
+  assert.deepEqual(limited.calls.status, [['login-error', 'Слишком много запросов.']]);
+  assert.deepEqual(offline.calls.status, [['login-error', 'Нет связи с сервером. Обновите страницу позже.']]);
+});
+
+test('401 at start shows the login form without an extra message', async () => {
+  const f = start(showLogin => { showLogin(); return Promise.reject(failure('Войдите в панель.', 401)); });
+  await settle();
+  assert.ok(f.calls.showLogin > 0);
+  assert.deepEqual(f.calls.status, []);
+});
