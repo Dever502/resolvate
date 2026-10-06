@@ -7,9 +7,10 @@ from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, SecretStr
 from sqlalchemy import delete, select
+from starlette.background import BackgroundTask
 from starlette.datastructures import UploadFile
 
 from resolvate.archive_media_storage import ArchiveStorageFull
@@ -21,8 +22,10 @@ from resolvate.database import Database
 from resolvate.media_storage import LocalMediaStorage, MediaValidationError
 from resolvate.models import ConsoleAccount, ConsoleSession, QuickResponse
 from resolvate.project_branding import MAX_LOGO_BYTES
+from resolvate.projects import membership
 from resolvate.service_types import TicketNotFoundError
 from resolvate.services import TicketService
+from resolvate.thumbnails import Thumbnails
 from resolvate.web_api_routes import _limit_request_body
 from resolvate.web_models import MediaAsset
 
@@ -84,9 +87,11 @@ def create_console(
     auth = ConsoleAuth(database, settings.console_origin)
     service = ConsoleService(database, tickets, settings)
     folders = ConsoleFolders(database)
+    thumbnails = Thumbnails()
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.state.auth = auth
     app.state.service = service
+    app.state.thumbnails = thumbnails
     Identity = Annotated[ConsoleAccount, Depends(auth.require)]
     Actor = Annotated[ConsoleAccount, Depends(auth.project_actor)]
     Admin = Annotated[ConsoleAccount, Depends(auth.admin)]
@@ -166,6 +171,30 @@ def create_console(
     @app.get("/me")
     async def me(request: Request, actor: Identity) -> dict[str, object]:
         return {"account": account_view(actor), "csrf": digest("csrf:" + request.cookies[COOKIE])}
+
+    @app.get("/events")
+    async def events(request: Request, actor: Actor) -> StreamingResponse:
+        if request.headers.get("origin") not in {None, auth.origin}:
+            raise HTTPException(403, "Поток доступен только из панели.")
+        project_id = database.project_id
+        assert project_id is not None
+
+        # No token in the URL, no ticket/message data in events, and no open DB transaction.
+        async def authorize() -> None:
+            current = await auth.session_account(request)
+            if current.id != actor.id:
+                raise HTTPException(401)
+            await membership(database, current)
+
+        await authorize()
+        hub = database.console_events
+        subscription = hub.subscribe(project_id, actor.id)
+        return StreamingResponse(
+            hub.stream(subscription, authorize),
+            media_type="text/event-stream",
+            headers={"X-Accel-Buffering": "no", "Cache-Control": "no-store"},
+            background=BackgroundTask(hub.unsubscribe, subscription),
+        )
 
     @app.post("/logout")
     async def logout(request: Request, response: Response, actor: Identity) -> dict[str, bool]:
@@ -364,6 +393,20 @@ def create_console(
                 await session.scalars(statement.order_by(QuickResponse.created_at.desc()).limit(50))
             ).all()
         return [{"id": str(row.id), "text": row.text} for row in rows]
+
+    @app.get("/media/{media_id}/thumbnail")
+    async def thumbnail(media_id: uuid.UUID, actor: Actor) -> Response:
+        async with database.session() as session:
+            media = await session.get(MediaAsset, str(media_id))
+        if media is None:
+            raise HTTPException(410, "Вложение больше не хранится.")
+        if media.mime_type not in {"image/jpeg", "image/png", "image/webp"}:
+            raise HTTPException(415, "Миниатюры доступны только для изображений.")
+        path = await storage.resolve_file(media.storage_path)
+        if path is None:
+            raise HTTPException(410, "Вложение больше не хранится.")
+        content = await thumbnails.get(media.sha256, path)
+        return Response(content, media_type="image/webp")
 
     @app.get("/media/{media_id}")
     async def media_file(media_id: uuid.UUID, actor: Actor) -> FileResponse:

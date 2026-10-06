@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import ORMExecuteState, Session, with_loader_criteria
 
+from resolvate.console_events import VISIBLE_TABLES, ConsoleEvents
 from resolvate.models import Base, ProjectScoped
 from resolvate.runtime_defaults import (
     POSTGRES_MAX_OVERFLOW,
@@ -63,6 +64,48 @@ def _write_scope(session: Session, context: Any, instances: Any) -> None:
             row.project_id = project
 
 
+@event.listens_for(ScopedSession, "after_flush")
+def _console_flushed(session: Session, context: Any) -> None:
+    if any(
+        getattr(row, "__tablename__", "") in VISIBLE_TABLES
+        or (
+            getattr(row, "__tablename__", "") == "delivery_outbox"
+            and inspect(row).attrs.status.history.has_changes()
+            and row.status != "processing"
+        )
+        for row in session.new | session.dirty | session.deleted
+    ):
+        session.info["console_changed"] = True
+
+
+@event.listens_for(ScopedSession, "do_orm_execute", retval=True)
+def _console_executed(state: ORMExecuteState) -> Any:
+    result = state.invoke_statement()
+    if state.is_insert or state.is_update or state.is_delete:
+        table = getattr(getattr(state.statement, "table", None), "name", "")
+        visible = table in VISIBLE_TABLES or state.execution_options.get("console_change", False)
+        if visible and getattr(result, "rowcount", None) != 0:
+            state.session.info["console_changed"] = True
+    return result
+
+
+@event.listens_for(ScopedSession, "after_commit")
+def _console_committed(session: Session) -> None:
+    if session.in_nested_transaction():
+        return
+    changed = session.info.pop("console_changed", False)
+    project = session.info.get("project_id")
+    events = session.info.get("console_events")
+    if changed and project and events is not None:
+        events.publish(project)
+
+
+@event.listens_for(ScopedSession, "after_soft_rollback")
+def _console_rolled_back(session: Session, previous: Any) -> None:
+    if previous.parent is None:
+        session.info.pop("console_changed", None)
+
+
 class Database:
     def __init__(self, database_url: str, *, project_id: str | None = None) -> None:
         try:
@@ -86,6 +129,7 @@ class Database:
             "pool_use_lifo": True,
         }
         self.engine: AsyncEngine = create_async_engine(database_url, **engine_options)
+        self.console_events = ConsoleEvents()
         self.project_id = str(uuid.UUID(project_id)) if project_id else None
         self._owns_engine = True
         self._configure_sessions()
@@ -95,12 +139,13 @@ class Database:
             self.engine,
             expire_on_commit=False,
             sync_session_class=ScopedSession,
-            info={"project_id": self.project_id},
+            info={"project_id": self.project_id, "console_events": self.console_events},
         )
 
     def for_project(self, project_id: str) -> Database:
         scoped = object.__new__(Database)
         scoped.engine = self.engine
+        scoped.console_events = self.console_events
         scoped.project_id = str(uuid.UUID(project_id))
         scoped._owns_engine = False
         scoped._configure_sessions()

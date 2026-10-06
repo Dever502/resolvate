@@ -22,6 +22,8 @@ server {
     location / {
         proxy_pass http://127.0.0.1:8080;
         proxy_http_version 1.1;
+        # SSE replies also send X-Accel-Buffering: no; do not override that header.
+        # Heartbeats arrive every 10 seconds, below the read timeout.
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         # This is the public trust boundary: discard any client-supplied chain.

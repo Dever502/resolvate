@@ -35,6 +35,7 @@ function setup() {
     imageViewer: {close() {}}, saveDraft() {}, draft: () => ({text: ''}),
     renderTicketFolder() {}, renderFile() {}, resizeComposer() {},
     resetFolders() {}, renderProjectLogo() {}, closePassword() {}, notice() {},
+    startEvents() {}, stopEvents() {},
     fail: error => errors.push(error),
     known: map => Object.fromEntries([...map].map(([id, item]) => [id, item.revision])),
     renderDetail: detail => { $('customer-name').textContent = detail.display_name || 'Клиент'; },

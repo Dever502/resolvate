@@ -30,7 +30,7 @@ from resolvate.services import TicketService
 logger = logging.getLogger(__name__)
 UUID_PATTERN = r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
 CONSOLE_PATH = re.compile(
-    rf"^/console/projects/({UUID_PATTERN})/((?:folders|tickets|media|retry)(?:/.*)?|replies)$"
+    rf"^/console/projects/({UUID_PATTERN})/((?:folders|tickets|media|retry)(?:/.*)?|replies|events)$"
 )
 API_PATH = re.compile(
     rf"^/projects/({UUID_PATTERN})(/(?:api/v1(?:/.*)?|health|ready|metrics|docs|openapi\.json))$"

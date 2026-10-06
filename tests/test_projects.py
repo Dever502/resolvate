@@ -20,6 +20,7 @@ from resolvate.authorization import AuthorizationService
 from resolvate.config import Settings
 from resolvate.console_admin import recover
 from resolvate.console_auth import ConsoleAuth
+from resolvate.console_events import ConsoleEvents
 from resolvate.console_folders import ConsoleFolders
 from resolvate.database import Database
 from resolvate.installation import (
@@ -460,7 +461,19 @@ async def test_installation_http_does_not_grant_owner_conversations(installation
         assert (await client.get(f"/console/projects/{first.id}/settings")).status_code == 403
 
 
-async def test_cross_project_http_and_api_tokens(installation: Any, tmp_path: Path) -> None:
+async def test_cross_project_http_and_api_tokens(
+    installation: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = ConsoleEvents.stream
+
+    async def finite(self: ConsoleEvents, item: Any, authorize: Any) -> AsyncIterator[str]:
+        stream = original(self, item, authorize)
+        try:
+            yield await anext(stream)
+        finally:
+            await stream.aclose()
+
+    monkeypatch.setattr(ConsoleEvents, "stream", finite)
     database, settings, _, owner, alice, bob, first, second, service = installation
     manager = ProjectManager(database, settings)
     tokens = {first.id: "a" * 40, second.id: "b" * 40}
@@ -498,6 +511,8 @@ async def test_cross_project_http_and_api_tokens(installation: Any, tmp_path: Pa
             )
             client.headers["X-CSRF-Token"] = response.json()["csrf"]
             own = f"/console/projects/{first.id}"
+            assert (await client.get(f"{own}/events")).status_code == 200
+            assert (await client.get(f"/console/projects/{second.id}/events")).status_code == 403
             other = f"/console/projects/{second.id}"
             assert (await client.get(f"{own}/tickets/{ticket_ids[first.id]}")).status_code == 200
             own_folders = await client.get(f"{own}/folders")
@@ -579,11 +594,19 @@ async def test_cross_project_http_and_api_tokens(installation: Any, tmp_path: Pa
                     media = await session.scalar(select(MediaAsset))
                     media_ids[project.id] = media.id
                 assert (await client.get(f"{prefix}/media/{media.id}")).status_code == 200
+                assert (await client.get(f"{prefix}/media/{media.id}/thumbnail")).status_code == 200
             # Even an operator of both projects must use the correct project context.
             assert (await client.get(f"{own}/media/{media_ids[second.id]}")).status_code == 410
             assert (await client.get(f"{other}/media/{media_ids[first.id]}")).status_code == 410
+            assert (
+                await client.get(f"{own}/media/{media_ids[second.id]}/thumbnail")
+            ).status_code == 410
+            assert (
+                await client.get(f"{other}/media/{media_ids[first.id]}/thumbnail")
+            ).status_code == 410
             await service.change_member(bob, second.id, "alice", remove=True)
             assert (await client.get(f"{other}/tickets/{ticket_ids[second.id]}")).status_code == 403
+            assert (await client.get(f"{other}/events")).status_code == 403
     finally:
         for runtime in manager.runtimes.values():
             runtime.stop.set()

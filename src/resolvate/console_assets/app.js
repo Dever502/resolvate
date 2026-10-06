@@ -237,6 +237,7 @@ function timeLabel(value) {
     : date.toLocaleDateString("ru", { day: "numeric", month: "short" });
 }
 function showLogin() {
+  stopEvents();
   resetChatCache();
   state.epoch++;
   state.account = null;
@@ -897,11 +898,12 @@ function renderMessage(item) {
       bubble.append(sticker);
     } else if (item.mime?.startsWith("image/")) {
       const image = node("img");
-      image.src = url;
+      image.src = `${url}/thumbnail`;
       image.alt = "Фото из переписки";
       image.loading = "lazy";
       image.onerror = () => {
-        image.replaceWith(node("span", "muted", "Фото больше не доступно"));
+        // Keep the original available on click even if thumbnail generation failed.
+        image.replaceWith(node("span", "muted", "Открыть изображение"));
       };
       const open = node("button", "image-preview");
       open.type = "button";
@@ -1363,6 +1365,7 @@ $("account-form").onsubmit = async (event) => {
 };
 function selectProject(id) {
   if (state.sending) return;
+  stopEvents();
   resetChatCache();
   imageViewer.close();
   state.epoch++;
@@ -1401,6 +1404,7 @@ function selectProject(id) {
   $("project-select").value = id || "";
   renderProjectLogo();
   notice();
+  startEvents();
 }
 function logoSource(project) {
   return `/console/projects/${encodeURIComponent(project.id)}/logo?v=${encodeURIComponent(project.logo)}`;
@@ -1746,7 +1750,74 @@ $("owner-transfer-form").onsubmit = async (event) => {
   finally { event.submitter.disabled = false; }
 };
 
+let eventSource = null;
+let eventsReady = false;
+let eventsRetryAt = 0;
+let pollTimer = null;
+let refreshRequested = false;
+let lastRefresh = 0;
+
+function stopEvents() {
+  eventSource?.close();
+  eventSource = null;
+  eventsReady = false;
+  eventsRetryAt = 0;
+  refreshRequested = false;
+}
+function schedulePoll(delay) {
+  clearTimeout(pollTimer);
+  pollTimer = setTimeout(poll, delay);
+}
+function requestRefresh() {
+  refreshRequested = true;
+  // Coalesce bursts and bound API traffic; a signal during refresh is not lost.
+  schedulePoll(Math.max(100, lastRefresh + 1500 - Date.now()));
+}
+function startEvents() {
+  if (eventSource || Date.now() < eventsRetryAt || !state.account || !state.project || document.hidden || !window.EventSource) return;
+  const project = state.project, account = state.account;
+  const source = new EventSource(`/console/projects/${encodeURIComponent(project)}/events`);
+  eventSource = source;
+  const current = () => eventSource === source && state.project === project && state.account === account;
+  source.addEventListener("ready", () => {
+    if (!current()) return;
+    eventsReady = true;
+    requestRefresh(); // Includes changes missed during disconnect/reconnect.
+  });
+  source.addEventListener("change", () => { if (current()) requestRefresh(); });
+  source.addEventListener("revoked", event => {
+    if (!current()) return;
+    const status = JSON.parse(event.data).status;
+    stopEvents();
+    if (status === 401) showLogin();
+    else {
+      selectProject(null);
+      refreshProjects(false).catch(fail);
+      notice("Доступ к проекту изменился. Выберите доступный проект.");
+    }
+  });
+  source.onerror = () => {
+    if (!current()) return;
+    eventsReady = false;
+    if (source.readyState === EventSource.CLOSED) {
+      source.close();
+      eventSource = null;
+      eventsRetryAt = Date.now() + 10000;
+    }
+    requestRefresh(); // Native reconnection plus polling while SSE is unavailable.
+  };
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) stopEvents();
+  else { startEvents(); requestRefresh(); }
+});
+window.addEventListener("pagehide", stopEvents);
+window.addEventListener("pageshow", () => { startEvents(); requestRefresh(); });
+
 async function poll() {
+  clearTimeout(pollTimer);
+  pollTimer = null;
+  startEvents();
   if (
     state.account &&
     !document.hidden &&
@@ -1755,6 +1826,8 @@ async function poll() {
     !state.sending &&
     !state.loadingOlder
   ) {
+    refreshRequested = false;
+    lastRefresh = Date.now();
     const epoch = state.epoch;
     state.syncing = true;
     try {
@@ -1769,7 +1842,7 @@ async function poll() {
       state.syncing = false;
     }
   }
-  setTimeout(poll, 3000);
+  schedulePoll(refreshRequested ? 500 : eventsReady ? 30000 : 3000);
 }
 api("me")
   .then(enter)

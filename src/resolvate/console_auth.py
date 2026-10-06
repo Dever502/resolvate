@@ -75,7 +75,8 @@ class ConsoleAuth:
         if request.headers.get("origin") != self.origin:
             raise HTTPException(403, "Запрос должен поступать из панели.")
 
-    async def require(self, request: Request) -> ConsoleAccount:
+    async def session_account(self, request: Request) -> ConsoleAccount:
+        """Recheck credentials for a live stream without counting it as another HTTP request."""
         token = request.cookies.get(COOKIE, "")
         if not 32 <= len(token) <= 128:
             raise HTTPException(401, "Войдите в панель.")
@@ -91,6 +92,11 @@ class ConsoleAuth:
             )
         if account is None:
             raise HTTPException(401, "Сессия завершена. Войдите снова.")
+        return account
+
+    async def require(self, request: Request) -> ConsoleAccount:
+        account = await self.session_account(request)
+        token = request.cookies.get(COOKIE, "")
         allowed, retry = await self.request_limiter.consume(account.id)
         if not allowed:
             raise HTTPException(429, "Слишком много запросов.", headers={"Retry-After": str(retry)})

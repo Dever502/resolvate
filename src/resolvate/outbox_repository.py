@@ -339,6 +339,7 @@ class OutboxRepository:
                     DeliveryOutbox.claim_token == claim_token,
                 )
                 .values(**values)
+                .execution_options(console_change=True)
             )
             await session.commit()
             return cast(CursorResult[object], result).rowcount == 1
@@ -376,6 +377,7 @@ class OutboxRepository:
             terminal = await session.execute(
                 update(DeliveryOutbox)
                 .where(*ownership, DeliveryOutbox.attempt_count >= max_attempts)
+                .execution_options(console_change=True)
                 .values(
                     status=DeliveryStatus.FAILED,
                     next_attempt_at=utcnow() + timedelta(seconds=retry_after_seconds),
@@ -420,6 +422,7 @@ class OutboxRepository:
                     claimed_at=None,
                     claim_token=None,
                 )
+                .execution_options(console_change=True)
             )
             await session.commit()
             return cast(CursorResult[object], result).rowcount
