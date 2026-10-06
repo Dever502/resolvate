@@ -187,6 +187,17 @@ def test_folder_tabs_are_above_ticket_list_inside_sidebar() -> None:
     assert 'id="folder-tabs"' not in column
 
 
+def test_unfiled_is_only_an_assignment_option_not_a_folder_tab() -> None:
+    script = ASSETS.joinpath("app.js").read_text(encoding="utf-8")
+    tabs = script.split("function renderFolderTabs()", 1)[1].split(
+        '$("folder-tabs").addEventListener', 1
+    )[0]
+    assert '[["", "Все"], ...state.folders.map' in tabs
+    assert "Без папки" not in tabs and "unfiled" not in tabs
+    assert '[["", "Без папки"], ...state.folders.map' in script
+    assert 'folderFilter === "unfiled"' not in script
+
+
 def test_archive_action_is_in_heading_without_bottom_status_tabs(template: ConsoleTemplate) -> None:
     source = ASSETS.joinpath("index.html").read_text(encoding="utf-8")
     assert 'id="active-tab"' not in source

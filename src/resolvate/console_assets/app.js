@@ -410,7 +410,7 @@ function renderFolderTabs() {
   const focused = list.contains(document.activeElement) ? document.activeElement : null;
   const previousSelection = list.querySelector('[aria-selected="true"]')?.dataset.folder;
   const existing = new Map([...list.children].map(button => [button.dataset.folder, button]));
-  const entries = [["", "Все"], ["unfiled", "Без папки"], ...state.folders.map(f => [f.id, f.name])];
+  const entries = [["", "Все"], ...state.folders.map(f => [f.id, f.name])];
   const retainFocus = focused && entries.some(([id]) => id === focused.dataset.folder);
   let previous = null, selected;
   for (const [id, name] of entries) {
@@ -531,7 +531,7 @@ async function refreshFolders() {
   if (project !== state.project || request !== state.folderRequest) return;
   const changed = JSON.stringify(folders) !== JSON.stringify(state.folders);
   state.folders = folders;
-  if (state.folderFilter && state.folderFilter !== "unfiled" && !folders.some(f => f.id === state.folderFilter)) {
+  if (state.folderFilter && !folders.some(f => f.id === state.folderFilter)) {
     state.folderFilter = "";
     state.pages = 1;
     notice("Папка удалена другим оператором. Показаны все диалоги.");
@@ -643,8 +643,7 @@ async function syncTickets() {
         query,
         archived,
         offset: page * 50,
-        folder_id: folderFilter && folderFilter !== "unfiled" ? folderFilter : null,
-        unfiled: folderFilter === "unfiled",
+        folder_id: folderFilter || null,
       },
     });
     if (
