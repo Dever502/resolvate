@@ -184,6 +184,11 @@ label input, label select, .identity-form input {
   background: var(--surface);
   color: var(--text);
 }
+.member-picker { position: relative; }
+.member-picker > input:not([type="hidden"]) { width: 100%; padding: .625rem; border: 1px solid var(--field-border); border-radius: var(--radius); background: var(--surface); color: var(--text); }
+.member-options { position: absolute; z-index: 5; left: 0; right: 0; max-height: 240px; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 6px 18px #0002; }
+.member-option { display: flex; flex-direction: column; gap: .125rem; width: 100%; text-align: left; padding: .625rem .75rem; border: 0; border-radius: 0; background: transparent; color: var(--text); overflow-wrap: anywhere; }
+.member-option:hover, .member-option[aria-selected="true"] { background: var(--hover); }
 input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1; }
 input[type="file"] { padding: .5rem; font-size: .8125rem; }
 input::file-selector-button {

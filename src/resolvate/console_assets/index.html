@@ -342,7 +342,15 @@
         <section id="members-section">
           <div id="member-list"></div>
           <form id="member-form">
-            <label>Добавить оператора по логину<input name="login" required minlength="3" maxlength="64" /></label>
+            <div id="member-picker" class="member-picker">
+              <label for="member-search">Добавить оператора</label>
+              <input id="member-search" type="text" role="combobox" aria-autocomplete="list"
+                aria-expanded="false" aria-controls="member-options" aria-describedby="member-search-status"
+                autocomplete="off" maxlength="100" placeholder="Найти по имени или логину" required />
+              <input id="member-login" type="hidden" name="login" hidden />
+              <div id="member-options" class="member-options" role="listbox" aria-label="Сотрудники" hidden></div>
+              <p id="member-search-status" class="muted small" role="status"></p>
+            </div>
             <button class="primary">Выдать доступ</button>
           </form>
           <details id="project-admin-section" class="disclosure transfer-disclosure" hidden>

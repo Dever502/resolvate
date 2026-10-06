@@ -8,7 +8,9 @@ from pathlib import Path
 import pytest
 
 
-@pytest.mark.parametrize("script", ["console_navigation.cjs", "console_live.cjs"])
+@pytest.mark.parametrize(
+    "script", ["console_navigation.cjs", "console_live.cjs", "console_members.cjs"]
+)
 def test_console_navigation_behaviour(script: str) -> None:
     node = shutil.which("node")
     if node is None:
