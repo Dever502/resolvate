@@ -44,7 +44,17 @@ def animation() -> dict[str, Any]:
 
 
 def packed(value: Any) -> bytes:
-    return gzip.compress(json.dumps(value).encode())
+    return gzip.compress(json.dumps(value).encode(), mtime=0)
+
+
+def test_packed_animation_is_independent_of_wall_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("gzip.time.time", lambda: 1_700_000_000)
+    first = packed(animation())
+    monkeypatch.setattr("gzip.time.time", lambda: 1_700_000_001)
+    second = packed(animation())
+    assert first == second
+    assert first[4:8] == b"\0" * 4  # Gzip MTIME must not depend on worker startup time.
+    assert json.loads(gzip.decompress(first)) == animation()
 
 
 def picture() -> bytes:
@@ -127,8 +137,16 @@ def test_tgs_rejects_unsafe_or_expensive_features(changes: dict[str, Any]) -> No
         packed(animation())[:-2],
         packed(animation()) + b"PK\x03\x04",
         packed(animation()) * 2,
-        gzip.compress(b" " * (2 * 1024 * 1024 + 1)),
+        gzip.compress(b" " * (2 * 1024 * 1024 + 1), mtime=0),
         packed([]),
+    ],
+    ids=[
+        "not-gzip",
+        "truncated",
+        "appended-data",
+        "concatenated",
+        "expansion-bomb",
+        "invalid-root",
     ],
 )
 def test_tgs_rejects_truncated_appended_and_expansion_bombs(data: bytes) -> None:
@@ -142,6 +160,7 @@ def test_tgs_rejects_truncated_appended_and_expansion_bombs(data: bytes) -> None
         ("static", picture(), "image/webp"),
         ("animated", packed(animation()), TGS_MIME),
     ],
+    ids=["static", "animated"],
 )
 async def test_real_sticker_storage_and_upload_boundary(
     tmp_path: Path, kind: str, data: bytes, mime: str
