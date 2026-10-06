@@ -279,6 +279,10 @@ class ConsoleService:
                     ),
                     "media_id": media.get("media_id"),
                     "mime": media.get("mime_type"),
+                    "sticker": media.get("telegram_content_type") == "sticker",
+                    "sticker_emoji": media.get("emoji")
+                    if media.get("telegram_content_type") == "sticker"
+                    else None,
                     "attachment": bool(media.get("media_id") or media.get("file_id")),
                     "failed": failed,
                     "uncertain": uncertain,

@@ -11,7 +11,7 @@ ALLOWED_FILE_SUFFIXES = {".pdf", ".jpg", ".jpeg", ".png", ".webp", ".mp4", ".mov
 
 
 def forbidden_attachment(kind: str, filename: str | None) -> bool:
-    return kind not in {"photo", "video", "document", "voice"} or (
+    return kind not in {"photo", "video", "document", "voice", "sticker"} or (
         kind == "document"
         and (not filename or Path(filename).suffix.lower() not in ALLOWED_FILE_SUFFIXES)
     )
@@ -36,7 +36,7 @@ def unavailable_media() -> ColumnElement[bool]:
     policy_skip = and_(
         TranscriptMedia.state == SKIPPED_POLICY,
         or_(
-            TranscriptMedia.kind.not_in(("photo", "video", "document", "voice")),
+            TranscriptMedia.kind.not_in(("photo", "video", "document", "voice", "sticker")),
             and_(
                 TranscriptMedia.kind == "document",
                 or_(

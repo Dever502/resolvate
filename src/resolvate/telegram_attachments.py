@@ -16,12 +16,13 @@ from resolvate.media_storage import (
 )
 from resolvate.models import Direction, Ticket, TicketMessage, TranscriptMedia
 from resolvate.rotation_gate import lock_rotation_gate
+from resolvate.sticker_inspect import STICKER_LIMITS
 from resolvate.telegram_message_utils import media_metadata, message_text, reply_presentation
 from resolvate.web_models import MediaAsset
 
 UNSUPPORTED_ATTACHMENT = (
     "⚠️ Этот тип файла не поддерживается. "
-    "Отправьте фото, видео, PDF или голосовое OGG/Opus до 20 МБ."
+    "Отправьте фото, видео, PDF, голосовое OGG/Opus до 20 МБ или стикер Telegram."
 )
 
 
@@ -30,6 +31,23 @@ async def save_attachment(
 ) -> StoredMedia | None:
     if message.content_type == "text":
         return None
+    if message.sticker is not None:
+        sticker = message.sticker
+        kind = "animated" if sticker.is_animated else "video" if sticker.is_video else "static"
+        if sticker.file_size is None or not 0 < sticker.file_size <= STICKER_LIMITS[kind]:
+            raise MediaValidationError("⚠️ Стикер слишком большой или его размер неизвестен.")
+        try:
+            return await storage.save_telegram_file(
+                bot,
+                file_id=sticker.file_id,
+                declared_mime=None,
+                filename=None,
+                sticker_kind=kind,
+            )
+        except MediaValidationError as error:
+            raise MediaValidationError(
+                "⚠️ Стикер не прошёл проверку. Отправьте другой стикер."
+            ) from error
     attachment = (
         message.photo[-1]
         if message.photo

@@ -30,6 +30,30 @@ def topic_deliveries(
     remaining = content or ""
     jobs: list[DeliveryOutbox] = []
     now = utcnow()
+    if payload.get("kind") == "send_sticker":
+        # Stickers cannot carry captions: preserve the author as an ordered header.
+        headers = topic_deliveries(
+            ticket_id=ticket_id,
+            key=key,
+            payload={**payload, "kind": "send_text"},
+            content=None,
+            author=author,
+            operator=operator,
+        )
+        sticker_payload = dict(payload)
+        sticker_payload.pop("prepare_reopened_context", None)
+        return [
+            *headers,
+            DeliveryOutbox(
+                id=str(uuid.uuid4()),
+                ticket_id=ticket_id,
+                direction=Direction.USER_TO_OPERATOR,
+                idempotency_key=f"{key}:sticker",
+                payload=sticker_payload,
+                status=headers[0].status,
+                created_at=headers[-1].created_at + timedelta(microseconds=1),
+            ),
+        ]
     while remaining or not jobs:
         part_payload = dict(payload)
         if jobs:

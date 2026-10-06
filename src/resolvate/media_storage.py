@@ -30,6 +30,8 @@ MIME_EXTENSIONS = {
     "video/mp4": ".mp4",
     "video/quicktime": ".mov",
     "audio/ogg": ".ogg",
+    "video/webm": ".webm",
+    "application/x-tgsticker": ".tgs",
 }
 PILLOW_FORMAT_MIME_TYPES = {
     "JPEG": "image/jpeg",
@@ -178,6 +180,7 @@ class LocalMediaStorage:
         declared_mime: str | None,
         original_filename: str | None,
         inspection: tuple[int, bytes, str] | None = None,
+        sticker_kind: str | None = None,
     ) -> StoredMedia:
         size, header, sha256 = self._inspect(temp_path) if inspection is None else inspection
         if size == 0:
@@ -188,7 +191,8 @@ class LocalMediaStorage:
             raise MediaValidationError("⚠️ Файл больше 20 МБ. Отправьте файл меньшего размера.")
         try:
             result = subprocess.run(
-                [sys.executable, "-m", "resolvate.media_inspect", str(temp_path)],
+                [sys.executable, "-m", "resolvate.media_inspect", str(temp_path)]
+                + ([sticker_kind] if sticker_kind else []),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
@@ -302,15 +306,23 @@ class LocalMediaStorage:
         file_id: str,
         declared_mime: str | None,
         filename: str | None,
+        sticker_kind: str | None = None,
     ) -> StoredMedia:
         async with self.validation_slots:
             if self.capacity is not None:
                 async with self.capacity.reserve(MAX_WEB_PHOTO_BYTES):
-                    return await self._download_file(bot, file_id, declared_mime, filename)
-            return await self._download_file(bot, file_id, declared_mime, filename)
+                    return await self._download_file(
+                        bot, file_id, declared_mime, filename, sticker_kind
+                    )
+            return await self._download_file(bot, file_id, declared_mime, filename, sticker_kind)
 
     async def _download_file(
-        self, bot: TelegramDownloader, file_id: str, declared_mime: str | None, filename: str | None
+        self,
+        bot: TelegramDownloader,
+        file_id: str,
+        declared_mime: str | None,
+        filename: str | None,
+        sticker_kind: str | None = None,
     ) -> StoredMedia:
         await asyncio.to_thread(self._prepare)
         media_id = str(uuid.uuid4())
@@ -325,6 +337,7 @@ class LocalMediaStorage:
                 media_id=media_id,
                 declared_mime=declared_mime,
                 original_filename=filename,
+                sticker_kind=sticker_kind,
             )
         finally:
             await asyncio.to_thread(temp_path.unlink, missing_ok=True)

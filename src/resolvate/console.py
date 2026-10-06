@@ -134,7 +134,15 @@ def create_console(
 
     @app.get("/assets/{name}")
     async def asset(name: str) -> FileResponse:
-        if name not in {"app.js", "app.css", "image_viewer.js", "theme.js"}:
+        if name not in {
+            "app.js",
+            "app.css",
+            "image_viewer.js",
+            "theme.js",
+            "stickers.js",
+            "lottie_light_canvas.js",
+            "lottie_license.txt",
+        }:
             raise HTTPException(404)
         return FileResponse(ASSETS / name)
 
@@ -368,9 +376,18 @@ def create_console(
             raise HTTPException(410, "Вложение больше не хранится.")
         return FileResponse(
             path,
-            media_type=media.mime_type,
+            media_type="application/json"
+            if media.mime_type == "application/x-tgsticker"
+            else media.mime_type,
             filename="attachment.pdf" if media.mime_type == "application/pdf" else None,
-            headers={"X-Content-Type-Options": "nosniff"},
+            headers={
+                "X-Content-Type-Options": "nosniff",
+                **(
+                    {"Content-Encoding": "gzip"}
+                    if media.mime_type == "application/x-tgsticker"
+                    else {}
+                ),
+            },
         )
 
     return app

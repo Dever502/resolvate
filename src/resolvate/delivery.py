@@ -324,6 +324,16 @@ class DeliveryWorker:
                     reply_markup=reply_markup,
                 )
                 delivered_message_id = sent_message.message_id
+            elif payload.get("kind") == "send_sticker":
+                file_id = payload.get("file_id")
+                if not isinstance(file_id, str) or not file_id:
+                    raise ValueError("sticker delivery requires a Telegram file ID")
+                sent_message = await self.bot.send_sticker(
+                    chat_id=_payload_int(payload, "target_chat_id"),
+                    sticker=file_id,
+                    message_thread_id=target_thread_id,
+                )
+                delivered_message_id = sent_message.message_id
             elif payload.get("kind") in {"send_photo", "send_video", "send_document", "send_voice"}:
                 storage_path = payload.get("storage_path")
                 if not isinstance(storage_path, str):

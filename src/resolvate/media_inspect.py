@@ -89,7 +89,12 @@ def main() -> None:
     resource.setrlimit(resource.RLIMIT_CPU, (15, 15))
     resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
     try:
-        print(inspect(Path(sys.argv[1])))
+        if len(sys.argv) == 3:
+            from resolvate.sticker_inspect import inspect_sticker
+
+            print(inspect_sticker(Path(sys.argv[1]), sys.argv[2]))
+        else:
+            print(inspect(Path(sys.argv[1])))
     except Exception:
         sys.exit(1)
 

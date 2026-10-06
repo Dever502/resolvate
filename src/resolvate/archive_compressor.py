@@ -49,6 +49,8 @@ def probe(path: Path, *, format_whitelist: str = "mov") -> dict[str, Any]:
         if format_whitelist == "ogg"
         else "codec_type,width,height"
     )
+    if format_whitelist == "matroska,webm":
+        stream_fields = "codec_type,codec_name,width,height,avg_frame_rate"
     result = subprocess.run(
         [
             "ffprobe",

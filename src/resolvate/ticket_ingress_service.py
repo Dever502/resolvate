@@ -220,6 +220,9 @@ class TicketIngressService(TicketServiceBase):
                 )
                 if stored_media:
                     delivery_payload["storage_path"] = stored_media.storage_path
+                if media and media.get("telegram_content_type") == "sticker":
+                    delivery_payload["kind"] = "send_sticker"
+                    delivery_payload["file_id"] = media["file_id"]
                 session.add_all(
                     topic_deliveries(
                         ticket_id=ticket.id,

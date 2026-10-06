@@ -95,7 +95,7 @@ def operator_reply_snapshot(message: TicketMessage) -> dict[str, object]:
         if not message.content:
             raise ValueError("Accepted operator reply has no text")
         snapshot.update(text=message.content, entities=entities)
-    elif kind in {"photo", "video", "document", "voice"}:
+    elif kind in {"photo", "video", "document", "voice", "sticker"}:
         if not metadata.get("file_id"):
             raise ValueError("Accepted operator reply has no Telegram file")
         attachment = {
@@ -109,10 +109,15 @@ def operator_reply_snapshot(message: TicketMessage) -> dict[str, object]:
                 "width",
                 "height",
                 "duration",
+                "is_animated",
+                "is_video",
+                "emoji",
             )
             if field in metadata
         }
         snapshot[kind] = [attachment] if kind == "photo" else attachment
+        if kind == "sticker":
+            attachment["type"] = "regular"
         snapshot.update(
             caption=message.content,
             caption_entities=entities,

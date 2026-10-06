@@ -811,7 +811,15 @@ function renderMessage(item) {
   const bubble = node("div", "bubble");
   if (item.media_id) {
     const url = `/console/projects/${state.project}/media/${encodeURIComponent(item.media_id)}`;
-    if (item.mime?.startsWith("image/")) {
+    if (item.sticker) {
+      element.classList.add("sticker-message");
+      const sticker = document.createElement("resolvate-sticker");
+      Object.assign(sticker, {
+        src: url, mime: item.mime || "", emoji: item.sticker_emoji || "",
+        openImage: (source) => imageViewer.open(source),
+      });
+      bubble.append(sticker);
+    } else if (item.mime?.startsWith("image/")) {
       const image = node("img");
       image.src = url;
       image.alt = "Фото из переписки";
