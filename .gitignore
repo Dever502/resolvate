@@ -12,3 +12,10 @@ data/
 *.db
 *.db-shm
 *.db-wal
+frontend/node_modules/
+src/resolvate/console_next/
+*.tsbuildinfo
+test-results/
+playwright-report/
+blob-report/
+coverage/

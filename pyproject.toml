@@ -30,6 +30,10 @@ dependencies = [
 [project.scripts]
 resolvate = "resolvate.__main__:main"
 
+[tool.hatch.build]
+# The Vue console build is gitignored but must ship in every wheel and sdist.
+artifacts = ["src/resolvate/console_next/**"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/resolvate"]
 

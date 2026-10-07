@@ -1,4 +1,5 @@
 import logging
+import re
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict
@@ -7,7 +8,7 @@ from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field, SecretStr
 from sqlalchemy import delete, select
 from starlette.background import BackgroundTask
@@ -31,6 +32,29 @@ from resolvate.web_models import MediaAsset
 
 logger = logging.getLogger(__name__)
 ASSETS = Path(__file__).with_name("console_assets")
+# Build of the Vue console (frontend/), served at /console/next/ while it replaces the classic one.
+NEXT_ASSETS = Path(__file__).with_name("console_next")
+NEXT_IMMUTABLE = "public, max-age=31536000, immutable"
+_NEXT_ASSET = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9_.-]*\.(js|css)")
+_NEXT_MEDIA_TYPES = {"js": "text/javascript; charset=utf-8", "css": "text/css; charset=utf-8"}
+_NEXT_ENCODINGS = (("br", ".br"), ("gzip", ".gz"))
+
+
+def _accepted_encodings(header: str) -> set[str]:
+    accepted = set()
+    for part in header.split(","):
+        coding, _, parameters = part.partition(";")
+        quality = 1.0
+        for parameter in parameters.split(";"):
+            key, _, value = parameter.partition("=")
+            if key.strip().lower() == "q":
+                try:
+                    quality = float(value)
+                except ValueError:
+                    quality = 0.0
+        if coding.strip() and quality > 0:
+            accepted.add(coding.strip().lower())
+    return accepted
 
 
 class Login(BaseModel):
@@ -82,6 +106,7 @@ def create_console(
     settings: Settings,
     storage: LocalMediaStorage,
     client_key: Callable[[Request], str],
+    next_assets: Path = NEXT_ASSETS,
 ) -> FastAPI:
     assert settings.console_origin is not None
     auth = ConsoleAuth(database, settings.console_origin)
@@ -111,9 +136,17 @@ def create_console(
         except (ValueError, HTTPException) as error:
             code = error.status_code if isinstance(error, HTTPException) else 400
             response = JSONResponse({"detail": "Неверный размер запроса."}, status_code=code)
+        # Only the hashed files of the Vue console may be cached; everything else stays no-store.
+        cache = "no-store"
+        if (
+            response.status_code == 200
+            and "/next/assets/" in request.url.path
+            and response.headers.get("cache-control") == NEXT_IMMUTABLE
+        ):
+            cache = NEXT_IMMUTABLE
         response.headers.update(
             {
-                "Cache-Control": "no-store",
+                "Cache-Control": cache,
                 "X-Content-Type-Options": "nosniff",
                 "Referrer-Policy": "no-referrer",
                 "X-Frame-Options": "DENY",
@@ -150,6 +183,40 @@ def create_console(
         }:
             raise HTTPException(404)
         return FileResponse(ASSETS / name)
+
+    if settings.console_next_enabled:
+
+        @app.get("/next")
+        async def next_without_slash(request: Request) -> RedirectResponse:
+            # Relative, so it stays correct behind a TLS proxy; the build uses relative URLs.
+            query = request.url.query
+            return RedirectResponse("next/" + (f"?{query}" if query else ""), status_code=307)
+
+        @app.get("/next/")
+        async def next_index() -> FileResponse:
+            index = next_assets / "index.html"
+            if not index.is_file():
+                raise HTTPException(404)
+            return FileResponse(index, media_type="text/html")
+
+        @app.get("/next/assets/{name}")
+        async def next_asset(name: str, request: Request) -> FileResponse:
+            match = _NEXT_ASSET.fullmatch(name)
+            path = next_assets / "assets" / name
+            if match is None or not path.is_file():
+                raise HTTPException(404)
+            media_type = _NEXT_MEDIA_TYPES[match.group(1)]
+            headers = {"Cache-Control": NEXT_IMMUTABLE, "Vary": "Accept-Encoding"}
+            accepted = _accepted_encodings(request.headers.get("accept-encoding", ""))
+            for coding, suffix in _NEXT_ENCODINGS:
+                compressed = path.with_name(name + suffix)
+                if coding in accepted and compressed.is_file():
+                    return FileResponse(
+                        compressed,
+                        media_type=media_type,
+                        headers={**headers, "Content-Encoding": coding},
+                    )
+            return FileResponse(path, media_type=media_type, headers=headers)
 
     @app.post("/login")
     async def login(request: Request, payload: Login, response: Response) -> dict[str, object]:
