@@ -239,6 +239,19 @@ def test_runtime_and_postgres_images_are_digest_pinned() -> None:
         )
 
 
+def test_vue_console_build_is_packaged_and_legacy_frontend_is_removed() -> None:
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    package = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert (
+        "COPY --from=frontend /build/src/resolvate/console_dist ./src/resolvate/console_dist"
+        in dockerfile
+    )
+    assert "site-packages/resolvate/console_dist/index.html" in dockerfile
+    assert 'artifacts = ["src/resolvate/console_dist/**"]' in package
+    assert not (ROOT / "src/resolvate/console_assets/index.html").exists()
+    assert not (ROOT / "src/resolvate/console_assets/app.js").exists()
+
+
 def test_image_security_floors_apply_to_builder_and_runtime() -> None:
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     builder, runtime = dockerfile.split(" AS builder", maxsplit=1)[1].split(

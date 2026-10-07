@@ -1,5 +1,5 @@
 /* Resolvate: graphite type, cool neutral surfaces and an ink-blue action color.
-   Tokens and shared controls are carried over from console_assets/app.css; layout lives in
+   Tokens and shared controls live here; layout lives in
    component templates as Tailwind utilities. No inline styles: the console CSP blocks them. */
 @import "tailwindcss";
 

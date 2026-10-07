@@ -3,7 +3,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const OUT = fileURLToPath(new URL("../../src/resolvate/console_next/", import.meta.url));
+const OUT = fileURLToPath(new URL("../../src/resolvate/console_dist/", import.meta.url));
 const problems = [];
 const html = readFileSync(`${OUT}index.html`, "utf8");
 

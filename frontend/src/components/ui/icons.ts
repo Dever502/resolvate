@@ -1,5 +1,5 @@
 // Local outline icons (24×24, stroked with currentColor). No icon fonts or remote assets.
-// The classic console set (console_assets/app.js) plus the three theme states.
+// Local console icons, including the three theme states.
 export const iconPaths = {
   resolve: "M6 20V5h6a5 5 0 0 1 0 10H6m6 0 6 5",
   search: "M10.5 17a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13Zm5-1 5 5",

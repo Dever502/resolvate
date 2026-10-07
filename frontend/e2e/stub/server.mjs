@@ -1,12 +1,12 @@
 // Stub of the console backend for browser tests: serves the production build the way
-// src/resolvate/console.py does (same headers — kept equal by tests/test_console_next.py)
+// src/resolvate/console.py does (same headers — kept equal by tests/test_console_dist.py)
 // and fakes the API calls each scenario needs. Control endpoints live under /__stub/.
 import { existsSync, readFileSync } from "node:fs";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
 
 const PORT = Number(process.env.STUB_PORT ?? 4173);
-const BUILD = fileURLToPath(new URL("../../../src/resolvate/console_next/", import.meta.url));
+const BUILD = fileURLToPath(new URL("../../../src/resolvate/console_dist/", import.meta.url));
 const HEADERS = JSON.parse(readFileSync(new URL("../headers.json", import.meta.url), "utf8"));
 const ASSET = /^[A-Za-z0-9_-][A-Za-z0-9_.-]*\.(js|css)$/;
 const TYPES = { js: "text/javascript; charset=utf-8", css: "text/css; charset=utf-8" };
@@ -89,12 +89,12 @@ http.createServer(async (request, response) => {
   }
   if (path === "/__stub/log") return json(response, 200, log);
 
-  if (path === "/console/next") return send(response, 307, { ...HEADERS.api, location: `next/${url.search}` });
-  if (path === "/console/next/") {
+  if (path === "/console") return send(response, 307, { ...HEADERS.api, location: `/console/${url.search}` });
+  if (path === "/console/") {
     if (!existsSync(`${BUILD}index.html`)) return json(response, 404, { detail: "Not Found" });
     return send(response, 200, { ...HEADERS.document, "content-type": "text/html; charset=utf-8" }, readFileSync(`${BUILD}index.html`));
   }
-  const asset = path.match(/^\/console\/next\/assets\/([^/]+)$/);
+  const asset = path.match(/^\/console\/assets\/([^/]+)$/);
   if (asset) {
     const name = asset[1];
     const kind = name.match(ASSET)?.[1];

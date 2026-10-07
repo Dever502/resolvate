@@ -98,9 +98,9 @@ def test_password_hashing() -> None:
 async def test_auth_boundaries(console: Any) -> None:
     client, database, _, auth, admin, _ = console
     assert (await client.get("/console/me")).status_code == 200
-    assert (await client.get("/console/")).status_code == 200
-    assert (await client.get("/console/assets/app.js")).status_code == 200
-    assert (await client.get("/console/assets/theme.js")).status_code == 200
+    # Static build delivery is covered separately; API tests need no Node build.
+    assert (await client.get("/console/assets/app.js")).status_code == 404
+    assert (await client.get("/console/assets/theme.js")).status_code == 404
     assert (await client.get("/console/assets/secret")).status_code == 404
     assert (await client.get("/api/v1/tickets")).status_code == 404
     for headers in ({"Origin": "https://foreign.example"}, {"X-CSRF-Token": "wrong"}):

@@ -66,7 +66,6 @@ POSTGRES_RUNTIME_PASSWORD=replace-with-random-password-3
 | Переменная | По умолчанию | Назначение |
 | --- | --- | --- |
 | `CONSOLE_ORIGIN` | обязательна | внешний origin панели, без пути |
-| `CONSOLE_NEXT_ENABLED` | `false` | предварительная версия новой панели по `/console/next/` |
 | `DATA_DIR` | `./data` | отдельные каталоги медиа и состояния проектов |
 | `DATABASE_URL` | обязательна вне Compose | PostgreSQL URL с драйвером `postgresql+asyncpg` |
 | `MIGRATION_DATABASE_URL` | `DATABASE_URL` | отдельный URL для миграций |

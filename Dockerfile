@@ -29,10 +29,10 @@ COPY pyproject.toml uv.lock README.md LICENSE ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY src ./src
-COPY --from=frontend /build/src/resolvate/console_next ./src/resolvate/console_next
+COPY --from=frontend /build/src/resolvate/console_dist ./src/resolvate/console_dist
 RUN uv sync --frozen --no-dev --no-editable && \
     /app/.venv/bin/python -c "import resolvate; assert resolvate.__version__ == '4.0.0'" && \
-    test -f /app/.venv/lib/python3.12/site-packages/resolvate/console_next/index.html
+    test -f /app/.venv/lib/python3.12/site-packages/resolvate/console_dist/index.html
 
 FROM python:3.12.13-alpine3.24@sha256:6d43704baacd1bfbe7c295d7f13079d5d8104ed33568873133f8fc69980419df AS runtime
 

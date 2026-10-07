@@ -13,7 +13,7 @@ data/
 *.db-shm
 *.db-wal
 frontend/node_modules/
-src/resolvate/console_next/
+src/resolvate/console_dist/
 *.tsbuildinfo
 test-results/
 playwright-report/
