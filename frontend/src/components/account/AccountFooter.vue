@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { initials } from "../lib/initials";
-import { useSessionStore } from "../stores/session";
+import { initials } from "../../lib/initials";
+import { useSessionStore } from "../../stores/session";
 import ThemeToggle from "./ThemeToggle.vue";
-import Icon from "./ui/Icon.vue";
+import Icon from "../ui/Icon.vue";
+import IconButton from "../ui/IconButton.vue";
 
 const emit = defineEmits<{ error: [message: string] }>();
 const session = useSessionStore();
@@ -14,6 +15,7 @@ const role = computed(() =>
 );
 
 async function logout(): Promise<void> {
+  if (busy.value) return;
   busy.value = true;
   try {
     await session.logout();
@@ -36,17 +38,16 @@ async function logout(): Promise<void> {
       <ThemeToggle />
     </div>
     <div class="mt-2.5 flex items-center gap-1">
-      <button
+      <!-- aria-disabled, not disabled: a disabled button drops keyboard focus while the request runs. -->
+      <IconButton
         id="logout"
         class="quiet ml-auto min-h-8 px-2 py-1.5 text-xs coarse:min-h-11 coarse:min-w-11"
-        type="button"
-        aria-label="Выйти"
-        title="Выйти"
-        :disabled="busy"
+        label="Выйти"
+        :aria-disabled="busy || undefined"
         @click="logout"
       >
         <Icon name="logout" class="size-4" />
-      </button>
+      </IconButton>
     </div>
   </footer>
 </template>

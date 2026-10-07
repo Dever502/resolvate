@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, GENERIC_ERROR, NO_PROJECT, request } from "./client";
+import { ApiError, GENERIC_ERROR, NO_PROJECT, OFFLINE, request } from "./client";
 
 function respond(status: number, body: unknown): Response {
   return new Response(typeof body === "string" ? body : JSON.stringify(body), { status });
@@ -39,6 +39,37 @@ describe("request", () => {
     await expect(request("projects", {}, context, () => undefined)).rejects.toMatchObject({ message: "Конфликт.", status: 409 });
     vi.stubGlobal("fetch", vi.fn(async () => respond(502, "<html>Bad Gateway</html>")));
     await expect(request("projects", {}, context, () => undefined)).rejects.toMatchObject({ message: GENERIC_ERROR, status: 502 });
+  });
+
+  it("reports a lost connection in the console's words, not the browser's", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new TypeError("Failed to fetch");
+    }));
+    await expect(request("logout", { method: "POST" }, context, () => undefined))
+      .rejects.toMatchObject({ name: "ApiError", message: OFFLINE, status: 0 });
+  });
+
+  it("treats a body that breaks off as a lost connection, not as an empty result", async () => {
+    const broken = new ReadableStream<Uint8Array>({
+      start(stream) {
+        stream.enqueue(new TextEncoder().encode('{"projects":'));
+        stream.error(new TypeError("network error"));
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(broken, { status: 200 })));
+    await expect(request("projects", {}, context, () => undefined))
+      .rejects.toMatchObject({ name: "ApiError", message: OFFLINE, status: 0 });
+  });
+
+  it("lets a request cancelled by its caller reject as cancelled", async () => {
+    const controller = new AbortController();
+    vi.stubGlobal("fetch", vi.fn(async (_path: string, init: RequestInit) => {
+      throw init.signal?.reason;
+    }));
+    controller.abort();
+    const cancelled = request("projects", { signal: controller.signal }, context, () => undefined);
+    await expect(cancelled).rejects.toBe(controller.signal.reason);
+    await expect(cancelled).rejects.not.toBeInstanceOf(ApiError);
   });
 
   it("reports 401 with the generation the request was sent in, except for login", async () => {
