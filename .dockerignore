@@ -17,3 +17,8 @@ __pycache__
 data
 docs
 tests
+frontend/node_modules
+src/resolvate/console_next
+frontend/test-results
+frontend/playwright-report
+frontend/blob-report

@@ -1,5 +1,14 @@
 FROM ghcr.io/astral-sh/uv:0.11.27@sha256:4d01caf3b22dfd11003455e2e68153da08c4ee1fa54fdbd166c6282d22693419 AS uv
 
+# The Vue operator console (frontend/); only its build output reaches the Python package.
+FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS frontend
+
+WORKDIR /build/frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci --ignore-scripts --no-audit --no-fund
+COPY frontend/ ./
+RUN npm run build
+
 FROM python:3.12.13-alpine3.24@sha256:6d43704baacd1bfbe7c295d7f13079d5d8104ed33568873133f8fc69980419df AS builder
 
 # Security floors for the pinned base; keep builder and runtime in sync.
@@ -20,8 +29,10 @@ COPY pyproject.toml uv.lock README.md LICENSE ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY src ./src
+COPY --from=frontend /build/src/resolvate/console_next ./src/resolvate/console_next
 RUN uv sync --frozen --no-dev --no-editable && \
-    /app/.venv/bin/python -c "import resolvate; assert resolvate.__version__ == '4.0.0'"
+    /app/.venv/bin/python -c "import resolvate; assert resolvate.__version__ == '4.0.0'" && \
+    test -f /app/.venv/lib/python3.12/site-packages/resolvate/console_next/index.html
 
 FROM python:3.12.13-alpine3.24@sha256:6d43704baacd1bfbe7c295d7f13079d5d8104ed33568873133f8fc69980419df AS runtime
 

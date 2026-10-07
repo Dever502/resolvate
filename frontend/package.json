@@ -1,0 +1,38 @@
+{
+  "name": "resolvate-console",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "description": "Operator console of Resolvate (Vue). Built into src/resolvate/console_next and served at /console/next/.",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && node scripts/check-build.mjs && node scripts/licenses.mjs",
+    "typecheck": "vue-tsc -b",
+    "test": "vitest run",
+    "e2e": "playwright test",
+    "check:lockfile": "node scripts/check-lockfile.mjs",
+    "check": "npm run check:lockfile && npm run typecheck && npm run test && npm run build"
+  },
+  "dependencies": {
+    "@vue/devtools-api": "8.2.1",
+    "pinia": "4.0.3",
+    "reka-ui": "2.11.0",
+    "vue": "3.5.43"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@tailwindcss/vite": "4.3.3",
+    "@types/node": "24.19.1",
+    "@vitejs/plugin-vue": "6.0.9",
+    "@vue/test-utils": "2.5.1",
+    "happy-dom": "20.14.5",
+    "tailwindcss": "4.3.3",
+    "typescript": "6.0.3",
+    "vite": "8.3.3",
+    "vitest": "5.0.3",
+    "vue-tsc": "3.3.12"
+  }
+}
