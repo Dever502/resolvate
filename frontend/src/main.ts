@@ -2,7 +2,13 @@
 // check starts as soon as this small script runs instead of after the application code loads.
 import "./styles/app.css";
 
-const session = fetch("/console/me", { credentials: "same-origin", headers: { Accept: "application/json" } });
+// The session store bounds the check with a deadline and aborts a stalled one through `controller`.
+const controller = new AbortController();
+const session = fetch("/console/me", {
+  credentials: "same-origin",
+  headers: { Accept: "application/json" },
+  signal: controller.signal,
+});
 session.catch(() => undefined); // Handled by the session store once the application has loaded.
 
 function showLoadError(): void {
@@ -24,4 +30,4 @@ window.addEventListener("vite:preloadError", (event) => {
   showLoadError();
 });
 
-import("./app").then(({ start }) => start(session), showLoadError);
+import("./app").then(({ start }) => start(session, controller), showLoadError);

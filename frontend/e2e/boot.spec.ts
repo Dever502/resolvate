@@ -106,6 +106,28 @@ test.describe("start of the console", () => {
     await expect(page.locator("#workspace")).toBeVisible({ timeout: 6000 });
   });
 
+  for (const [name, stalled] of [
+    ["no answer", { status: "stall" }],
+    ["an answer whose body stalls", { status: "session", stall: "body" }],
+  ] as const) {
+    test(`after ${name} the check is aborted, retried and the workspace opens`, async ({ page, context, request, consoleErrors }) => {
+      void consoleErrors;
+      await scenario(request, { me: [stalled, "session"] });
+      await context.addCookies([SESSION_COOKIE]);
+      await page.clock.install();
+      await page.goto(CONSOLE);
+      // Mounted: the check and its deadline are running, and nothing is shown yet.
+      await expect(page.locator("#app[data-v-app]")).toBeAttached();
+      await expect(page.locator("#login-screen, #workspace")).toHaveCount(0);
+      await page.clock.fastForward(10_000); // CHECK_TIMEOUT in src/stores/session.ts
+      await expect(page.locator("#login-error")).toHaveText("Нет связи с сервером. Повторяем проверку входа…");
+      await expect.poll(async () => (await stubLog(request)).find((entry) => entry.path === "/console/me")?.aborted)
+        .toBe(true);
+      await page.clock.fastForward(3_000); // RETRY_DELAYS[0]
+      await expect(page.locator("#workspace")).toBeVisible();
+    });
+  }
+
   test("signing in while a check is pending is not undone by its late 401", async ({ page, request, consoleErrors }) => {
     void consoleErrors;
     await scenario(request, { me: [502, { status: "session", delay: 2500 }] });
@@ -122,6 +144,27 @@ test.describe("start of the console", () => {
     await expect(page.locator("#workspace")).toBeVisible();
     await expect(page.locator("#login-screen")).toHaveCount(0);
   });
+});
+
+test.describe("workspace frame", () => {
+  for (const [device, viewport] of [
+    ["a phone", { width: 375, height: 812 }],
+    ["a desktop", { width: 1280, height: 800 }],
+  ] as const) {
+    test(`a failed sign-out shows its reason on ${device}`, async ({ page, context, request, consoleErrors }) => {
+      void consoleErrors;
+      await scenario(request, { me: "session", logout: 502 });
+      await context.addCookies([SESSION_COOKIE]);
+      await page.setViewportSize(viewport);
+      await page.goto(CONSOLE);
+      await page.getByRole("button", { name: "Выйти" }).click();
+      // Exactly one notice is visible: in the conversation panel, or above the list where that panel is hidden.
+      const alert = page.getByRole("alert");
+      await expect(alert).toHaveText("Запрос не выполнен. Повторите позже.");
+      await expect(alert).toBeInViewport();
+      await expect(page.locator("#workspace")).toBeVisible();
+    });
+  }
 });
 
 test.describe("delivery of the console", () => {
