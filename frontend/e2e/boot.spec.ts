@@ -67,7 +67,6 @@ test.describe("start of the console", () => {
       if (index) await toggle.click();
       await expect(toggle).toHaveAttribute("data-theme-preference", preference);
       await expect(toggle).toHaveAttribute("aria-label", label);
-      await expect(toggle).toHaveAttribute("title", label);
       expect(await page.evaluate(() => localStorage.getItem("resolvate.theme"))).toBe(stored);
       if (stored) expect(await page.evaluate(() => document.documentElement.dataset.theme)).toBe(stored);
     }

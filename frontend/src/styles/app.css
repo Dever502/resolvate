@@ -155,8 +155,8 @@
     color: inherit;
     transition: background-color 120ms ease-out, color 120ms ease-out, border-color 120ms ease-out;
   }
-  button:disabled { opacity: .5; cursor: not-allowed; }
-  button:active:not(:disabled) { transition-duration: 0ms; }
+  button:disabled, button[aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
+  button:active:not(:disabled, [aria-disabled="true"]) { transition-duration: 0ms; }
   button:focus-visible, a:focus-visible, input:focus-visible,
   textarea:focus-visible, select:focus-visible, summary:focus-visible {
     outline: 3px solid var(--accent);
@@ -213,15 +213,15 @@
     white-space: nowrap;
   }
   .primary { border: 1px solid transparent; padding: .5625rem 1rem; background: var(--accent); color: var(--on-accent); }
-  .primary:hover:not(:disabled) { background: var(--accent-hover); }
-  .primary:active:not(:disabled) { background: var(--accent-active); transform: translateY(1px); }
+  .primary:hover:not(:disabled, [aria-disabled="true"]) { background: var(--accent-hover); }
+  .primary:active:not(:disabled, [aria-disabled="true"]) { background: var(--accent-active); transform: translateY(1px); }
   .secondary { border: 1px solid var(--border); background: var(--surface); padding: .5rem .875rem; }
   .quiet { border: 0; background: transparent; color: var(--muted); padding: .5rem .625rem; }
-  .secondary:hover:not(:disabled), .quiet:hover:not(:disabled), .icon-button:hover:not(:disabled) {
+  .secondary:hover:not(:disabled, [aria-disabled="true"]), .quiet:hover:not(:disabled, [aria-disabled="true"]), .icon-button:hover:not(:disabled, [aria-disabled="true"]) {
     background: var(--hover);
     color: var(--text);
   }
-  .secondary:active:not(:disabled), .quiet:active:not(:disabled), .icon-button:active:not(:disabled) {
+  .secondary:active:not(:disabled, [aria-disabled="true"]), .quiet:active:not(:disabled, [aria-disabled="true"]), .icon-button:active:not(:disabled, [aria-disabled="true"]) {
     background: var(--pressed);
     color: var(--text);
   }
@@ -239,6 +239,9 @@
   .avatar.slate { background: var(--slate-bg); color: var(--slate-text); }
   .avatar.sand { background: var(--sand-bg); color: var(--sand-text); }
   .notice { background: var(--warning-bg); border-bottom: 1px solid var(--warning-border); padding: .75rem 1.25rem; font-size: .875rem; line-height: 1.5; color: var(--warning-text); overflow-wrap: anywhere; }
+  /* Label of an icon-only button (ui/IconButton.vue): the dark chrome of the app bar, a pop-up shadow. */
+  .tooltip { z-index: 50; max-width: min(18rem, calc(100vw - 1rem)); padding: .375rem .625rem; border: 1px solid transparent; border-radius: 6px; background: var(--chrome); color: #fff; font-size: .8125rem; line-height: 1.4; box-shadow: 0 4px 16px rgb(0 0 0 / 18%); overflow-wrap: anywhere; }
+  :root[data-theme="dark"] .tooltip { border-color: var(--border); }
 }
 
 @media (pointer: coarse) {
@@ -249,8 +252,9 @@
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
-  .primary:active:not(:disabled) { transform: none; }
+  .primary:active:not(:disabled, [aria-disabled="true"]) { transform: none; }
 }
 @media (forced-colors: active) {
   .primary { border: 1px solid ButtonText; }
+  .tooltip { border-color: CanvasText; }
 }

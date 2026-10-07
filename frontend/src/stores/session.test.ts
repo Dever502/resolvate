@@ -1,6 +1,7 @@
 import { createPinia, setActivePinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CHECK_TIMEOUT, OFFLINE, RETRY_DELAYS, RETRYING, useSessionStore } from "./session";
+import { OFFLINE } from "../api/client";
+import { CHECK_TIMEOUT, RETRY_DELAYS, RETRYING, useSessionStore } from "./session";
 
 const ACCOUNT = { id: "a1", login: "operator", name: "Оператор", role: "operator", active: true, telegram_id: null };
 const json = (status: number, body: unknown): Response => new Response(JSON.stringify(body), { status });

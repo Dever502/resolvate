@@ -1,10 +1,14 @@
 <script setup lang="ts">
-import { ref } from "vue";
-import AccountFooter from "./AccountFooter.vue";
-import Icon from "./ui/Icon.vue";
+import { onMounted, ref, useTemplateRef } from "vue";
+import AccountFooter from "../account/AccountFooter.vue";
+import Icon from "../ui/Icon.vue";
 
 // The frame of the workspace; the list, conversation and settings arrive in the next steps.
 const notice = ref("");
+const heading = useTemplateRef<HTMLElement>("heading");
+
+// The workspace replaces the sign-in form, which held focus: without this it would fall to the page.
+onMounted(() => heading.value?.focus());
 </script>
 
 <template>
@@ -26,7 +30,7 @@ const notice = ref("");
         <!-- Narrow screens hide the conversation panel, so its notices show above the list there. -->
         <p v-if="notice" class="notice hidden narrow:block" role="alert">{{ notice }}</p>
         <header class="flex items-center justify-between gap-3 pt-6 pr-4 pb-1.5 pl-5 narrow:pt-5">
-          <h1 class="m-0 text-[1.625rem] font-[650] tracking-[-.025em]">Диалоги</h1>
+          <h1 ref="heading" class="m-0 text-[1.625rem] font-[650] tracking-[-.025em] outline-none" tabindex="-1">Диалоги</h1>
         </header>
         <div class="min-h-0 flex-1" />
         <AccountFooter @error="notice = $event" />

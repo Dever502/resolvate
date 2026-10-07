@@ -2,6 +2,7 @@
 
 export const GENERIC_ERROR = "Запрос не выполнен. Повторите позже.";
 export const NO_PROJECT = "Выберите доступный проект.";
+export const OFFLINE = "Нет связи с сервером.";
 
 // Paths served by the project runtime; the router forwards /console/projects/<id>/<path>.
 const PROJECT_SCOPED = /^(folders(?:\/|$)|tickets(?:\/|$)|media\/|retry\/|replies(?:\?|$))/;
@@ -33,9 +34,11 @@ export interface RequestContext {
 
 export type UnauthorizedHandler = (generation: number) => void;
 
+/** The JSON body, or {} when the body is not JSON (a proxy error page); a failed read rejects. */
 export async function readResult(response: Response): Promise<unknown> {
+  const text = await response.text();
   try {
-    return await response.json();
+    return JSON.parse(text);
   } catch {
     return {};
   }
@@ -61,14 +64,23 @@ export async function request<T>(
   if (method !== "GET") headers["X-CSRF-Token"] = context.csrf;
   if (options.data !== undefined) headers["Content-Type"] = "application/json";
   if (options.key) headers["X-Idempotency-Key"] = options.key;
-  const response = await fetch(`/console/${path}`, {
-    method,
-    headers,
-    credentials: "same-origin",
-    signal: options.signal ?? null,
-    body: options.form ?? (options.data !== undefined ? JSON.stringify(options.data) : null),
-  });
-  const result = await readResult(response);
+  let response: Response;
+  let result: unknown;
+  try {
+    response = await fetch(`/console/${path}`, {
+      method,
+      headers,
+      credentials: "same-origin",
+      signal: options.signal ?? null,
+      body: options.form ?? (options.data !== undefined ? JSON.stringify(options.data) : null),
+    });
+    result = await readResult(response);
+  } catch (error) {
+    // A request cancelled by its caller rejects as cancelled; any other failure is a lost connection,
+    // not the browser's own text ("Failed to fetch", "Load failed", …).
+    if (options.signal?.aborted) throw error;
+    throw new ApiError(OFFLINE, 0);
+  }
   if (!response.ok) {
     if (response.status === 401 && path !== "login") onUnauthorized(context.generation);
     throw responseError(response, result);

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, useTemplateRef } from "vue";
-import { useSessionStore } from "../stores/session";
-import Icon from "./ui/Icon.vue";
+import { useSessionStore } from "../../stores/session";
+import Icon from "../ui/Icon.vue";
 
 const session = useSessionStore();
 const loginName = ref("");
@@ -17,6 +17,7 @@ const success = computed(() => !error.value && session.noticeIsSuccess);
 onMounted(() => loginField.value?.focus());
 
 async function submit(): Promise<void> {
+  if (busy.value) return;
   busy.value = true;
   error.value = "";
   try {
@@ -66,7 +67,8 @@ async function submit(): Promise<void> {
         />
       </label>
       <p id="login-error" class="error" :class="{ success }" role="alert">{{ message }}</p>
-      <button class="primary mt-2 min-h-11 w-full" type="submit" :disabled="busy">Войти</button>
+      <!-- aria-disabled, not disabled: a disabled button drops keyboard focus while the request runs. -->
+      <button class="primary mt-2 min-h-11 w-full" type="submit" :aria-disabled="busy || undefined">Войти</button>
       <p class="hint">Доступ выдаёт администратор вашей поддержки.</p>
     </form>
   </main>

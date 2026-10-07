@@ -2,6 +2,7 @@ import { defineStore } from "pinia";
 import { ref } from "vue";
 import {
   ApiError,
+  OFFLINE,
   readResult,
   request,
   responseError,
@@ -11,7 +12,6 @@ import type { Account, SessionPayload } from "../api/types";
 
 export type SessionStatus = "checking" | "signed-out" | "signed-in";
 
-export const OFFLINE = "Нет связи с сервером.";
 export const RETRYING = "Повторяем проверку входа…";
 /** Delays between session re-checks after a network or server error, in milliseconds. */
 export const RETRY_DELAYS = [3000, 6000, 12000, 30000];
