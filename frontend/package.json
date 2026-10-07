@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "license": "AGPL-3.0-only",
-  "description": "Operator console of Resolvate (Vue). Built into src/resolvate/console_next and served at /console/next/.",
+  "description": "Operator console of Resolvate (Vue). Built into src/resolvate/console_dist and served at /console/.",
   "engines": {
     "node": ">=24"
   },

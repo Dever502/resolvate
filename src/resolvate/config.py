@@ -171,7 +171,6 @@ class Settings(BaseSettings):
     user_messages_per_hour: int = 200
     api_enabled: bool = False
     console_origin: str | None = None
-    console_next_enabled: bool = False
     api_host: str = "0.0.0.0"
     api_port: int = 8080
     api_admin_token: SecretStr | None = None

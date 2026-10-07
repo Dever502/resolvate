@@ -1,6 +1,6 @@
 import { PASSWORD, SESSION_COOKIE, expect, probe, scenario, stubLog, test } from "./fixtures";
 
-const CONSOLE = "/console/next/";
+const CONSOLE = "/console/";
 const preferDark = (): void => localStorage.setItem("resolvate.theme", "dark");
 
 test.describe("start of the console", () => {
@@ -201,7 +201,7 @@ test.describe("delivery of the console", () => {
     const [accepted, encoding] = encodings[0]!;
     expect(encoding).toBe(/\bbr\b/.test(accepted) ? "br" : "gzip");
     const assets = async (): Promise<number> =>
-      (await stubLog(request)).filter((entry) => entry.path.startsWith("/console/next/assets/")).length;
+      (await stubLog(request)).filter((entry) => entry.path.startsWith("/console/assets/")).length;
     const first = await assets();
     expect(first).toBeGreaterThanOrEqual(4);
     await page.goto("about:blank");
@@ -213,8 +213,8 @@ test.describe("delivery of the console", () => {
   test("the address without a trailing slash keeps the deep link", async ({ page, request, consoleErrors }) => {
     void consoleErrors;
     await scenario(request, { me: "session" });
-    await page.goto("/console/next?project=p1&ticket=t1");
-    expect(new URL(page.url()).pathname + new URL(page.url()).search).toBe("/console/next/?project=p1&ticket=t1");
+    await page.goto("/console?project=p1&ticket=t1");
+    expect(new URL(page.url()).pathname + new URL(page.url()).search).toBe("/console/?project=p1&ticket=t1");
     await expect(page.locator("#login-screen")).toBeVisible();
   });
 });

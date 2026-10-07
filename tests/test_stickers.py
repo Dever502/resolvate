@@ -3,7 +3,6 @@ from __future__ import annotations
 import gzip
 import io
 import json
-from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -316,17 +315,6 @@ async def test_sticker_history_media_and_durable_topic_delivery(console: Any) ->
         assert archived.storage_path == saved.storage_path
     await client.post("/console/logout")
     assert (await client.get(f"/console/media/{item['media_id']}")).status_code == 401
-
-
-def test_lottie_dependency_is_pinned_light_and_locally_licensed() -> None:
-    assets = Path(__file__).resolve().parents[1] / "src/resolvate/console_assets"
-    player = (assets / "lottie_light_canvas.js").read_bytes()
-    assert (
-        sha256(player).hexdigest()
-        == "0930bfecb5b5dad59dd9049a139fa957e57f70e0805fc94a311204e524e45e28"
-    )
-    assert b"eval(" not in player and b"new Function" not in player
-    assert "MIT" in (assets / "lottie_license.txt").read_text()
 
 
 @pytest.mark.parametrize("extra", [b"PK\x03\x04", b"\x19\x41\xa4\x69\x80", b"\0"])

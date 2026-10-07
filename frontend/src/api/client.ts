@@ -1,4 +1,4 @@
-// Console API client: the same contract as api() in console_assets/app.js.
+// Authenticated console API client; contracts are shared with the Telegram-backed services.
 
 export const GENERIC_ERROR = "Запрос не выполнен. Повторите позже.";
 export const NO_PROJECT = "Выберите доступный проект.";

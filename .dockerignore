@@ -18,7 +18,7 @@ data
 docs
 tests
 frontend/node_modules
-src/resolvate/console_next
+src/resolvate/console_dist
 frontend/test-results
 frontend/playwright-report
 frontend/blob-report

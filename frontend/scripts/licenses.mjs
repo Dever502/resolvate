@@ -4,7 +4,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const OUT = fileURLToPath(new URL("../../src/resolvate/console_next/", import.meta.url));
+const OUT = fileURLToPath(new URL("../../src/resolvate/console_dist/", import.meta.url));
 const packages = JSON.parse(readFileSync(`${OUT}.vite/license.json`, "utf8"));
 
 const FORBIDDEN = /(^|[^L])GPL|SSPL/i;
