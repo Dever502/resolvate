@@ -38,7 +38,9 @@ export async function probe(page: Page): Promise<Probe> {
   return page.evaluate(() => (window as unknown as { __probe: Probe }).__probe);
 }
 
-export async function stubLog(request: APIRequestContext): Promise<{ method: string; path: string; at: number }[]> {
+export async function stubLog(
+  request: APIRequestContext,
+): Promise<{ method: string; path: string; at: number; aborted?: boolean }[]> {
   return (await request.get("/__stub/log")).json();
 }
 

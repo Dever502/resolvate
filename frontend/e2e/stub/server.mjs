@@ -38,28 +38,47 @@ async function readJson(request) {
   }
 }
 
+// An error answer: 502 comes from the proxy as HTML, anything else from the application as JSON.
+function failure(response, status, detail = "Ошибка сервера.") {
+  if (status === 502) return send(response, 502, { "content-type": "text/html" }, "<html>502 Bad Gateway</html>");
+  return json(response, status, { detail });
+}
+
+// Leaves the answer unfinished; the log entry records whether the client gave up on it.
+function stall(response, entry) {
+  response.on("close", () => {
+    if (!response.writableEnded) entry.aborted = true;
+  });
+}
+
 // /console/me answers: "session" (200 with the cookie, else 401), an HTTP status, an object
-// {status, detail, delay}, or "network" (connection dropped). A list is consumed call by call.
-async function me(request, response) {
+// {status, detail, delay, stall: "body"}, "network" (connection dropped) or "stall" (no answer).
+// A list is consumed call by call.
+async function me(request, response, entry) {
   const answers = scenario.me ?? "session";
   let answer = Array.isArray(answers) ? answers[Math.min(meCalls, answers.length - 1)] : answers;
   meCalls++;
   if (typeof answer !== "object") answer = { status: answer };
   await sleep(answer.delay ?? scenario.meDelay ?? 0);
   if (answer.status === "network") return request.socket.destroy();
+  if (answer.status === "stall") return stall(response, entry);
   if (answer.status === "session" || answer.status === undefined) {
-    return hasSession(request)
-      ? json(response, 200, { account: ACCOUNT, csrf: "stub-csrf" })
-      : json(response, 401, { detail: "Войдите в панель." });
+    if (!hasSession(request)) return json(response, 401, { detail: "Войдите в панель." });
+    if (answer.stall === "body") {
+      response.writeHead(200, { ...HEADERS.api, "content-type": "application/json" });
+      response.write('{"account":');
+      return stall(response, entry);
+    }
+    return json(response, 200, { account: ACCOUNT, csrf: "stub-csrf" });
   }
-  if (answer.status === 502) return send(response, 502, { "content-type": "text/html" }, "<html>502 Bad Gateway</html>");
-  return json(response, answer.status, { detail: answer.detail ?? "Ошибка сервера." });
+  return failure(response, answer.status, answer.detail);
 }
 
 http.createServer(async (request, response) => {
   const url = new URL(request.url, "http://stub");
   const path = url.pathname;
-  if (!path.startsWith("/__stub/")) log.push({ method: request.method, path, at: Date.now() });
+  const entry = { method: request.method, path, at: Date.now() };
+  if (!path.startsWith("/__stub/")) log.push(entry);
 
   if (path === "/__stub/health") return send(response, 200, {}, "ok");
   if (path === "/__stub/scenario" && request.method === "POST") {
@@ -91,7 +110,7 @@ http.createServer(async (request, response) => {
     return send(response, 200, { ...HEADERS.asset, "content-type": TYPES[kind] }, readFileSync(`${BUILD}assets/${name}`));
   }
 
-  if (path === "/console/me" && request.method === "GET") return me(request, response);
+  if (path === "/console/me" && request.method === "GET") return me(request, response, entry);
   if (path === "/console/login" && request.method === "POST") {
     const body = await readJson(request);
     await sleep(scenario.loginDelay ?? 0);
@@ -103,6 +122,7 @@ http.createServer(async (request, response) => {
   }
   if (path === "/console/logout" && request.method === "POST") {
     if (!hasSession(request)) return json(response, 401, { detail: "Войдите в панель." });
+    if (scenario.logout) return failure(response, scenario.logout);
     return json(response, 200, { ok: true },
       { "set-cookie": "resolvate_session=; Path=/console; Max-Age=0; HttpOnly; SameSite=Strict" });
   }

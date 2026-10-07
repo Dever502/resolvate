@@ -23,6 +23,8 @@ const notice = ref("");
         class="flex w-(--sidebar-width) min-w-[16.875rem] shrink-0 flex-col border-r border-border bg-surface narrow:w-full narrow:min-w-0 narrow:flex-1"
         aria-label="Список диалогов"
       >
+        <!-- Narrow screens hide the conversation panel, so its notices show above the list there. -->
+        <p v-if="notice" class="notice hidden narrow:block" role="alert">{{ notice }}</p>
         <header class="flex items-center justify-between gap-3 pt-6 pr-4 pb-1.5 pl-5 narrow:pt-5">
           <h1 class="m-0 text-[1.625rem] font-[650] tracking-[-.025em]">Диалоги</h1>
         </header>
