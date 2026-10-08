@@ -48,11 +48,16 @@ export const test = base.extend<{ consoleErrors: string[] }>({
   consoleErrors: async ({ page }, use) => {
     const errors: string[] = [];
     page.on("console", (message) => {
-      if (/Refused to|Content[- ]Security[- ]Policy/i.test(message.text())) errors.push(message.text());
+      const text = message.text();
+      // CSP refusals, and any other error or warning of the page except the browser's own log of an
+      // HTTP error answer, which several scenarios provoke on purpose.
+      if (/Refused to|Content[- ]Security[- ]Policy/i.test(text)) errors.push(text);
+      else if (["error", "warning"].includes(message.type()) && !/Failed to load resource/.test(text)) errors.push(text);
     });
+    page.on("pageerror", (error) => errors.push(`uncaught: ${error.message}`));
     await page.addInitScript(installProbe);
     await use(errors);
-    // No scenario may trip the console CSP, in any engine.
+    // No scenario may trip the console CSP or leave an error in the console, in any engine.
     expect(errors).toEqual([]);
     expect((await probe(page)).violations).toEqual([]);
   },

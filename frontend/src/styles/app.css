@@ -242,11 +242,145 @@
   /* Label of an icon-only button (ui/IconButton.vue): the dark chrome of the app bar, a pop-up shadow. */
   .tooltip { z-index: 50; max-width: min(18rem, calc(100vw - 1rem)); padding: .375rem .625rem; border: 1px solid transparent; border-radius: 6px; background: var(--chrome); color: #fff; font-size: .8125rem; line-height: 1.4; box-shadow: 0 4px 16px rgb(0 0 0 / 18%); overflow-wrap: anywhere; }
   :root[data-theme="dark"] .tooltip { border-color: var(--border); }
+  .tooltip-note { color: var(--chrome-muted); }
+  .pill { font-size: .75rem; padding: .25rem .5rem; border-radius: 5px; background: var(--subtle); color: var(--muted); white-space: nowrap; }
+  .list-empty { padding: 2rem 1rem; color: var(--muted); text-align: center; font-size: .875rem; }
+
+  /* Workspace frame: the separator between the list and the conversation. */
+  .resizing-sidebar, .resizing-sidebar * { cursor: col-resize !important; user-select: none !important; }
+  .sidebar-resizer { position: relative; z-index: 2; flex: 0 0 8px; margin: 0 -4px; cursor: col-resize; touch-action: none; }
+  .sidebar-resizer::after { content: ""; position: absolute; inset: 0 3px; background: transparent; }
+  .sidebar-resizer:hover::after, .sidebar-resizer:focus-visible::after, .resizing-sidebar .sidebar-resizer::after { background: var(--accent); }
+  .sidebar-resizer:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .sidebar-resizer[aria-disabled="true"] { cursor: default; }
+
+  /* Choice menus (ui/MenuSelect.vue): the button and the Reka menu. */
+  .menu-select { display: flex; align-items: center; gap: .375rem; width: 100%; min-height: 36px; padding: .375rem .625rem; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); color: var(--text); font-size: .8125rem; }
+  .menu-select:hover:not(:disabled) { background: var(--hover); }
+  .menu-select-chrome { min-height: 0; padding: .125rem 0; border: 0; border-radius: 4px; background: transparent; color: #fff; font-size: .9375rem; font-weight: 600; }
+  .menu-select-chrome:hover:not(:disabled) { background: transparent; color: var(--chrome-muted); }
+  .menu-select-chrome:focus-visible { outline-color: #a9beff; }
+  .menu { z-index: 60; min-width: max(var(--reka-dropdown-menu-trigger-width, 0px), 12rem); max-width: min(24rem, calc(100vw - 1rem)); max-height: min(var(--reka-dropdown-menu-content-available-height, 22rem), 22rem); overflow-y: auto; padding: .375rem; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); box-shadow: 0 6px 32px #1d1d1f26; }
+  .menu-item { display: flex; align-items: center; gap: .5rem; min-height: 36px; padding: .5rem .625rem; border-radius: 7px; font-size: .875rem; cursor: pointer; outline: none; }
+  .menu-item[data-highlighted] { background: var(--accent-soft); }
+  .menu-item[data-state="checked"] { font-weight: 600; }
+
+  /* Project emblem in the app bar: the logo over the project's initial. */
+  .project-emblem { position: relative; display: grid; place-items: center; width: 2.375rem; height: 2.375rem; flex: 0 0 auto; overflow: hidden; border-radius: 10px; background: #3b4b69; color: #fff; font-size: 1.0625rem; font-weight: 600; }
+  .project-logo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: var(--surface); }
+
+  /* Ticket list: search, folder tabs and the rows (Reka listbox options). */
+  .search-field { position: relative; }
+  .search-field .icon { position: absolute; top: 50%; left: .6875rem; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
+  .search-field input { width: 100%; min-height: 36px; padding: .5rem .625rem .5rem 2.25rem; border: 1px solid transparent; border-radius: var(--radius-control); background: var(--subtle); color: var(--text); font-size: .875rem; }
+  .folder-tabs { display: flex; flex: 1; min-width: 0; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+  .folder-tab { position: relative; flex: 0 0 auto; max-width: 11rem; min-height: 44px; padding: .625rem .75rem; overflow: hidden; border: 0; border-radius: 0; background: transparent; color: var(--muted); font-size: .9375rem; font-weight: 500; white-space: nowrap; text-overflow: ellipsis; }
+  .folder-tab:hover:not(:disabled) { background: var(--subtle); }
+  .folder-tab:not([data-state="active"]):hover:not(:disabled) { color: var(--text); }
+  .folder-tab[data-state="active"] { color: var(--accent); font-weight: 600; }
+  .folder-tab[data-state="active"]::after { content: ""; position: absolute; bottom: 0; left: .75rem; right: .75rem; height: 3px; border-radius: 3px 3px 0 0; background: currentColor; }
+  .folder-tab:focus-visible { outline-offset: -3px; }
+  .ticket { display: flex; align-items: center; gap: .75rem; width: 100%; margin-bottom: 2px; padding: .875rem .625rem; border-radius: 10px; color: inherit; text-align: left; cursor: pointer; outline: none; }
+  .ticket:hover, .ticket[data-highlighted] { background: var(--hover); }
+  .ticket:focus-visible { outline: 3px solid var(--accent); outline-offset: -3px; }
+  .ticket[data-state="checked"] { background: var(--selection); }
+  .ticket[data-state="checked"] .ticket-name { color: #fff; }
+  .ticket[data-state="checked"] .ticket-preview, .ticket[data-state="checked"] .ticket-time { color: var(--selection-text); }
+  .ticket[data-state="checked"] .avatar { background: #4c6293; color: #fff; }
+  .ticket[data-state="checked"] .count { background: #fff; color: var(--selection); }
+  .ticket.unread:not([data-state="checked"]) .ticket-preview { color: var(--unread-text); }
+  .ticket-name { flex: 1; min-width: 0; overflow: hidden; font-size: .875rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+  .ticket-time { flex-shrink: 0; color: var(--muted); font-size: .75rem; font-variant-numeric: tabular-nums; }
+  .ticket-preview { display: flex; align-items: center; gap: .5rem; margin-top: .25rem; color: var(--muted); font-size: .8125rem; }
+  .count { display: grid; place-items: center; min-width: 20px; height: 20px; padding: 0 .3125rem; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-size: .6875rem; font-weight: 600; }
+
+  /* Dialogue: header, history and messages. */
+  .customer-title { display: flex; align-items: center; gap: .75rem; min-width: 0; padding: .25rem; border: 0; border-radius: var(--radius-control); background: transparent; color: inherit; text-align: left; }
+  .customer-title:hover { background: var(--canvas); }
+  .messages { flex: 1; min-height: 0; overflow: auto; padding: 1.75rem clamp(1rem, 4vw, 3.5rem) 2rem; background: var(--message-canvas); scrollbar-gutter: stable; overscroll-behavior-y: contain; outline: none; }
+  .message { align-self: flex-start; min-width: 0; max-width: min(82%, 65ch); }
+  .message.outgoing { align-self: flex-end; }
+  .message-meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: 0 .625rem .375rem; color: var(--muted); font-size: .75rem; }
+  .message-meta time { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .outgoing .message-meta { justify-content: flex-end; }
+  .bubble { padding: .75rem 1rem; border-radius: 4px var(--radius-panel) var(--radius-panel); background: var(--surface); font-size: .9375rem; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .outgoing .bubble { border-radius: var(--radius-panel) 4px var(--radius-panel) var(--radius-panel); background: var(--accent-soft); }
+  .message.internal .bubble { background: var(--internal); }
+  .bubble img, .bubble video { display: block; max-width: 100%; max-height: 340px; margin-bottom: .5rem; border-radius: var(--radius-control); }
+  .message audio { display: block; width: 280px; max-width: 100%; }
+  .bubble a { color: var(--accent); }
+  .message.system { align-self: center; max-width: min(100%, 36rem); margin: .5rem auto; }
+  .message.system .message-meta { justify-content: center; }
+  .message.system .bubble { padding: .25rem .75rem; background: transparent; color: var(--muted); font-size: .8125rem; text-align: center; }
+  .message.system .rating-card { min-width: min(280px, 100%); padding: 1.125rem 1.25rem; border-radius: 12px; background: var(--surface); color: var(--text); text-align: left; white-space: normal; }
+  .image-preview { display: block; max-width: 100%; padding: 0; border: 0; border-radius: var(--radius-control); background: transparent; cursor: zoom-in; }
+  /* Stickers are artwork, not photo cards. */
+  .sticker-message .bubble { padding: 0; border: 0; background: transparent; box-shadow: none; }
+  .sticker-preview { display: grid; place-items: center; width: 100%; aspect-ratio: 1; padding: 0; border: 0; border-radius: .75rem; background: transparent; cursor: pointer; }
+  .sticker-preview img, .sticker-preview video, .sticker-preview canvas { display: block; width: 100%; height: 100%; margin: 0; border-radius: 0; object-fit: contain; }
+  .customer-card { width: 290px; flex-shrink: 0; overflow: auto; padding: 1.5rem; border-left: 1px solid var(--border); background: var(--canvas); }
+
+  /* Composer. */
+  .composer-area { position: relative; padding: .875rem 1.75rem max(.875rem, env(safe-area-inset-bottom)); border-top: 1px solid var(--border); background: var(--surface); }
+  .composer { display: flex; align-items: flex-end; gap: .5rem; padding: 5px; border: 1px solid var(--field-border); border-radius: 14px; background: var(--surface); }
+  .composer:focus-within { border-color: var(--accent); outline: 2px solid var(--focus-halo); outline-offset: 1px; }
+  .composer textarea { flex: 1; min-width: 0; min-height: 40px; max-height: 160px; padding: .5rem .125rem; border: 0; background: none; color: inherit; font-size: 1rem; line-height: 1.5; resize: none; }
+  .composer textarea:focus-visible { outline: none; }
+  .icon-button { width: 40px; height: 40px; flex-shrink: 0; padding: .5rem; border: 0; background: transparent; color: var(--muted); }
+  .icon-button .icon { width: 22px; height: 22px; }
+  .send { flex-shrink: 0; min-height: 40px; padding: .5rem .875rem; }
+  .send .icon { width: 1rem; height: 1rem; }
+  .composer-hint { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .75rem; margin: .625rem .25rem 0; color: var(--muted); font-size: .75rem; }
+  .attachment { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin-bottom: .625rem; padding: .25rem .5rem .25rem .875rem; border-radius: var(--radius-control); background: var(--canvas); font-size: .8125rem; }
+  .reply-options { position: absolute; z-index: 3; left: 1.75rem; right: 1.75rem; bottom: calc(100% + .375rem); max-height: min(280px, 40dvh); overflow: auto; padding: .375rem; border-radius: 12px; background: var(--surface); box-shadow: 0 6px 32px #1d1d1f26; }
+  .reply-option { width: 100%; padding: .75rem; border-radius: 7px; line-height: 1.5; white-space: pre-wrap; cursor: pointer; }
+  .reply-option[aria-selected="true"] { background: var(--accent-soft); }
+
+  /* Modal windows (ui/ModalDialog.vue) and the image viewer, both on Reka Dialog. */
+  .dialog-backdrop { position: fixed; inset: 0; z-index: 50; background: var(--backdrop); }
+  .dialog { position: fixed; z-index: 50; top: 50%; left: 50%; width: 520px; max-width: calc(100vw - 32px); max-height: calc(100dvh - 48px); overflow: auto; padding: 1.75rem; border-radius: var(--radius-panel); background: var(--surface); color: var(--text); box-shadow: 0 20px 80px #15192230; overscroll-behavior: contain; transform: translate(-50%, -50%); animation: dialog-appear 150ms ease-out; }
+  .dialog-wide { width: 620px; }
+  .image-viewer { position: fixed; z-index: 50; top: 50%; left: 50%; width: 96vw; max-width: 1600px; height: 92dvh; overflow: hidden; border-radius: var(--radius-panel); background: #17191d; color: #fff; transform: translate(-50%, -50%); outline: none; }
+  .image-toolbar { display: flex; align-items: center; gap: .5rem; height: 56px; padding: .5rem .75rem; }
+  .image-toolbar button { display: grid; place-items: center; min-width: 40px; min-height: 40px; padding: .375rem .625rem; border: 1px solid #666; border-radius: var(--radius-control); background: #30343b; color: #fff; }
+  .image-toolbar button:hover { background: #424750; }
+  .image-toolbar :focus-visible { outline-color: #a9beff; }
+  .image-stage { display: flex; align-items: center; justify-content: center; height: calc(100% - 56px); overflow: hidden; touch-action: none; user-select: none; }
+  .image-stage img { flex: 0 0 auto; max-width: 100%; max-height: 100%; object-fit: contain; transform-origin: center; }
+  .image-stage.zoomed { cursor: grab; }
+  .image-stage.zoomed:active { cursor: grabbing; }
+}
+
+@keyframes dialog-appear {
+  from { opacity: 0; transform: translate(-50%, calc(-50% + 4px)); }
+  to { opacity: 1; transform: translate(-50%, -50%); }
+}
+@media (max-width: 1100px) {
+  .customer-card { position: absolute; z-index: 5; top: 0; right: 0; bottom: 0; box-shadow: -8px 0 32px #1d1d1f12; }
+  .composer-area { padding-right: 1rem; padding-left: 1rem; }
+  .reply-options { left: 1rem; right: 1rem; }
+  .message { max-width: 90%; }
+}
+@media (max-width: 700px) {
+  .messages { padding: 1.25rem .875rem; scrollbar-gutter: auto; }
+  .message { max-width: 92%; }
+  .bubble { padding: .625rem .875rem; }
+  .send-label { display: none; }
+  .send { width: 40px; padding: .5rem; }
+  .send .icon { width: 1.125rem; height: 1.125rem; }
+  .composer-area { padding: .625rem .75rem max(.625rem, env(safe-area-inset-bottom)); }
+  .composer-hint { display: none; }
+  .customer-card { width: min(320px, 100vw); }
+  /* The folders window takes the whole screen; a confirmation stays a small card. */
+  .dialog-wide { top: 0; left: 0; width: 100%; max-width: 100%; height: 100dvh; max-height: 100dvh; padding: max(.875rem, env(safe-area-inset-top)) 1rem max(1.5rem, env(safe-area-inset-bottom)); border-radius: 0; transform: none; animation: none; }
 }
 
 @media (pointer: coarse) {
   .primary, .secondary, .quiet, .icon-button { min-height: 44px; }
-  .icon-button { min-width: 44px; }
+  .icon-button, .send, .image-toolbar button { min-width: 44px; }
+  .menu-select:not(.menu-select-chrome), .menu-item, .image-toolbar button { min-height: 44px; }
+  .image-toolbar { height: 64px; }
+  .image-stage { height: calc(100% - 64px); }
   input, select { font-size: 1rem !important; }
   input:not([type="checkbox"]):not([type="radio"]), select { min-height: 44px; }
 }
@@ -254,7 +388,13 @@
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
   .primary:active:not(:disabled, [aria-disabled="true"]) { transform: none; }
 }
+@media (prefers-contrast: more) {
+  .ticket[data-state="checked"] { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .bubble { border: 1px solid var(--border); }
+}
 @media (forced-colors: active) {
   .primary { border: 1px solid ButtonText; }
   .tooltip { border-color: CanvasText; }
+  .ticket[data-state="checked"], .folder-tab[data-state="active"] { outline: 2px solid Highlight; outline-offset: -2px; }
+  .composer, .reply-options, .menu, .dialog { border: 1px solid ButtonText; }
 }

@@ -4,6 +4,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
+import * as api from "./api.mjs";
 
 const PORT = Number(process.env.STUB_PORT ?? 4173);
 const BUILD = fileURLToPath(new URL("../../../src/resolvate/console_dist/", import.meta.url));
@@ -28,11 +29,14 @@ function send(response, status, headers, body = "") {
 function json(response, status, body, extra = {}) {
   send(response, status, { ...HEADERS.api, "content-type": "application/json", ...extra }, JSON.stringify(body));
 }
-async function readJson(request) {
+async function readBody(request) {
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
+  return Buffer.concat(chunks);
+}
+async function readJson(request) {
   try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+    return JSON.parse((await readBody(request)).toString("utf8") || "{}");
   } catch {
     return {};
   }
@@ -85,9 +89,14 @@ http.createServer(async (request, response) => {
     scenario = await readJson(request);
     meCalls = 0;
     log = [];
+    api.reset(scenario.data ?? {});
     return json(response, 200, { ok: true });
   }
   if (path === "/__stub/log") return json(response, 200, log);
+  // Project API controls: a customer writes, the server revokes a stream, open streams are counted.
+  if (path === "/__stub/incoming" && request.method === "POST") return api.incoming(await readJson(request)), json(response, 200, { ok: true });
+  if (path === "/__stub/revoke" && request.method === "POST") return api.revoke(await readJson(request)), json(response, 200, { ok: true });
+  if (path === "/__stub/streams") return json(response, 200, { open: api.openStreams(url.searchParams.get("project")) });
 
   if (path === "/console") return send(response, 307, { ...HEADERS.api, location: `/console/${url.search}` });
   if (path === "/console/") {
@@ -126,5 +135,6 @@ http.createServer(async (request, response) => {
     return json(response, 200, { ok: true },
       { "set-cookie": "resolvate_session=; Path=/console; Max-Age=0; HttpOnly; SameSite=Strict" });
   }
+  if (await api.handle(request, response, path, url, { json, send, readBody, hasSession, headers: HEADERS })) return;
   return json(response, 404, { detail: "Not Found" });
 }).listen(PORT, "127.0.0.1");

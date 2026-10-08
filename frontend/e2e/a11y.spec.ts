@@ -61,12 +61,26 @@ test.describe("keyboard and screen readers", () => {
     await context.addCookies([SESSION_COOKIE]);
     await page.goto(CONSOLE);
     const tree = `
-      - banner "Проект и управление": Resolvate
+      - banner "Проект и управление":
+        - button "Текущий проект Поддержка"
+        - text: Resolvate
       - complementary "Список диалогов":
         - heading "Диалоги" [level=1]
+        - button "Открыть архив"
+        - searchbox "Поиск клиента"
+        - tablist "Папки диалогов":
+          - tab "Все" [selected]
+          - tab "VIP"
+        - button "Управление общими папками"
+        - tabpanel "Все":
+          - listbox "Диалоги":
+            - 'option /Анна Смирнова .* Непрочитанных: 2/'
+            - 'option /Борис Петров .* Непрочитанных: 1/'
         - button "${THEME.system}"
         - button "Выйти"
-      - main
+      - separator "Ширина списка диалогов"
+      - main:
+        - heading "Выберите диалог" [level=2]
     `;
     await expect(page.locator("body")).toMatchAriaSnapshot(tree);
     await expect(page.getByRole("heading", { name: "Диалоги" })).toBeFocused();
@@ -74,8 +88,18 @@ test.describe("keyboard and screen readers", () => {
     const tooltip = page.locator(".tooltip");
     const theme = page.locator("[data-theme-toggle]");
     const logout = page.getByRole("button", { name: "Выйти" });
-    await page.keyboard.press("Tab");
-    await expect(theme).toBeFocused();
+    // The list column from top to bottom; the list itself is one stop, at its first dialogue.
+    for (const stop of [
+      page.getByRole("button", { name: "Открыть архив" }),
+      page.getByRole("searchbox", { name: "Поиск клиента" }),
+      page.getByRole("tab", { name: "Все" }),
+      page.getByRole("button", { name: "Управление общими папками" }),
+      page.getByRole("option", { name: /Анна Смирнова/ }),
+      theme,
+    ]) {
+      await page.keyboard.press("Tab");
+      await expect(stop).toBeFocused();
+    }
     await expect.poll(() => tooltipText(page)).toBe(THEME.system);
     // The label is the button's name only: the visible tooltip is neither a description nor a tree node.
     await expect(theme).toHaveAccessibleName(THEME.system);
@@ -95,6 +119,9 @@ test.describe("keyboard and screen readers", () => {
     await page.keyboard.press("Tab");
     await expect(logout).toBeFocused();
     await expect.poll(() => tooltipText(page)).toBe("Выйти");
+    await page.keyboard.press("Tab");
+    await expect(page.getByRole("separator", { name: "Ширина списка диалогов" })).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
     await page.keyboard.press("Shift+Tab");
     await expect(theme).toBeFocused();
     await expect.poll(() => tooltipText(page)).toBe(THEME.dark);
@@ -112,10 +139,8 @@ test.describe("keyboard and screen readers", () => {
     await context.addCookies([SESSION_COOKIE]);
     await page.goto(CONSOLE);
     await expect(page.getByRole("heading", { name: "Диалоги" })).toBeFocused();
-    await page.keyboard.press("Tab");
-    await page.keyboard.press("Tab");
     const logout = page.getByRole("button", { name: "Выйти" });
-    await expect(logout).toBeFocused();
+    await logout.focus();
     await page.keyboard.press("Enter");
     await expect(page.getByRole("alert")).toHaveText("Запрос не выполнен. Повторите позже.");
     await expect(logout).toBeFocused();

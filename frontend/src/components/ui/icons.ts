@@ -20,6 +20,8 @@ export const iconPaths = {
   minus: "M5 12h14",
   check: "m5 12 4 4L19 6",
   star: "m12 3 2.78 5.63L21 9.53l-4.5 4.39 1.06 6.2L12 17.2l-5.56 2.92 1.06-6.2L3 9.53l6.22-.9Z",
+  // Opens a menu of choices (project, folder of a dialogue).
+  chevron: "m7 10 5 5 5-5",
   // Theme states: system (a display), light (a sun), dark (a crescent).
   monitor: "M4 5h16v11H4Zm5 15h6m-3-4v4",
   sun: "M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7ZM12 3v2m0 14v2M3 12h2m14 0h2M5.64 5.64l1.42 1.42m9.88 9.88 1.42 1.42m-12.72 0 1.42-1.42m9.88-9.88 1.42-1.42",
