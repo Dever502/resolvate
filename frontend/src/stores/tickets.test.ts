@@ -89,6 +89,35 @@ describe("tickets store", () => {
     expect(tickets.rows.map((item) => item.id)).toEqual(["fresh"]);
   });
 
+  it("sends at most one page of revisions and accepts tickets moved between pages", async () => {
+    const tickets = useTicketsStore();
+    let all = Array.from({ length: PAGE_SIZE * 20 }, (_, index) => row(`t${index}`));
+    const calls = api({
+      folders: () => [],
+      "tickets/sync": (body) => {
+        const page = all.slice(Number(body.offset), Number(body.offset) + PAGE_SIZE);
+        const known = body.known as Record<string, string>;
+        return { order: page.map((item) => item.id), items: page.filter((item) => known[item.id] !== item.revision) };
+      },
+    });
+    tickets.pages = 20;
+    await tickets.sync();
+    calls.length = 0;
+    await tickets.sync();
+    const requests = calls.filter((call) => call.path === "tickets/sync");
+    expect(requests).toHaveLength(20);
+    expect(requests.every((call) => Object.keys(call.body.known as object).length === PAGE_SIZE)).toBe(true);
+    expect(requests.reduce((total, call) => total + Object.keys(call.body.known as object).length, 0)).toBe(all.length);
+
+    // Remove the first ticket, move the final ticket to the front, and edit another.
+    all = [row("t999", "changed"), ...all.slice(1, -1)];
+    all[50] = { ...all[50]!, revision: "edited" };
+    await tickets.sync();
+    expect(tickets.rows).toEqual(all);
+    expect(tickets.items.has("t0")).toBe(false);
+    expect(tickets.hasMore).toBe(false);
+  });
+
   it("drops a filter on a folder another operator deleted and says so", async () => {
     const tickets = useTicketsStore();
     const calls = api({ folders: () => [{ id: "f2", name: "Другая", revision: 0 }], "tickets/sync": () => ({ order: [], items: [] }) });

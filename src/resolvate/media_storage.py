@@ -8,9 +8,11 @@ import subprocess
 import sys
 import uuid
 import warnings
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Callable
+from contextlib import AsyncExitStack, asynccontextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any, BinaryIO, Protocol
 
@@ -55,6 +57,31 @@ class LimitedDownload(io.BufferedRandom):
 
 class MediaValidationError(ValueError):
     pass
+
+
+@dataclass
+class _Publication:
+    stack: AsyncExitStack
+    locked: bool = False
+
+
+async def _file_operation[T](operation: Callable[[], T]) -> T:
+    # Cancelling to_thread does not stop its worker. Finish before releasing the
+    # publication lock or unlinking a temporary file still used by that worker.
+    task = asyncio.create_task(asyncio.to_thread(operation))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
+        if not task.cancelled():
+            task.exception()  # Retrieve failures even when cancellation takes precedence.
+        raise
 
 
 @dataclass(frozen=True)
@@ -143,14 +170,24 @@ class LocalMediaStorage:
         self.asset_root = self.root / "assets"
         self.validation_slots = asyncio.Semaphore(2)
         self.mutation_lock = asyncio.Lock()
+        self._publication: ContextVar[_Publication | None] = ContextVar(
+            "media_publication", default=None
+        )
 
     @asynccontextmanager
     async def transaction(self, has_file: bool) -> AsyncIterator[None]:
-        # Keep publication and the DB reference together relative to archive unlink/compression.
-        # Text-only work does not wait for file processing.
+        # Download/validation use private temporary files, without blocking other
+        # messages. Acquire lazily at publication; retain through the caller's DB
+        # commit so archive unlink/compression cannot race with a new reference.
         if has_file:
-            async with self.mutation_lock:
-                yield
+            if self._publication.get() is not None:
+                raise RuntimeError("nested media transactions are not supported")
+            async with AsyncExitStack() as stack:
+                token = self._publication.set(_Publication(stack))
+                try:
+                    yield
+                finally:
+                    self._publication.reset(token)
         else:
             yield
 
@@ -172,7 +209,7 @@ class LocalMediaStorage:
     def _write_chunk(destination: BinaryIO, chunk: bytes) -> None:
         destination.write(chunk)
 
-    def _finalize(
+    def _validate(
         self,
         *,
         temp_path: Path,
@@ -224,18 +261,9 @@ class LocalMediaStorage:
         relative = (
             Path("web-media") / "assets" / sha256[:2] / (sha256 + MIME_EXTENSIONS[detected_mime])
         )
-        destination = self.data_dir / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        # Immutable content-addressed files; publishing another reference never replaces bytes.
+        # Flush the private staging file before taking the publication lock.
         with temp_path.open("rb") as source:
             os.fsync(source.fileno())
-        try:
-            os.link(temp_path, destination)
-        except FileExistsError:
-            actual_size, _, actual_digest = self._inspect(destination)
-            if actual_size != size or actual_digest != sha256 or destination.is_symlink():
-                raise MediaValidationError("Повреждена сохранённая копия файла.") from None
-        temp_path.unlink()
         return StoredMedia(
             id=media_id,
             storage_path=relative.as_posix(),
@@ -244,6 +272,53 @@ class LocalMediaStorage:
             sha256=sha256,
             original_filename=(Path(original_filename).name[:255] if original_filename else None),
         )
+
+    def _publish(self, temp_path: Path, media: StoredMedia) -> StoredMedia:
+        destination = self.data_dir / media.storage_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        # Immutable content-addressed files; publishing another reference never replaces bytes.
+        try:
+            os.link(temp_path, destination)
+        except FileExistsError:
+            actual_size, _, actual_digest = self._inspect(destination)
+            if (
+                actual_size != media.size_bytes
+                or actual_digest != media.sha256
+                or destination.is_symlink()
+            ):
+                raise MediaValidationError("Повреждена сохранённая копия файла.") from None
+        temp_path.unlink()
+        return media
+
+    async def _finalize(
+        self,
+        *,
+        temp_path: Path,
+        media_id: str,
+        declared_mime: str | None,
+        original_filename: str | None,
+        inspection: tuple[int, bytes, str] | None = None,
+        sticker_kind: str | None = None,
+    ) -> StoredMedia:
+        media = await _file_operation(
+            partial(
+                self._validate,
+                temp_path=temp_path,
+                media_id=media_id,
+                declared_mime=declared_mime,
+                original_filename=original_filename,
+                inspection=inspection,
+                sticker_kind=sticker_kind,
+            )
+        )
+        publication = self._publication.get()
+        if publication is not None:
+            if not publication.locked:
+                await publication.stack.enter_async_context(self.mutation_lock)
+                publication.locked = True
+            return await _file_operation(partial(self._publish, temp_path, media))
+        async with self.mutation_lock:
+            return await _file_operation(partial(self._publish, temp_path, media))
 
     async def save_upload(self, upload: UploadFile) -> StoredMedia:
         async with self.validation_slots:
@@ -277,8 +352,7 @@ class LocalMediaStorage:
                 await asyncio.to_thread(self._write_chunk, destination, chunk)
                 digest.update(chunk)
             await asyncio.to_thread(destination.close)
-            return await asyncio.to_thread(
-                self._finalize,
+            return await self._finalize(
                 temp_path=temp_path,
                 media_id=media_id,
                 declared_mime=upload.content_type,
@@ -331,8 +405,7 @@ class LocalMediaStorage:
             with LimitedDownload(io.FileIO(temp_path, "x+")) as destination:
                 await bot.download(file_id, destination=destination)
                 destination.flush()
-            return await asyncio.to_thread(
-                self._finalize,
+            return await self._finalize(
                 temp_path=temp_path,
                 media_id=media_id,
                 declared_mime=declared_mime,
@@ -348,8 +421,7 @@ class LocalMediaStorage:
         temp_path = self.temp_root / f"{media_id}.telegram"
         try:
             await bot.download(file_id, destination=temp_path)
-            return await asyncio.to_thread(
-                self._finalize,
+            return await self._finalize(
                 temp_path=temp_path,
                 media_id=media_id,
                 declared_mime="image/jpeg",

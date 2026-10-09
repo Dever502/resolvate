@@ -7,7 +7,7 @@ from sqlalchemy import case, exists, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
 from resolvate.audit import record_event
@@ -246,10 +246,12 @@ class TicketTopicService(TicketServiceBase):
 
     async def get_ticket(self, ticket_id: str) -> TicketView:
         async with self.database.session() as session:
-            ticket = await session.get(Ticket, ticket_id)
+            ticket = await session.get(
+                Ticket, ticket_id, options=[joinedload(Ticket.user).joinedload(User.identities)]
+            )
             if ticket is None:
                 raise TicketNotFoundError(ticket_id)
-            return await self._ticket_view(session, ticket)
+            return self._loaded_ticket_view(ticket)
 
     async def invalidate_topic(self, *, ticket_id: str, topic_id: int) -> None:
         async with self.database.session() as session:

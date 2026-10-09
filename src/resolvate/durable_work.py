@@ -339,6 +339,7 @@ class DurableWorkRepository:
                 .where(
                     DeliveryOutbox.status == DeliveryStatus.FAILED,
                     DeliveryOutbox.created_at < outbox_before,
+                    DeliveryOutbox.payload != {},
                 )
                 .values(payload={})
             )
@@ -362,6 +363,7 @@ class DurableWorkRepository:
                 .where(
                     ReconciliationOutbox.status == WorkStatus.FAILED,
                     ReconciliationOutbox.created_at < outbox_before,
+                    ReconciliationOutbox.payload != {},
                 )
                 .values(payload={})
             )

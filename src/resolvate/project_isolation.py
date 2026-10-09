@@ -13,8 +13,9 @@ def install_project_isolation(connection: Connection) -> None:
           reference := to_jsonb(NEW)->>TG_ARGV[0];
           IF reference IS NULL THEN RETURN NEW; END IF;
           EXECUTE format('SELECT EXISTS (SELECT 1 FROM public.%I '
-                         'WHERE %I::text = $1 AND project_id = $2)',
-                         TG_ARGV[1], TG_ARGV[2]) INTO valid USING reference, NEW.project_id;
+                         'WHERE %I = $1::%s AND project_id = $2)',
+                         TG_ARGV[1], TG_ARGV[2], TG_ARGV[3])
+                         INTO valid USING reference, NEW.project_id;
           IF NOT valid THEN
             RAISE EXCEPTION 'Invalid project reference' USING ERRCODE = '23503';
           END IF;
@@ -40,7 +41,8 @@ def install_project_isolation(connection: Connection) -> None:
             EXECUTE format('CREATE POLICY project_boundary ON public.%I USING (%s) WITH CHECK (%s)',
                            tbl.table_name, predicate, predicate);
             FOR fk IN
-              SELECT a.attname AS col, t.relname AS target, b.attname AS ref
+              SELECT a.attname AS col, t.relname AS target, b.attname AS ref,
+                     format_type(b.atttypid, b.atttypmod) AS ref_type
               FROM pg_constraint c JOIN pg_class t ON t.oid = c.confrelid
               JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
               JOIN pg_attribute b ON b.attrelid = c.confrelid AND b.attnum = c.confkey[1]
@@ -51,10 +53,12 @@ def install_project_isolation(connection: Connection) -> None:
             LOOP
               EXECUTE format('DROP TRIGGER IF EXISTS %I ON public.%I',
                              'project_ref_' || fk.col, tbl.table_name);
-              EXECUTE format('CREATE TRIGGER %I BEFORE INSERT OR UPDATE ON public.%I '
+              EXECUTE format('CREATE TRIGGER %I BEFORE INSERT OR UPDATE OF %I, project_id '
+                             'ON public.%I '
                              'FOR EACH ROW EXECUTE FUNCTION '
-                             'public.check_project_reference(%L, %L, %L)',
-                             'project_ref_' || fk.col, tbl.table_name, fk.col, fk.target, fk.ref);
+                             'public.check_project_reference(%L, %L, %L, %L)',
+                             'project_ref_' || fk.col, fk.col, tbl.table_name,
+                             fk.col, fk.target, fk.ref, fk.ref_type);
             END LOOP;
           END LOOP;
         END $isolation$

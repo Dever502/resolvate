@@ -253,7 +253,7 @@ class ArchiveMaintenance:
 
         before_compression = now - timedelta(days=self.settings.archive_media_compress_after_days)
         ids = await self.retention.media_candidates(
-            before_compression, after=self._compression_after, compression=True
+            before_compression, after=self._compression_after, compression=True, limit=2
         )
         if not ids:
             self._compression_after = ""

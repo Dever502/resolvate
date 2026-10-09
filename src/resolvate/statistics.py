@@ -85,27 +85,21 @@ class StatisticsService:
             TicketMessage.created_at <= generated_at,
         )
         async with self.database.session() as session:
-            contacted = int(
-                await session.scalar(
-                    select(func.count(distinct(TicketMessage.ticket_id))).where(*customer_filter)
-                )
-                or 0
-            )
             channel_rows = (
                 await session.execute(
-                    select(Ticket.channel, func.count(distinct(TicketMessage.ticket_id)))
+                    select(
+                        Ticket.channel,
+                        func.count(distinct(TicketMessage.ticket_id)),
+                        func.count(),
+                    )
                     .join(TicketMessage, TicketMessage.ticket_id == Ticket.id)
                     .where(*customer_filter)
                     .group_by(Ticket.channel)
                 )
             ).all()
-            by_channel = {TicketChannel(channel): int(count) for channel, count in channel_rows}
-            inbound_messages = int(
-                await session.scalar(
-                    select(func.count()).select_from(TicketMessage).where(*customer_filter)
-                )
-                or 0
-            )
+            by_channel = {TicketChannel(channel): int(count) for channel, count, _ in channel_rows}
+            contacted = sum(by_channel.values())
+            inbound_messages = sum(int(count) for _, _, count in channel_rows)
             closed = int(
                 await session.scalar(
                     select(func.count())

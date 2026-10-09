@@ -46,13 +46,22 @@ export const useTicketsStore = defineStore("tickets", () => {
       sent !== epoch || project !== projects.currentId || filters.query !== query.value
       || filters.archived !== archived.value || filters.folder !== folderFilter.value;
     const next = new Map(items.value);
+    const previousOrder = order.value;
     const ids: string[] = [];
     let more = false;
     for (let page = 0; page < pages.value; page++) {
+      // Bound revision hints to this page's previous rows. Sending all loaded
+      // revisions on every page makes one refresh quadratic in the number of pages.
+      // A ticket that moved here from another page is returned in full by the API.
+      const pageKnown: Record<string, string> = {};
+      for (const id of previousOrder.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)) {
+        const item = next.get(id);
+        if (item) pageKnown[id] = item.revision;
+      }
       const result = await session.api<TicketPage>("tickets/sync", {
         method: "POST",
         data: {
-          known: known(next),
+          known: pageKnown,
           query: filters.query,
           archived: filters.archived,
           offset: page * PAGE_SIZE,

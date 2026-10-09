@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -51,25 +51,21 @@ class UserMessageRateLimiter:
         self.notice_interval_seconds = notice_interval_seconds
         self.max_users = max_users
         self._monotonic = monotonic
-        self._windows: dict[str, _UserMessageRateWindow] = {}
+        self._windows: OrderedDict[str, _UserMessageRateWindow] = OrderedDict()
         self._lock = asyncio.Lock()
 
     async def consume(self, identity_key: str) -> UserMessageRateLimitDecision:
         if not identity_key:
             raise ValueError("identity_key must not be empty")
-        now = self._monotonic()
-        minute_cutoff = now - 60.0
-        hour_cutoff = now - 3600.0
         async with self._lock:
+            now = self._monotonic()
+            minute_cutoff = now - 60.0
+            hour_cutoff = now - 3600.0
             window = self._windows.get(identity_key)
             if window is None:
                 self._evict_stale(hour_cutoff)
                 if len(self._windows) >= self.max_users:
-                    oldest_key = min(
-                        self._windows,
-                        key=lambda candidate: self._windows[candidate].last_seen,
-                    )
-                    del self._windows[oldest_key]
+                    self._windows.popitem(last=False)
                 window = _UserMessageRateWindow()
                 self._windows[identity_key] = window
 
@@ -77,6 +73,7 @@ class UserMessageRateLimiter:
             self._discard_expired(window.hour_hits, hour_cutoff)
             self._discard_expired(window.burst_hits, now - self.burst_seconds)
             window.last_seen = now
+            self._windows.move_to_end(identity_key)
             minute_blocked = len(window.minute_hits) >= self.per_minute
             hour_blocked = len(window.hour_hits) >= self.per_hour
             burst_blocked = len(window.burst_hits) >= self.burst
@@ -128,6 +125,8 @@ class UserMessageRateLimiter:
             hits.popleft()
 
     def _evict_stale(self, cutoff: float) -> None:
-        stale_keys = [key for key, window in self._windows.items() if window.last_seen <= cutoff]
-        for key in stale_keys:
-            del self._windows[key]
+        while self._windows:
+            key = next(iter(self._windows))
+            if self._windows[key].last_seen > cutoff:
+                break
+            self._windows.popitem(last=False)

@@ -77,16 +77,25 @@ class ArchiveMediaStorage:
     def usage(self) -> tuple[int, int]:
         """Include Web and Telegram originals, derivatives and temporary files."""
         total = 0
-        for root in (self.root, self.data_dir / "web-media"):
-            for directory, subdirs, files in os.walk(root, followlinks=False):
-                subdirs[:] = [name for name in subdirs if not (Path(directory) / name).is_symlink()]
-                for name in files:
-                    path = Path(directory) / name
-                    try:
-                        if not path.is_symlink():
-                            total += path.stat().st_size
-                    except FileNotFoundError:
-                        continue
+        pending = [self.root, self.data_dir / "web-media"]
+        while pending:
+            directory = pending.pop()
+            if directory.is_symlink():
+                continue
+            try:
+                with os.scandir(directory) as entries:
+                    for entry in entries:
+                        try:
+                            if entry.is_dir(follow_symlinks=False):
+                                pending.append(Path(entry.path))
+                            elif entry.is_file(follow_symlinks=False):
+                                # DirEntry reuses filesystem metadata instead of separate
+                                # Path.is_symlink()/stat() calls for every stored file.
+                                total += entry.stat(follow_symlinks=False).st_size
+                        except FileNotFoundError:
+                            continue
+            except FileNotFoundError:
+                continue
         return total, shutil.disk_usage(self.data_dir).free
 
     def resolve(self, relative: str) -> Path:

@@ -4,6 +4,7 @@ import asyncio
 import io
 import uuid
 from collections.abc import AsyncIterator
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,7 @@ from resolvate.console_admin import recover
 from resolvate.console_auth import ConsoleAuth
 from resolvate.console_events import ConsoleEvents
 from resolvate.console_folders import ConsoleFolders
+from resolvate.console_service import ConsoleService
 from resolvate.database import Database
 from resolvate.installation import (
     ProjectManager,
@@ -31,15 +33,20 @@ from resolvate.installation import (
 )
 from resolvate.models import (
     ConsoleAccount,
+    ConsoleRead,
     ConsoleSession,
+    Direction,
     InboundUpdate,
     Project,
     Ticket,
     TicketFolder,
+    TicketMessage,
     User,
     UserIdentity,
+    utcnow,
 )
 from resolvate.projects import ProjectService, membership, runtime_settings
+from resolvate.service_types import TicketNotFoundError
 from resolvate.services import TicketService
 from resolvate.web_models import MediaAsset, SystemSetting
 
@@ -143,6 +150,111 @@ async def test_database_boundary_and_pool_reuse(installation: Any) -> None:
                     "VALUES (:other, now(), now())"
                 ),
                 {"other": first.id},
+            )
+
+
+async def test_console_unread_and_ticket_detail_preserve_project_isolation(
+    installation: Any,
+) -> None:
+    database, settings, _, _, alice, bob, first, second, _ = installation
+    boundary = utcnow()
+    ids: list[str] = []
+    for project, other_operator in ((first, bob), (second, alice)):
+        db = database.for_project(project.id)
+        tickets = TicketService(db)
+        ticket = await tickets.open_or_reopen(
+            telegram_user_id=1234, display_name=project.name, username=None
+        )
+        ids.append(ticket.id)
+        async with db.session() as session:
+            # Before, at, and after the receipt; only the final incoming row is unread.
+            for direction, suppressed, at in (
+                (Direction.USER_TO_OPERATOR, False, boundary - timedelta(seconds=1)),
+                (Direction.USER_TO_OPERATOR, False, boundary),
+                (Direction.USER_TO_OPERATOR, False, boundary + timedelta(seconds=1)),
+                (Direction.USER_TO_OPERATOR, True, boundary + timedelta(seconds=2)),
+                (Direction.OPERATOR_TO_USER, False, boundary + timedelta(seconds=3)),
+            ):
+                session.add(
+                    TicketMessage(
+                        ticket_id=ticket.id,
+                        direction=direction,
+                        suppressed=suppressed,
+                        created_at=at,
+                        content="test",
+                    )
+                )
+            session.add(
+                ConsoleRead(account_id=other_operator.id, ticket_id=ticket.id, through_at=boundary)
+            )
+            await session.commit()
+
+    for project, operator, other_operator, ticket_id, foreign_id in (
+        (first, alice, bob, ids[0], ids[1]),
+        (second, bob, alice, ids[1], ids[0]),
+    ):
+        db = database.for_project(project.id)
+        tickets = TicketService(db)
+        service = ConsoleService(db, tickets, settings)
+        for account, expected in ((operator, 3), (other_operator, 1)):
+            result = await service.list_tickets(
+                account, archived=False, query="", limit=50, offset=0
+            )
+            assert [(item["id"], item["unread"]) for item in result] == [(ticket_id, expected)]
+        assert (await tickets.get_ticket(ticket_id)).display_name == project.name
+        with pytest.raises(TicketNotFoundError):
+            await tickets.get_ticket(foreign_id)
+
+
+async def test_console_pagination_filters_before_limit_and_keeps_tied_order(
+    installation: Any,
+) -> None:
+    database, settings, _, _, alice, _, first, second, _ = installation
+    at = utcnow()
+    for project in (first, second):
+        db = database.for_project(project.id)
+        tickets = TicketService(db)
+        for index in range(8):
+            ticket = await tickets.open_or_reopen(
+                telegram_user_id=2000 + index,
+                display_name="Find%_" if index < 6 else "Other",
+                username=None,
+            )
+            async with db.session() as session:
+                stored = await session.get(Ticket, ticket.id)
+                stored.status = "closed" if index % 2 else "open"
+                stored.last_activity_at = at
+                session.add(
+                    TicketMessage(
+                        ticket_id=ticket.id,
+                        direction=Direction.USER_TO_OPERATOR,
+                        content=f"preview {index}",
+                        created_at=at,
+                    )
+                )
+                await session.commit()
+
+    db = database.for_project(first.id)
+    service = ConsoleService(db, TicketService(db), settings)
+    for archived in (False, True):
+        for query, expected_count in (("", 4), ("Find%_", 3)):
+            full = await service.list_tickets(
+                alice, archived=archived, query=query, limit=50, offset=0
+            )
+            assert len(full) == expected_count
+            assert [item["id"] for item in full] == sorted(
+                (item["id"] for item in full), reverse=True
+            )
+            pages = []
+            for offset in (0, 2, 4):
+                pages.extend(
+                    await service.list_tickets(
+                        alice, archived=archived, query=query, limit=2, offset=offset
+                    )
+                )
+            assert pages == full
+            assert all(
+                item["unread"] == 1 and item["preview"].startswith("preview") for item in full
             )
 
 
@@ -417,6 +529,39 @@ async def test_folder_database_boundary_rejects_cross_project_references(install
         await session.commit()
         assert (await session.get(Ticket, ticket.id)).folder_id is None
     assert len(await ConsoleFolders(b).list()) == 1
+
+
+async def test_typed_reference_checks_cover_insert_and_update(installation: Any) -> None:
+    database, _, _, _, _, _, first, second, _ = installation
+    a, b = database.for_project(first.id), database.for_project(second.id)
+    ticket_a = await TicketService(a).open_or_reopen(
+        telegram_user_id=556, display_name="First", username=None
+    )
+    ticket_b = await TicketService(b).open_or_reopen(
+        telegram_user_id=557, display_name="Second", username=None
+    )
+    async with b.session() as session:
+        foreign_user = (await session.get(Ticket, ticket_b.id)).user_id
+    async with a.session() as session:
+        definition = await session.scalar(
+            text(
+                "SELECT pg_get_triggerdef(oid) FROM pg_trigger "
+                "WHERE tgrelid = 'tickets'::regclass AND tgname = 'project_ref_user_id'"
+            )
+        )
+        assert "UPDATE OF user_id, project_id" in definition
+        assert "'integer'" in definition
+        # Unrelated hot-path updates still succeed, while FK changes are checked.
+        await session.execute(
+            text("UPDATE tickets SET last_activity_at = now() WHERE id = :id"), {"id": ticket_a.id}
+        )
+        await session.commit()
+        with pytest.raises(DBAPIError):
+            await session.execute(
+                text("UPDATE tickets SET user_id = :user WHERE id = :id"),
+                {"user": foreign_user, "id": ticket_a.id},
+            )
+        await session.rollback()
 
 
 async def test_project_configuration_has_no_ambient_secrets(

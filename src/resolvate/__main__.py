@@ -369,6 +369,7 @@ async def _run_project(
         prepare_reopened_customer_topic=adapter.prepare_reopened_customer_topic,
         source_snapshot=topic_archive.source_message,
         runtime_health=runtime_health,
+        wake_event=database.delivery_ready,
     )
     notification_worker: NotificationWebhookWorker | None = None
     notification_worker_task: asyncio.Task[None] | None = None

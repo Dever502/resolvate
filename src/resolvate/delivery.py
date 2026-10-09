@@ -64,6 +64,7 @@ class DeliveryWorker:
         stale_delivery_after_seconds: int = 300,
         concurrency: int = DELIVERY_CONCURRENCY,
         monotonic: Callable[[], float] = time.monotonic,
+        wake_event: asyncio.Event | None = None,
     ) -> None:
         if stale_recovery_interval_seconds <= 0:
             raise ValueError("stale_recovery_interval_seconds must be positive")
@@ -89,12 +90,16 @@ class DeliveryWorker:
         self._monotonic = monotonic
         self._next_stale_recovery_at = 0.0
         self._stopped = asyncio.Event()
+        self._ready = wake_event if wake_event is not None else asyncio.Event()
 
     async def run(self) -> None:
         if self.runtime_health is not None:
             self.runtime_health.starting("delivery_worker")
         while not self._stopped.is_set():
             try:
+                # Clear before claiming: a commit racing the query must remain
+                # visible to the subsequent wait, even if the query saw no jobs.
+                self._ready.clear()
                 await self._release_stale_deliveries_if_due()
                 self._record_progress()
                 jobs = await self.outbox.claim_due_deliveries(limit=self.concurrency)
@@ -141,6 +146,7 @@ class DeliveryWorker:
 
     def stop(self) -> None:
         self._stopped.set()
+        self._ready.set()
 
     async def _process_claimed_jobs(self, jobs: list[DeliveryJob]) -> None:
         if self._stopped.is_set():
@@ -690,7 +696,9 @@ class DeliveryWorker:
             )
 
     async def _wait_for_poll_interval(self, *, delay_seconds: float | None = None) -> None:
+        if self._stopped.is_set():
+            return
         await wait_for_event(
-            self._stopped,
+            self._ready if delay_seconds is None else self._stopped,
             DELIVERY_POLL_INTERVAL_SECONDS if delay_seconds is None else delay_seconds,
         )

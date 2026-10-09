@@ -5,7 +5,7 @@ from datetime import timedelta
 import pytest
 from project_support import ProjectDatabase as Database
 from project_support import upgrade_database
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from resolvate.durable_work import DurableWorkRepository
 from resolvate.models import (
@@ -195,6 +195,23 @@ async def assert_retention_policy(
     assert sensitive_message is not None
     assert sensitive_message.sensitive is False
     assert "sub.example" not in str(sensitive_message.content)
+
+    async def row_versions() -> tuple[str, str]:
+        async with ticket_service.database.session() as session:
+            delivery = await session.scalar(
+                text("SELECT xmin::text FROM delivery_outbox WHERE id = 'delivery-failed'")
+            )
+            reconciliation = await session.scalar(
+                text(
+                    "SELECT xmin::text FROM reconciliation_outbox "
+                    "WHERE id = 'reconciliation-failed'"
+                )
+            )
+            return str(delivery), str(reconciliation)
+
+    versions = await row_versions()
+    await DurableWorkRepository(ticket_service.database).purge_expired_terminal_work(now=now)
+    assert await row_versions() == versions
 
 
 async def test_retention_prunes_only_expired_terminal_work_from_orm_schema(

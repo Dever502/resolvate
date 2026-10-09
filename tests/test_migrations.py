@@ -13,7 +13,7 @@ from resolvate.migrations import (
     upgrade_database,
 )
 
-HEAD_REVISION = "0007_ticket_folders"
+HEAD_REVISION = "0009_console_read_paths"
 
 
 async def current_revision(database_url: str) -> str:

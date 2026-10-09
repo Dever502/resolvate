@@ -15,8 +15,12 @@ from resolvate.models import (
     InboundUpdate,
     NotificationOutbox,
     OperatorAction,
+    Ticket,
+    TicketChannel,
     TicketMessage,
     TicketStatus,
+    User,
+    UserIdentity,
     WorkStatus,
     utcnow,
 )
@@ -147,6 +151,65 @@ async def test_ticket_listing_eager_loads_users_and_identities(
     assert len(tickets) == 3
     assert len(statements) == 3  # Transaction scope + eager tickets and identities; no N+1.
     assert tickets[0].telegram_user_id == 1100
+
+
+@pytest.mark.parametrize("provider", ["telegram", "web_external_id", "web_email"])
+async def test_ticket_detail_matches_existing_view_with_one_query(
+    ticket_service: TicketService, provider: str
+) -> None:
+    async with ticket_service.database.session() as session:
+        user = User(display_name="Customer", username="customer", email="user@example.com")
+        session.add(user)
+        await session.flush()
+        identity = UserIdentity(user_id=user.id, provider=provider, external_id="1234")
+        session.add(identity)
+        session.add(
+            UserIdentity(
+                user_id=user.id,
+                provider="web_external_id" if provider == "telegram" else "telegram",
+                external_id="5678",
+            )
+        )
+        ticket = Ticket(
+            user_id=user.id,
+            channel=TicketChannel.TELEGRAM if provider == "telegram" else TicketChannel.WEB,
+            status=TicketStatus.OPEN,
+            topic_id=123,
+        )
+        session.add(ticket)
+        await session.commit()
+        expected = await ticket_service._ticket_view(session, ticket)
+
+    statements: list[str] = []
+
+    def record(
+        _connection: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: object,
+    ) -> None:
+        statements.append(statement)
+
+    engine = ticket_service.database.engine.sync_engine
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        actual = await ticket_service.get_ticket(ticket.id)
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+    assert actual == expected
+    assert actual.identity_provider == provider
+    assert len(statements) == 2  # Project transaction scope + ticket/user/identity query.
+
+    async with ticket_service.database.session() as session:
+        stored = await session.get(UserIdentity, identity.id)
+        await session.delete(stored)
+        await session.commit()
+    with pytest.raises(TicketNotFoundError):
+        await ticket_service.get_ticket(ticket.id)
+    with pytest.raises(TicketNotFoundError):
+        await ticket_service.get_ticket("missing-ticket")
 
 
 async def test_internal_note_is_saved_without_delivery(

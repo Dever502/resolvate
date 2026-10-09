@@ -147,6 +147,20 @@ class Ticket(ProjectScoped):
         Index("ix_tickets_status_updated", "status", "updated_at"),
         Index("ix_tickets_status_last_activity", "status", "last_activity_at"),
         Index("ix_tickets_project_folder", "project_id", "folder_id"),
+        Index(
+            "ix_tickets_active_page",
+            "project_id",
+            text("last_activity_at DESC"),
+            text("id DESC"),
+            postgresql_where=text("status <> 'closed'"),
+        ),
+        Index(
+            "ix_tickets_archive_page",
+            "project_id",
+            text("last_activity_at DESC"),
+            text("id DESC"),
+            postgresql_where=text("status = 'closed'"),
+        ),
         UniqueConstraint("user_id", "channel", name="uq_ticket_user_channel"),
         UniqueConstraint("project_id", "topic_id", name="uq_tickets_project_topic"),
     )
@@ -202,6 +216,19 @@ class TicketMessage(ProjectScoped):
             name="uq_ticket_message_rating_cycle",
         ),
         Index("ix_ticket_messages_ticket_created", "ticket_id", "created_at"),
+        Index(
+            "ix_ticket_messages_unread",
+            "project_id",
+            "ticket_id",
+            "created_at",
+            postgresql_where=text("direction = 'user_to_operator' AND suppressed IS false"),
+        ),
+        Index(
+            "ix_ticket_messages_project_time",
+            "project_id",
+            "created_at",
+            postgresql_where=text("suppressed IS false"),
+        ),
         Index(
             "ix_ticket_messages_direction_channel_created",
             "direction",
