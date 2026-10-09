@@ -66,22 +66,19 @@ class ConsoleService:
         folder_id: str | None = None,
         unfiled: bool = False,
     ) -> list[dict[str, Any]]:
-        read_at = (
-            select(ConsoleRead.through_at)
-            .where(ConsoleRead.ticket_id == Ticket.id, ConsoleRead.account_id == account.id)
-            .correlate(Ticket)
-            .scalar_subquery()
-        )
         unread = (
             select(func.count())
             .select_from(TicketMessage)
             .where(
                 TicketMessage.ticket_id == Ticket.id,
-                TicketMessage.direction == Direction.USER_TO_OPERATOR,
+                TicketMessage.direction == literal_column("'user_to_operator'"),
                 TicketMessage.suppressed.is_(False),
-                or_(read_at.is_(None), TicketMessage.created_at > read_at),
+                # Join the receipt once per ticket, not once per historical message.
+                # The partial covering index avoids fetching message bodies to count.
+                TicketMessage.created_at
+                > func.coalesce(ConsoleRead.through_at, literal_column("'-infinity'::timestamptz")),
             )
-            .correlate(Ticket)
+            .correlate(Ticket, ConsoleRead)
             .scalar_subquery()
         )
         latest = (
@@ -99,20 +96,21 @@ class ConsoleService:
             .order_by(TicketMessage.created_at.desc(), TicketMessage.id.desc())
             .limit(1)
         )
-        statement = select(Ticket, User, unread.label("unread"), latest.scalar_subquery()).join(
-            User
-        )
-        statement = statement.where(
-            # Fixed predicates let PostgreSQL use partial indexes even with a
-            # generic prepared plan. No user input is interpolated here.
-            Ticket.status == literal_column("'closed'")
-            if archived
-            else Ticket.status != literal_column("'closed'")
+        page = (
+            select(Ticket.id)
+            .join(User)
+            .where(
+                # Fixed predicates let PostgreSQL use partial indexes even with a
+                # generic prepared plan. No user input is interpolated here.
+                Ticket.status == literal_column("'closed'")
+                if archived
+                else Ticket.status != literal_column("'closed'")
+            )
         )
         if folder_id:
-            statement = statement.where(Ticket.folder_id == folder_id)
+            page = page.where(Ticket.folder_id == folder_id)
         elif unfiled:
-            statement = statement.where(Ticket.folder_id.is_(None))
+            page = page.where(Ticket.folder_id.is_(None))
         if query:
             pattern = (
                 "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
@@ -120,7 +118,7 @@ class ConsoleService:
             identities = select(UserIdentity.user_id).where(
                 UserIdentity.external_id.ilike(pattern, escape="\\")
             )
-            statement = statement.where(
+            page = page.where(
                 or_(
                     User.display_name.ilike(pattern, escape="\\"),
                     User.username.ilike(pattern, escape="\\"),
@@ -129,14 +127,26 @@ class ConsoleService:
                     Ticket.user_id.in_(identities),
                 )
             )
+        # Select the page before evaluating history subqueries; OFFSET must not
+        # count unread messages or read previews of every skipped ticket.
+        page_ids = (
+            page.order_by(Ticket.last_activity_at.desc(), Ticket.id.desc())
+            .offset(offset)
+            .limit(limit)
+            .cte("ticket_page")
+        )
+        statement = (
+            select(Ticket, User, unread.label("unread"), latest.scalar_subquery())
+            .join(page_ids, page_ids.c.id == Ticket.id)
+            .join(User)
+            .outerjoin(
+                ConsoleRead,
+                (ConsoleRead.ticket_id == Ticket.id) & (ConsoleRead.account_id == account.id),
+            )
+            .order_by(Ticket.last_activity_at.desc(), Ticket.id.desc())
+        )
         async with self.database.session() as session:
-            rows = (
-                await session.execute(
-                    statement.order_by(Ticket.last_activity_at.desc(), Ticket.id.desc())
-                    .offset(offset)
-                    .limit(limit)
-                )
-            ).all()
+            rows = (await session.execute(statement)).all()
         return [
             {
                 "id": ticket.id,

@@ -217,6 +217,13 @@ class TicketMessage(ProjectScoped):
         ),
         Index("ix_ticket_messages_ticket_created", "ticket_id", "created_at"),
         Index(
+            "ix_ticket_messages_unread",
+            "project_id",
+            "ticket_id",
+            "created_at",
+            postgresql_where=text("direction = 'user_to_operator' AND suppressed IS false"),
+        ),
+        Index(
             "ix_ticket_messages_project_time",
             "project_id",
             "created_at",

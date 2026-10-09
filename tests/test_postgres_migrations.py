@@ -18,11 +18,12 @@ from resolvate.models import Base
 
 pytestmark = pytest.mark.postgres
 
-HEAD_REVISION = "0008_backend_hot_paths"
+HEAD_REVISION = "0009_console_read_paths"
 EXPECTED_QUERY_INDEXES = {
     "ix_tickets_status_updated",
     "ix_tickets_status_last_activity",
     "ix_ticket_messages_ticket_created",
+    "ix_ticket_messages_unread",
     "ix_ticket_messages_sensitive_created",
     "ix_delivery_outbox_claim",
     "ix_delivery_outbox_stale",
@@ -73,6 +74,7 @@ def test_repository_has_one_head_above_postgresql_baseline() -> None:
     assert scripts.get_heads() == [HEAD_REVISION]
     assert [revision.revision for revision in scripts.walk_revisions()] == [
         HEAD_REVISION,
+        "0008_backend_hot_paths",
         "0007_ticket_folders",
         "0006_project_branding",
         "0005_projects",
@@ -92,7 +94,10 @@ async def test_fresh_upgrade_exactly_matches_orm_metadata(
     assert await _metadata_differences(postgres_database_url) == []
 
 
-@pytest.mark.parametrize("start", ["0005_projects", "0006_project_branding", "0007_ticket_folders"])
+@pytest.mark.parametrize(
+    "start",
+    ["0005_projects", "0006_project_branding", "0007_ticket_folders", "0008_backend_hot_paths"],
+)
 async def test_branding_and_folders_upgrade_preserves_existing_data(
     postgres_database_url: str, start: str
 ) -> None:
