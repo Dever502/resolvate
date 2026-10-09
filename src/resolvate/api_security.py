@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 
 
@@ -21,27 +21,24 @@ class InMemoryRateLimiter:
         self.limit = limit
         self.window_seconds = window_seconds
         self.max_keys = max_keys
-        self._windows: dict[str, _RateWindow] = {}
+        self._windows: OrderedDict[str, _RateWindow] = OrderedDict()
         self._lock = asyncio.Lock()
 
     async def consume(self, key: str) -> tuple[bool, int]:
-        now = time.monotonic()
-        cutoff = now - self.window_seconds
         async with self._lock:
+            now = time.monotonic()
+            cutoff = now - self.window_seconds
             window = self._windows.get(key)
             if window is None:
                 self._evict_stale(cutoff)
                 if len(self._windows) >= self.max_keys:
-                    oldest_key = min(
-                        self._windows,
-                        key=lambda candidate: self._windows[candidate].last_seen,
-                    )
-                    del self._windows[oldest_key]
+                    self._windows.popitem(last=False)
                 window = _RateWindow()
                 self._windows[key] = window
             while window.hits and window.hits[0] <= cutoff:
                 window.hits.popleft()
             window.last_seen = now
+            self._windows.move_to_end(key)
             if len(window.hits) >= self.limit:
                 retry_after = max(1, int(window.hits[0] + self.window_seconds - now + 0.999))
                 return False, retry_after
@@ -53,6 +50,10 @@ class InMemoryRateLimiter:
             self._windows.pop(key, None)
 
     def _evict_stale(self, cutoff: float) -> None:
-        stale_keys = [key for key, window in self._windows.items() if window.last_seen <= cutoff]
-        for key in stale_keys:
-            del self._windows[key]
+        # Access order is also last_seen order. Visit only expired entries, not
+        # every client on each new key (quadratic under high-cardinality traffic).
+        while self._windows:
+            key = next(iter(self._windows))
+            if self._windows[key].last_seen > cutoff:
+                break
+            self._windows.popitem(last=False)

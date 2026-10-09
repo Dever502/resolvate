@@ -21,6 +21,22 @@ class Downloader:
         return destination
 
 
+def test_usage_counts_real_files_without_following_symlinks(tmp_path: Path) -> None:
+    storage = ArchiveMediaStorage(tmp_path, reserve_bytes=0)
+    storage.root.mkdir()
+    assets = tmp_path / "web-media" / "assets"
+    assets.mkdir(parents=True)
+    (storage.root / "original.blob").write_bytes(b"123")
+    (assets / "file.png").write_bytes(b"12345")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "not-media").write_bytes(b"x" * 100)
+    (assets / "directory-link").symlink_to(outside, target_is_directory=True)
+    (assets / "file-link").symlink_to(outside / "not-media")
+    (assets / "missing-link").symlink_to(outside / "missing")
+    assert storage.usage()[0] == 8
+
+
 def files(path: Path, pattern: str) -> list[Path]:
     return list(path.rglob(pattern))
 

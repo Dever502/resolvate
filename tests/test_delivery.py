@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
+import pytest
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.methods import CopyMessage, SendMessage
 from pydantic import SecretStr
@@ -635,6 +636,74 @@ async def test_delivery_worker_recovers_stale_claims_periodically(tmp_path: Path
 
     assert service.claim_calls == 3
     assert service.release_calls == [77, 77]
+
+
+@pytest.mark.parametrize("during_claim", [False, True])
+async def test_delivery_wakeup_does_not_wait_for_poll_or_lose_racing_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, during_claim: bool
+) -> None:
+    monkeypatch.setattr("resolvate.delivery.DELIVERY_POLL_INTERVAL_SECONDS", 60)
+    ready = asyncio.Event()
+    waiting = asyncio.Event()
+
+    class PollingService:
+        calls = 0
+
+        async def release_stale_deliveries(self, **kwargs: Any) -> int:
+            return 0
+
+        async def claim_due_deliveries(self, **kwargs: Any) -> list[DeliveryJob]:
+            self.calls += 1
+            if self.calls == 1 and during_claim:
+                ready.set()
+            if self.calls == 2:
+                worker.stop()
+            return []
+
+    class ObservedWorker(DeliveryWorker):
+        async def _wait_for_poll_interval(self, *, delay_seconds: float | None = None) -> None:
+            waiting.set()
+            await super()._wait_for_poll_interval(delay_seconds=delay_seconds)
+
+    service = PollingService()
+    worker = delivery_worker(
+        tmp_path,
+        service=service,
+        bot=BotMustNotSend(),
+        worker_type=ObservedWorker,
+        wake_event=ready,
+    )
+    task = asyncio.create_task(worker.run())
+    try:
+        await asyncio.wait_for(waiting.wait(), 2)
+        if not during_claim:
+            ready.set()
+        await asyncio.wait_for(task, 2)
+        assert service.calls == 2
+    finally:
+        worker.stop()
+        await task
+
+
+async def test_delivery_hint_does_not_bypass_error_backoff_and_stop_interrupts_wait(
+    tmp_path: Path,
+) -> None:
+    ready = asyncio.Event()
+    ready.set()
+    worker = delivery_worker(
+        tmp_path, service=FakeTicketService(), bot=BotMustNotSend(), wake_event=ready
+    )
+    backoff = asyncio.create_task(worker._wait_for_poll_interval(delay_seconds=60))
+    await asyncio.sleep(0.01)
+    assert not backoff.done()
+    worker.stop()
+    await asyncio.wait_for(backoff, 2)
+
+    worker = delivery_worker(tmp_path, service=FakeTicketService(), bot=BotMustNotSend())
+    waiting = asyncio.create_task(worker._wait_for_poll_interval())
+    await asyncio.sleep(0)
+    worker.stop()
+    await asyncio.wait_for(waiting, 2)
 
 
 async def test_missing_topic_recovery_failure_requeues_delivery_immediately(

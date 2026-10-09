@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import Any
 
@@ -67,6 +68,11 @@ def _write_scope(session: Session, context: Any, instances: Any) -> None:
 @event.listens_for(ScopedSession, "after_flush")
 def _console_flushed(session: Session, context: Any) -> None:
     if any(
+        getattr(row, "__tablename__", "") == "delivery_outbox"
+        for row in session.new | session.dirty
+    ):
+        session.info["delivery_changed"] = True
+    if any(
         getattr(row, "__tablename__", "") in VISIBLE_TABLES
         or (
             getattr(row, "__tablename__", "") == "delivery_outbox"
@@ -86,6 +92,10 @@ def _console_executed(state: ORMExecuteState) -> Any:
         visible = table in VISIBLE_TABLES or state.execution_options.get("console_change", False)
         if visible and getattr(result, "rowcount", None) != 0:
             state.session.info["console_changed"] = True
+        if table == "delivery_outbox" and (
+            state.is_insert or (getattr(result, "rowcount", 0) or 0) > 0
+        ):
+            state.session.info["delivery_changed"] = True
     return result
 
 
@@ -98,12 +108,17 @@ def _console_committed(session: Session) -> None:
     events = session.info.get("console_events")
     if changed and project and events is not None:
         events.publish(project)
+    delivery_changed = session.info.pop("delivery_changed", False)
+    delivery_ready = session.info.get("delivery_ready")
+    if delivery_changed and project and delivery_ready is not None:
+        delivery_ready.set()
 
 
 @event.listens_for(ScopedSession, "after_soft_rollback")
 def _console_rolled_back(session: Session, previous: Any) -> None:
     if previous.parent is None:
         session.info.pop("console_changed", None)
+        session.info.pop("delivery_changed", None)
 
 
 class Database:
@@ -135,11 +150,18 @@ class Database:
         self._configure_sessions()
 
     def _configure_sessions(self) -> None:
+        # Best-effort wakeup for this project runtime, never a replacement for
+        # durable claiming/polling. Other processes/connections still use polling.
+        self.delivery_ready = asyncio.Event()
         self.sessions = async_sessionmaker(
             self.engine,
             expire_on_commit=False,
             sync_session_class=ScopedSession,
-            info={"project_id": self.project_id, "console_events": self.console_events},
+            info={
+                "project_id": self.project_id,
+                "console_events": self.console_events,
+                "delivery_ready": self.delivery_ready,
+            },
         )
 
     def for_project(self, project_id: str) -> Database:

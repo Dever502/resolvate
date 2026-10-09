@@ -106,7 +106,10 @@ class ArchiveRetention:
         after: str = "",
         oldest_first: bool = False,
         compression: bool = False,
+        limit: int = 100,
     ) -> list[str]:
+        if not 1 <= limit <= 100:
+            raise ValueError("media candidate limit must be between 1 and 100")
         last_archive = (
             select(func.max(TopicArchive.archived_at))
             .join(TranscriptMessage, TranscriptMessage.archive_id == TopicArchive.id)
@@ -143,7 +146,7 @@ class ArchiveRetention:
                             eligible_media(before),
                         )
                         .order_by(*ordering)
-                        .limit(100)
+                        .limit(limit)
                     )
                 ).all()
             )

@@ -15,6 +15,40 @@ from resolvate.models import DeliveryOutbox, DeliveryStatus, ProjectMember, Tick
 from resolvate.outbox_repository import OutboxRepository
 
 
+async def test_delivery_hint_only_after_commit_and_empty_claim_does_not_spin(console: Any) -> None:
+    _, database, tickets, _, _, _ = console
+    ready = database.delivery_ready
+    outbox = OutboxRepository(database)
+    assert not ready.is_set()
+    assert await outbox.claim_due_deliveries() == []
+    assert not ready.is_set()
+    await customer(tickets)
+    assert ready.is_set()
+    ready.clear()
+    other = database.for_project("00000000-0000-4000-8000-000000000009")
+    async with database.session() as session:
+        job = await session.scalar(select(DeliveryOutbox))
+        assert job is not None
+        job.last_error = "rollback"
+        await session.flush()
+        assert not ready.is_set()
+        await session.rollback()
+        await session.commit()
+        assert not ready.is_set()
+        await session.execute(update(DeliveryOutbox).values(status=DeliveryStatus.DELIVERED))
+        assert not ready.is_set()
+        await session.commit()
+        assert ready.is_set() and not other.delivery_ready.is_set()
+        ready.clear()
+        await session.execute(
+            update(DeliveryOutbox).where(DeliveryOutbox.id == "missing").values(last_error="x")
+        )
+        await session.commit()
+        assert not ready.is_set()
+    assert await outbox.claim_due_deliveries() == []
+    assert not ready.is_set()
+
+
 async def test_events_coalesce_isolate_and_release() -> None:
     hub = ConsoleEvents()
     first = hub.subscribe("one", "operator")

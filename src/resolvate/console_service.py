@@ -6,8 +6,9 @@ import uuid
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import case, func, literal_column, or_, select
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.orm import load_only
 
 from resolvate.config import Settings
 from resolvate.database import Database
@@ -102,9 +103,11 @@ class ConsoleService:
             User
         )
         statement = statement.where(
-            Ticket.status == TicketStatus.CLOSED
+            # Fixed predicates let PostgreSQL use partial indexes even with a
+            # generic prepared plan. No user input is interpolated here.
+            Ticket.status == literal_column("'closed'")
             if archived
-            else Ticket.status != TicketStatus.CLOSED
+            else Ticket.status != literal_column("'closed'")
         )
         if folder_id:
             statement = statement.where(Ticket.folder_id == folder_id)
@@ -183,11 +186,15 @@ class ConsoleService:
             rows = rows[:50]
             cursor = encode_cursor(rows[-1].created_at, rows[-1].id) if rows else None
             if known and not before:
-                loaded = list(
-                    (await session.scalars(base.where(TicketMessage.id.in_(known)))).all()
-                )
-                if loaded:
-                    first = min(loaded, key=lambda item: (item.created_at, item.id))
+                first = (
+                    await session.execute(
+                        base.with_only_columns(TicketMessage.created_at, TicketMessage.id)
+                        .where(TicketMessage.id.in_(known))
+                        .order_by(TicketMessage.created_at, TicketMessage.id)
+                        .limit(1)
+                    )
+                ).first()
+                if first is not None:
                     window = list(
                         (
                             await session.scalars(
@@ -213,10 +220,15 @@ class ConsoleService:
             commands = (
                 list(
                     (
-                        await session.scalars(
-                            select(ConsoleSend).where(
-                                ConsoleSend.message_id.in_([row.id for row in rows])
-                            )
+                        await session.execute(
+                            select(
+                                ConsoleSend.id,
+                                ConsoleSend.message_id,
+                                func.jsonb_path_query_array(
+                                    ConsoleSend.deliveries,
+                                    literal_column("'$.keyvalue().key'::jsonpath"),
+                                ).label("deliveries"),
+                            ).where(ConsoleSend.message_id.in_([row.id for row in rows]))
                         )
                     ).all()
                 )
@@ -229,7 +241,15 @@ class ConsoleService:
                     item.id: item
                     for item in (
                         await session.scalars(
-                            select(DeliveryOutbox).where(DeliveryOutbox.id.in_(ids))
+                            select(DeliveryOutbox)
+                            .options(
+                                load_only(
+                                    DeliveryOutbox.id,
+                                    DeliveryOutbox.status,
+                                    DeliveryOutbox.last_error,
+                                )
+                            )
+                            .where(DeliveryOutbox.id.in_(ids))
                         )
                     ).all()
                 }
@@ -290,12 +310,13 @@ class ConsoleService:
                 }
             )
         result = delta(items, known)
+        present = set(result["order"])
         result.update(
             {
                 "before": cursor,
                 "reset": reset,
                 "has_older": older,
-                "removed": [ident for ident in known if ident not in result["order"]],
+                "removed": [ident for ident in known if ident not in present],
             }
         )
         return result

@@ -124,6 +124,28 @@ async def test_expiry_keeps_metadata_and_removes_only_old_files(
     assert (maintenance.storage.root / "aa/11.blob").exists()
 
 
+async def test_compression_candidate_limit_keeps_contiguous_cursor(
+    maintenance: ArchiveMaintenance,
+) -> None:
+    ids = []
+    for topic in range(20, 25):
+        _, media_id, _ = await seed(maintenance, days=20, kind="photo", topic=topic)
+        ids.append(media_id)
+    before = utcnow() - timedelta(days=14)
+    first = await maintenance.retention.media_candidates(before, compression=True, limit=2)
+    second = await maintenance.retention.media_candidates(
+        before, compression=True, limit=2, after=first[-1]
+    )
+    third = await maintenance.retention.media_candidates(
+        before, compression=True, limit=2, after=second[-1]
+    )
+    assert len(first) == len(second) == 2
+    assert first + second + third == sorted(ids)
+    for limit in (0, 101):
+        with pytest.raises(ValueError, match="candidate limit"):
+            await maintenance.retention.media_candidates(before, limit=limit)
+
+
 @pytest.mark.parametrize(
     "state", ["live", "preparing", "switching", "retiring", "archived_pending", "uncertain"]
 )

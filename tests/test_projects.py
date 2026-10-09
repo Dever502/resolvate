@@ -419,6 +419,39 @@ async def test_folder_database_boundary_rejects_cross_project_references(install
     assert len(await ConsoleFolders(b).list()) == 1
 
 
+async def test_typed_reference_checks_cover_insert_and_update(installation: Any) -> None:
+    database, _, _, _, _, _, first, second, _ = installation
+    a, b = database.for_project(first.id), database.for_project(second.id)
+    ticket_a = await TicketService(a).open_or_reopen(
+        telegram_user_id=556, display_name="First", username=None
+    )
+    ticket_b = await TicketService(b).open_or_reopen(
+        telegram_user_id=557, display_name="Second", username=None
+    )
+    async with b.session() as session:
+        foreign_user = (await session.get(Ticket, ticket_b.id)).user_id
+    async with a.session() as session:
+        definition = await session.scalar(
+            text(
+                "SELECT pg_get_triggerdef(oid) FROM pg_trigger "
+                "WHERE tgrelid = 'tickets'::regclass AND tgname = 'project_ref_user_id'"
+            )
+        )
+        assert "UPDATE OF user_id, project_id" in definition
+        assert "'integer'" in definition
+        # Unrelated hot-path updates still succeed, while FK changes are checked.
+        await session.execute(
+            text("UPDATE tickets SET last_activity_at = now() WHERE id = :id"), {"id": ticket_a.id}
+        )
+        await session.commit()
+        with pytest.raises(DBAPIError):
+            await session.execute(
+                text("UPDATE tickets SET user_id = :user WHERE id = :id"),
+                {"user": foreign_user, "id": ticket_a.id},
+            )
+        await session.rollback()
+
+
 async def test_project_configuration_has_no_ambient_secrets(
     installation: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
