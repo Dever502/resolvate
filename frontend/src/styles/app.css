@@ -331,7 +331,15 @@
   .send { flex-shrink: 0; min-height: 40px; padding: .5rem .875rem; }
   .send .icon { width: 1rem; height: 1rem; }
   .composer-hint { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .75rem; margin: .625rem .25rem 0; color: var(--muted); font-size: .75rem; }
-  .attachment { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin-bottom: .625rem; padding: .25rem .5rem .25rem .875rem; border-radius: var(--radius-control); background: var(--canvas); font-size: .8125rem; }
+  .attachment-preview { display: flex; align-items: center; gap: .75rem; min-width: 0; margin-bottom: .625rem; padding: .5rem; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--canvas); font-size: .8125rem; }
+  .attachment-preview-art { display: grid; place-items: center; flex: 0 0 80px; height: 56px; overflow: hidden; border-radius: 5px; color: var(--muted); }
+  .attachment-preview-art canvas { display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; object-fit: contain; }
+  .attachment-preview-art .icon { width: 26px; height: 26px; }
+  .attachment-preview-info { flex: 1; min-width: 0; }
+  .attachment-preview-info p { margin: 0; }
+  .attachment-preview-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+  .attachment-preview-meta, .attachment-preview-hint { color: var(--muted); font-size: .75rem; }
+  .attachment-preview-remove { display: grid; place-items: center; flex: 0 0 40px; height: 40px; padding: .5rem; }
   .reply-options { position: absolute; z-index: 3; left: 1.75rem; right: 1.75rem; bottom: calc(100% + .375rem); max-height: min(280px, 40dvh); overflow: auto; padding: .375rem; border-radius: 12px; background: var(--surface); box-shadow: 0 6px 32px #1d1d1f26; }
   .reply-option { width: 100%; padding: .75rem; border-radius: 7px; line-height: 1.5; white-space: pre-wrap; cursor: pointer; }
   .reply-option[aria-selected="true"] { background: var(--accent-soft); }
