@@ -149,8 +149,12 @@ test.describe("operator flow", () => {
     await start(page, context, request);
     await openAnna(page);
     await composer(page).pressSequentially("/");
+    const groups = page.getByRole("listbox", { name: "Группы ответов" });
+    await expect(groups.getByRole("option")).toHaveCount(2);
+    await page.keyboard.press("Enter");
+    await expect(groups).toBeHidden();
     const replies = page.getByRole("listbox", { name: "Готовые ответы" });
-    await expect(replies.getByRole("option")).toHaveCount(3);
+    await expect(replies.getByRole("option")).toHaveCount(2);
     await expect(replies.getByRole("option").first()).toHaveAttribute("aria-selected", "true");
     await page.keyboard.press("ArrowDown");
     const second = replies.getByRole("option").nth(1);
@@ -163,10 +167,48 @@ test.describe("operator flow", () => {
 
     await composer(page).fill("");
     await composer(page).pressSequentially("/нет такого");
-    await expect(replies.getByText("Готовые ответы не найдены")).toBeVisible();
+    await expect(groups.getByText("Ничего не найдено")).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(replies).toBeHidden();
     await expect(composer(page)).toHaveValue("/нет такого");
+  });
+
+  test("quick reply button preserves the draft and searches only the chosen group", async ({ page, context, request, consoleErrors }) => {
+    void consoleErrors;
+    await start(page, context, request);
+    await openAnna(page);
+    await composer(page).fill("Здравствуйте. ");
+    await composer(page).press("End");
+    await page.locator(".composer").getByRole("button", { name: "Готовые ответы" }).click();
+    await page.getByRole("textbox", { name: "Поиск готовых ответов" }).fill("опл");
+    const groups = page.getByRole("listbox", { name: "Группы ответов" });
+    await expect(groups.getByRole("option")).toHaveText(["/оплата"]);
+    await groups.getByRole("option").click();
+    const replies = page.getByRole("listbox", { name: "Готовые ответы" });
+    await expect(replies.getByRole("option")).toHaveCount(1);
+    await replies.getByRole("option").click();
+    await expect(composer(page)).toHaveValue("Здравствуйте. Проверьте, пожалуйста, настройки тарифа.");
+    await expect(replies).toBeHidden();
+    await expect(history(page).getByText("Здравствуйте. Проверьте, пожалуйста, настройки тарифа.")).toHaveCount(0);
+  });
+
+  test("catalog creates a group and a clean reply without an open dialogue", async ({ page, context, request, consoleErrors }) => {
+    void consoleErrors;
+    await start(page, context, request);
+    await page.getByRole("button", { name: "Управление готовыми ответами", exact: true }).click();
+    const catalog = page.getByRole("dialog", { name: "Готовые ответы" });
+    await catalog.getByRole("textbox", { name: "Название группы" }).fill("/vpn");
+    await catalog.getByRole("button", { name: "Создать группу" }).click();
+    await catalog.getByRole("button", { name: "/vpn", exact: true }).click();
+    await catalog.getByRole("textbox", { name: "Текст готового ответа" }).fill("Перезапустите приложение.");
+    await catalog.getByRole("button", { name: "Добавить ответ" }).click();
+    await expect(catalog.getByText("Перезапустите приложение.", { exact: true })).toBeVisible();
+    await catalog.getByRole("button", { name: "Изменить ответ" }).click();
+    await catalog.getByRole("textbox", { name: "Текст готового ответа" }).fill("Обновите приложение.");
+    await catalog.getByRole("button", { name: "Сохранить ответ" }).click();
+    await expect(catalog.getByText("Обновите приложение.", { exact: true })).toBeVisible();
+    await catalog.getByRole("button", { name: "Удалить ответ" }).click();
+    await expect(catalog.getByText("Обновите приложение.", { exact: true })).toBeHidden();
   });
 
   test("live updates: a customer's message arrives through the event stream without a reload", async ({ page, context, request, consoleErrors }) => {

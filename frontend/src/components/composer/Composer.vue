@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, useId, useTemplateRef, watch } from "vue";
-import type { QuickReply } from "../../api/types";
+import type { QuickReply, QuickReplyGroup } from "../../api/types";
 import { fileLabel } from "../../lib/format";
 import { useChatStore } from "../../stores/chat";
 import { useProjectsStore } from "../../stores/projects";
@@ -24,8 +24,17 @@ const workspace = useWorkspaceStore();
 const field = useTemplateRef<HTMLTextAreaElement>("field");
 const picker = useTemplateRef<HTMLInputElement>("picker");
 const listId = useId();
-/** null: the list is closed. */
-const replies = ref<QuickReply[] | null>(null);
+const repliesOpen = ref(false);
+const replies = ref<QuickReply[]>([]);
+const groups = ref<QuickReplyGroup[]>([]);
+const group = ref<QuickReplyGroup | null>(null);
+const query = ref("");
+const buttonMode = ref(false);
+const loading = ref(false);
+const hasMore = ref(false);
+const options = computed(() => group.value ? replies.value : groups.value.map(g => ({ id: g.id, text: '/' + g.name })));
+let insertAt = 0;
+let insertEnd = 0;
 const active = ref(0);
 let replyTimer: ReturnType<typeof setTimeout> | undefined;
 let sequence = 0;
@@ -44,34 +53,90 @@ function resize(): void {
 function closeReplies(): void {
   clearTimeout(replyTimer);
   sequence++;
-  replies.value = null;
+  repliesOpen.value = false;
+  replies.value = [];
+  groups.value = [];
+  group.value = null;
+  loading.value = false;
+}
+
+function search(value: string, more = false): void {
+  query.value = value;
+  clearTimeout(replyTimer);
+  const sent = ++sequence;
+  const projectId = projects.currentId;
+  const selected = group.value;
+  if (!more) { replies.value = []; groups.value = []; active.value = 0; }
+  const offset = more ? options.value.length : 0;
+  loading.value = true;
+  hasMore.value = false;
+  replyTimer = setTimeout(async () => {
+    try {
+      const path = selected ? `replies?group_id=${selected.id}&` : "reply-groups?";
+      const url = `${path}q=${encodeURIComponent(value.slice(0, 100))}&offset=${offset}`;
+      if (selected) {
+        const found = await session.api<QuickReply[]>(url, {}, projectId);
+        if (sent !== sequence || projects.currentId !== projectId) return;
+        replies.value = more ? [...replies.value, ...found] : found;
+        hasMore.value = found.length === 50;
+      } else {
+        const found = await session.api<QuickReplyGroup[]>(url, {}, projectId);
+        if (sent !== sequence || projects.currentId !== projectId) return;
+        groups.value = more ? [...groups.value, ...found] : found;
+        hasMore.value = found.length === 50;
+      }
+    } catch (error) {
+      if (sent === sequence) workspace.fail(error);
+    } finally {
+      if (sent === sequence) loading.value = false;
+    }
+  }, REPLY_DELAY);
 }
 
 function onInput(event: Event): void {
   const value = (event.target as HTMLTextAreaElement).value;
   chat.edit(value);
   resize();
-  closeReplies();
-  if (!/^\/[^\n]*$/.test(value)) return;
-  const sent = ++sequence;
-  replyTimer = setTimeout(async () => {
-    try {
-      const found = await session.api<QuickReply[]>(
-        `replies?q=${encodeURIComponent(value.slice(1).slice(0, 100))}`, {}, projects.currentId,
-      );
-      if (sent !== sequence || text.value !== value) return;
-      replies.value = found;
-      active.value = 0;
-    } catch (error) {
-      workspace.fail(error);
-    }
-  }, REPLY_DELAY);
+  if (!/^\/[^\n]*$/.test(value)) { closeReplies(); return; }
+  buttonMode.value = false;
+  repliesOpen.value = true;
+  const prefix = group.value ? `/${group.value.name} ` : "";
+  if (prefix && value.startsWith(prefix)) search(value.slice(prefix.length));
+  else { group.value = null; search(value.slice(1)); }
+}
+
+async function openByButton(): Promise<void> {
+  if (repliesOpen.value) { closeReplies(); return; }
+  insertAt = field.value?.selectionStart ?? text.value.length;
+  insertEnd = field.value?.selectionEnd ?? insertAt;
+  buttonMode.value = true;
+  repliesOpen.value = true;
+  search("");
+  await nextTick();
+  document.querySelector<HTMLInputElement>('[aria-label="Поиск готовых ответов"]')?.focus();
+}
+
+function back(): void {
+  group.value = null;
+  if (!buttonMode.value) chat.edit("/");
+  search("");
 }
 
 async function choose(index: number): Promise<void> {
-  const reply = replies.value?.[index];
+  if (loading.value) return;
+  if (!group.value) {
+    const selected = groups.value[index];
+    if (!selected) return;
+    group.value = selected;
+    if (!buttonMode.value) chat.edit(`/${selected.name} `);
+    search("");
+    return;
+  }
+  const reply = replies.value[index];
   if (!reply) return;
-  chat.edit(reply.text);
+  const next = buttonMode.value ? text.value.slice(0, insertAt) + reply.text + text.value.slice(insertEnd) : reply.text;
+  if (next.length > 3900) { workspace.show("Ответ вместе с черновиком превышает 3900 символов."); return; }
+  chat.edit(next);
   closeReplies();
   await nextTick();
   resize();
@@ -80,8 +145,8 @@ async function choose(index: number): Promise<void> {
 
 function onKeyDown(event: KeyboardEvent): void {
   if (event.isComposing) return;
-  const list = replies.value;
-  if (list) {
+  const list = options.value;
+  if (repliesOpen.value) {
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation(); // Closes the list, not the customer card too.
@@ -122,19 +187,22 @@ function onFile(event: Event): void {
 }
 
 // Another dialogue: its own draft, no open list, and the cursor in the text field.
-watch(() => chat.ticketId, async () => {
+watch(() => [chat.ticketId, projects.currentId], async () => {
   closeReplies();
   await nextTick();
   resize();
   field.value?.focus({ preventScroll: true });
 }, { immediate: true });
 
-onUnmounted(() => clearTimeout(replyTimer));
+onUnmounted(closeReplies);
 </script>
 
 <template>
   <div class="composer-area">
-    <QuickReplies v-if="replies" :id="listId" :replies="replies" :active="active" @choose="choose" @hover="active = $event" />
+    <QuickReplies v-if="repliesOpen" :id="listId" :replies="options" :active="active"
+      :group="group?.name ?? ''" :loading="loading" :more="hasMore" :query="query" :button-mode="buttonMode"
+      @choose="choose" @hover="active = $event" @back="back" @close="closeReplies"
+      @search="search" @more="search(query, true)" @keydown="onKeyDown" />
     <div v-if="file" class="attachment">
       <span class="min-w-0 [overflow-wrap:anywhere]">{{ fileLabel(file) }}</span>
       <IconButton class="quiet min-w-9" label="Убрать вложение" :disabled="chat.sending" @click="chat.attach(null)">
@@ -152,6 +220,8 @@ onUnmounted(() => clearTimeout(replyTimer));
         <Icon name="attach" />
       </IconButton>
       <input ref="picker" type="file" :accept="ACCEPT" hidden @change="onFile" />
+      <IconButton class="icon-button" label="Готовые ответы" :disabled="chat.sending"
+        :aria-expanded="repliesOpen" @click="openByButton"><span aria-hidden="true">/</span></IconButton>
       <textarea
         ref="field"
         :value="text"
@@ -160,8 +230,8 @@ onUnmounted(() => clearTimeout(replyTimer));
         aria-label="Текст ответа"
         maxlength="3900"
         aria-autocomplete="list"
-        :aria-controls="replies ? listId : undefined"
-        :aria-activedescendant="replies?.length ? `${listId}-${active}` : undefined"
+        :aria-controls="repliesOpen ? listId : undefined"
+        :aria-activedescendant="repliesOpen && options.length ? `${listId}-${active}` : undefined"
         :disabled="chat.sending"
         @input="onInput"
         @keydown="onKeyDown"

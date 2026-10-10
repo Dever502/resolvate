@@ -177,7 +177,8 @@ def create_app(
         matched_realms = [
             token_realm
             for token_realm, configured_token in configured_tokens
-            if x_api_token is not None and secrets.compare_digest(x_api_token, configured_token)
+            if x_api_token is not None
+            and secrets.compare_digest(x_api_token.encode(), configured_token.encode())
         ]
         if not matched_realms:
             allowed, retry_after = await auth_failure_limiter.consume(auth_key)

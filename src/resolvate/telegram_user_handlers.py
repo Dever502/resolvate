@@ -25,6 +25,14 @@ logger = logging.getLogger(__name__)
 class TelegramUserHandlers(TelegramTopicManager):
     media_storage: LocalMediaStorage
 
+    async def _answer_rating(self, callback: CallbackQuery, text: str, *, show_alert: bool) -> None:
+        try:
+            await callback.answer(text, show_alert=show_alert)
+        except TelegramAPIError:
+            # An expired/unreachable UI acknowledgement must not retry committed
+            # business work and hold the customer's ordered ingress queue.
+            logger.warning("Rating acknowledgement failed", extra={"event": "rating_ack_failed"})
+
     async def handle_edited_private_message(self, message: Message) -> None:
         if message.from_user is None or message.from_user.is_bot:
             return
@@ -55,16 +63,18 @@ class TelegramUserHandlers(TelegramTopicManager):
             if score not in range(1, 6):
                 raise ValueError
         except ValueError:
-            await callback.answer("Некорректная оценка.", show_alert=False)
+            await self._answer_rating(callback, "Некорректная оценка.", show_alert=False)
             return
 
         try:
             ticket = await self.ticket_service.get_ticket(ticket_id)
         except TicketNotFoundError:
-            await callback.answer("Тикет не найден.", show_alert=True)
+            await self._answer_rating(callback, "Тикет не найден.", show_alert=True)
             return
         if callback.from_user.id != ticket.telegram_user_id:
-            await callback.answer("Оценить обращение может только клиент.", show_alert=True)
+            await self._answer_rating(
+                callback, "Оценить обращение может только клиент.", show_alert=True
+            )
             return
 
         queued = await self.ticket_service.enqueue_rating(
@@ -104,7 +114,8 @@ class TelegramUserHandlers(TelegramTopicManager):
                         "rating": score,
                     },
                 )
-        await callback.answer(
+        await self._answer_rating(
+            callback,
             "✅ Спасибо за оценку!" if queued else "ℹ️ Оценка уже принята.",
             show_alert=False,
         )

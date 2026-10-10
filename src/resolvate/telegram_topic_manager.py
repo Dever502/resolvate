@@ -4,7 +4,12 @@ import logging
 from html import escape
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramAPIError
+from aiogram.exceptions import (
+    TelegramAPIError,
+    TelegramBadRequest,
+    TelegramForbiddenError,
+    TelegramRetryAfter,
+)
 
 from resolvate.config import Settings
 from resolvate.panel import (
@@ -349,12 +354,14 @@ class TelegramTopicManager:
         if ticket.status.value == "closed" and not (recover_closed or reconcile_missing):
             return ticket
         topic_attached = False
+        topic_created = False
         try:
             await self.limiter.wait()
             topic = await self.bot.create_forum_topic(
                 chat_id=self.settings.support_group_id,
                 name=topic_name(ticket, closed=ticket.status.value == "closed"),
             )
+            topic_created = True
             logger.info(
                 "Created support topic in Telegram",
                 extra={
@@ -426,8 +433,20 @@ class TelegramTopicManager:
                     },
                 )
             return await self.ticket_service.get_ticket(ticket.id)
-        except Exception:
-            if topic_attached:
+        except Exception as error:
+            if not topic_created and isinstance(
+                error, (TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter)
+            ):
+                # Telegram definitely refused creation. Only ambiguous transport
+                # failures keep the claim, to avoid accidentally creating two topics.
+                await self.ticket_service.abort_topic_provisioning(ticket_id=ticket.id, token=token)
+                if isinstance(error, TelegramRetryAfter):
+                    await self.limiter.defer(float(error.retry_after))
+                logger.warning(
+                    "Topic creation refused; released claim for retry",
+                    extra={"event": "topic_creation_refused", "ticket_id": ticket.id},
+                )
+            elif topic_attached:
                 logger.exception(
                     "Support topic was attached but post-attach setup failed",
                     extra={

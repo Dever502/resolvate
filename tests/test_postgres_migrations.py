@@ -18,7 +18,7 @@ from resolvate.models import Base
 
 pytestmark = pytest.mark.postgres
 
-HEAD_REVISION = "0009_console_read_paths"
+HEAD_REVISION = "0010_quick_response_catalog"
 EXPECTED_QUERY_INDEXES = {
     "ix_tickets_status_updated",
     "ix_tickets_status_last_activity",
@@ -38,6 +38,8 @@ EXPECTED_QUERY_INDEXES = {
     "ix_operator_actions_result_created",
     "uq_operator_actions_unresolved_ticket",
     "ix_quick_responses_state_deadline",
+    "ix_quick_responses_group",
+    "ix_quick_response_groups_project_id",
 }
 
 
@@ -74,6 +76,7 @@ def test_repository_has_one_head_above_postgresql_baseline() -> None:
     assert scripts.get_heads() == [HEAD_REVISION]
     assert [revision.revision for revision in scripts.walk_revisions()] == [
         HEAD_REVISION,
+        "0009_console_read_paths",
         "0008_backend_hot_paths",
         "0007_ticket_folders",
         "0006_project_branding",

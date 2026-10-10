@@ -413,7 +413,12 @@ class DeliveryWorker:
         except TelegramRetryAfter as error:
             retry_after = float(error.retry_after)
             await self.limiter.defer(retry_after)
-            if not await self._retry_delivery(job, payload, str(error), retry_after):
+            deferred = await self.outbox.defer_delivery(
+                job.id, claim_token=job.claim_token, retry_after_seconds=retry_after
+            )
+            if not self._claim_transition_applied(
+                job, payload, transition="flood_control", applied=deferred
+            ):
                 return
             logger.warning(
                 "Telegram flood control delayed delivery",

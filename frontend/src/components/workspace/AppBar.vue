@@ -1,11 +1,17 @@
 <script setup lang="ts">
+import { ref, watch } from "vue";
+import { useProjectsStore } from "../../stores/projects";
 import { useWorkspaceStore } from "../../stores/workspace";
+import ReplyCatalog from "../composer/ReplyCatalog.vue";
 import ProjectPicker from "../projects/ProjectPicker.vue";
 import Icon from "../ui/Icon.vue";
 
 // Project choice on the left, the product mark in the centre (equal outer tracks keep it centred).
 // In an open dialogue on a narrow screen the bar shrinks to the project only.
 const workspace = useWorkspaceStore();
+const projects = useProjectsStore();
+const catalogOpen = ref(false);
+watch(() => projects.currentId, () => { catalogOpen.value = false; });
 </script>
 
 <template>
@@ -25,5 +31,9 @@ const workspace = useWorkspaceStore();
       <span class="brand-mark bg-white text-selection" aria-hidden="true"><Icon name="resolve" /></span>
       Resolvate
     </div>
+    <button type="button" class="quiet col-start-3 row-start-1 justify-self-end text-sm text-white"
+      :class="{ 'narrow:hidden': workspace.dialogueOpen }" aria-label="Управление готовыми ответами"
+      :disabled="!projects.currentId" @click="catalogOpen = true"><span class="narrow:hidden">Готовые </span>ответы</button>
+    <ReplyCatalog v-if="projects.currentId" :key="projects.currentId" v-model:open="catalogOpen" :project-id="projects.currentId" />
   </header>
 </template>

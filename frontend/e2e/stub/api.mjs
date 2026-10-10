@@ -83,10 +83,11 @@ export function reset(options = {}) {
   state = {
     projects, tickets, messages, media,
     folders: new Map([["p1", [{ id: "f1", name: "VIP", revision: 0 }]], ["p2", []]]),
+    replyGroups: new Map([["p1", [{ id: "g1", name: "общее", revision: 0 }, { id: "g2", name: "оплата", revision: 0 }]], ["p2", []]]),
     replies: new Map([["p1", [
-      { id: "r1", text: "Здравствуйте! Чем могу помочь?" },
-      { id: "r2", text: "Спасибо за обращение, хорошего дня." },
-      { id: "r3", text: "Проверьте, пожалуйста, настройки тарифа." },
+      { id: "r1", text: "Здравствуйте! Чем могу помочь?", group_id: "g1", revision: 0 },
+      { id: "r2", text: "Спасибо за обращение, хорошего дня.", group_id: "g1", revision: 0 },
+      { id: "r3", text: "Проверьте, пожалуйста, настройки тарифа.", group_id: "g2", revision: 0 },
     ]], ["p2", []]]),
     // Everything up to t1's first page is read; the last two customer messages are unread.
     reads: new Map([["t1", at(6)]]),
@@ -344,9 +345,35 @@ export async function handle(request, response, path, url, tools) {
     changed(projectId);
     return done(200, { ok: true });
   }
+  if (rest === "reply-groups" && request.method === "GET") {
+    const query = (url.searchParams.get("q") ?? "").toLowerCase().replace(/^\//, "");
+    const offset = Number(url.searchParams.get("offset") ?? 0);
+    return done(200, state.replyGroups.get(projectId).filter(group => group.name.includes(query)).slice(offset, offset + 50));
+  }
+  if (rest === "reply-groups" && post) {
+    const group = { id: randomUUID(), name: data().name.toLowerCase().replace(/^\//, ""), revision: 0 };
+    state.replyGroups.get(projectId).push(group);
+    return done(200, group);
+  }
+  if (rest === "replies" && post) {
+    const reply = { id: randomUUID(), text: data().text, group_id: data().group_id, revision: 0 };
+    state.replies.get(projectId).push(reply);
+    return done(200, reply);
+  }
+  if ((match = /^replies\/([^/]+)\/(edit|delete)$/.exec(rest)) && post) {
+    const rows = state.replies.get(projectId);
+    const reply = rows.find(row => row.id === match[1]);
+    if (!reply) return done(404, { detail: "Ответ не найден." });
+    if (reply.revision !== data().revision) return done(409, { detail: "Ответ изменён." });
+    if (match[2] === "delete") rows.splice(rows.indexOf(reply), 1);
+    else Object.assign(reply, { text: data().text, group_id: data().group_id, revision: reply.revision + 1 });
+    return done(200, reply);
+  }
   if (rest === "replies" && request.method === "GET") {
     const query = (url.searchParams.get("q") ?? "").toLowerCase();
-    return done(200, state.replies.get(projectId).filter((reply) => reply.text.toLowerCase().includes(query)));
+    const group = url.searchParams.get("group_id");
+    const offset = Number(url.searchParams.get("offset") ?? 0);
+    return done(200, state.replies.get(projectId).filter((reply) => (!group || reply.group_id === group) && reply.text.toLowerCase().includes(query)).slice(offset, offset + 50));
   }
   if ((match = /^retry\/([^/]+)\/([^/]+)$/.exec(rest)) && post) return done(200, { ok: true });
   if ((match = /^media\/([^/]+)(\/thumbnail)?$/.exec(rest)) && request.method === "GET") {

@@ -103,7 +103,11 @@ async def test_auth_boundaries(console: Any) -> None:
     assert (await client.get("/console/assets/theme.js")).status_code == 404
     assert (await client.get("/console/assets/secret")).status_code == 404
     assert (await client.get("/api/v1/tickets")).status_code == 404
-    for headers in ({"Origin": "https://foreign.example"}, {"X-CSRF-Token": "wrong"}):
+    for headers in (
+        {"Origin": "https://foreign.example"},
+        {"X-CSRF-Token": "wrong"},
+        {b"X-CSRF-Token": b"invalid-\xff-token"},
+    ):
         assert (
             await client.post("/console/tickets/sync", json={}, headers=headers)
         ).status_code == 403
