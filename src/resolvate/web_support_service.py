@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from fastapi import HTTPException
 from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 
@@ -23,6 +24,7 @@ from resolvate.models import (
     DeliveryStatus,
     Direction,
     OperatorAction,
+    Project,
     Ticket,
     TicketChannel,
     TicketMessage,
@@ -37,10 +39,11 @@ from resolvate.telegram_message_utils import rating_report
 from resolvate.ticket_service_base import TicketServiceBase
 from resolvate.topic_messages import topic_deliveries
 from resolvate.trace import get_trace_id
+from resolvate.web_identity import WEB_IDENTITY_MODE_KEY, lock_web_identity_mode
 from resolvate.web_models import MediaAsset, SystemSetting, TicketLifecycleEvent
 
 logger = logging.getLogger(__name__)
-WEB_IDENTITY_MODE_KEY = "web_identity_mode"
+
 WEB_VISIBLE_MESSAGE_CHANNELS = (
     TicketChannel.WEB.value,
     "rating",
@@ -281,11 +284,35 @@ class WebSupportService(TicketServiceBase):
     async def ensure_web_identity_mode(self, identity_mode: str) -> None:
         for attempt in range(3):
             async with self.database.session() as session:
+                # Once bound, configuration cannot change it. Avoid serializing
+                # every incoming Web message behind a settings lock.
                 setting = await session.get(SystemSetting, WEB_IDENTITY_MODE_KEY)
                 if setting is not None:
                     if setting.value != identity_mode:
-                        raise RuntimeError(
-                            "WEB_IDENTITY_MODE cannot change after Web identities exist"
+                        raise HTTPException(
+                            503,
+                            "Настройки проекта обновляются. Повторите запрос.",
+                            headers={"Retry-After": "3"},
+                        )
+                    return
+                project_id = self.database.project_id
+                assert project_id is not None
+                await lock_web_identity_mode(session, project_id)
+                project = await session.get(Project, project_id)
+                configured = project.settings.get(WEB_IDENTITY_MODE_KEY) if project else None
+                if configured is not None and configured != identity_mode:
+                    raise HTTPException(
+                        503,
+                        "Настройки проекта обновляются. Повторите запрос.",
+                        headers={"Retry-After": "3"},
+                    )
+                setting = await session.get(SystemSetting, WEB_IDENTITY_MODE_KEY)
+                if setting is not None:
+                    if setting.value != identity_mode:
+                        raise HTTPException(
+                            503,
+                            "Настройки проекта обновляются. Повторите запрос.",
+                            headers={"Retry-After": "3"},
                         )
                     return
                 session.add(SystemSetting(key=WEB_IDENTITY_MODE_KEY, value=identity_mode))

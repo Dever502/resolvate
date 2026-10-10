@@ -566,6 +566,16 @@ async def test_photo_send_and_safe_retry(console: Any) -> None:
         await session.commit()
     await tickets.outbox.release_stale_deliveries()
     assert (await client.post(f"/console/retry/{key}/{ident}")).status_code == 409
+    async with database.session() as session:
+        job = await session.get(DeliveryOutbox, ident)
+        assert job
+        job.last_error = "definite refusal"
+        job.created_at = job.next_attempt_at = utcnow() - timedelta(days=31)
+        await session.commit()
+    assert (await client.post(f"/console/retry/{key}/{ident}")).status_code == 410
+    async with database.session() as session:
+        job = await session.get(DeliveryOutbox, ident)
+        assert job and job.status == DeliveryStatus.FAILED
 
 
 async def test_poll_catches_burst_without_a_history_gap(console: Any) -> None:

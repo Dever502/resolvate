@@ -64,6 +64,7 @@ async def assert_retention_policy(
                     payload={"update_id": 3},
                     status=WorkStatus.FAILED,
                     created_at=old_outbox,
+                    next_attempt_at=old_outbox,
                 ),
                 DeliveryOutbox(
                     id="delivery-old",
@@ -179,11 +180,13 @@ async def assert_retention_policy(
         notification_ids = set(await session.scalars(select(NotificationOutbox.id)))
         reconciliation_ids = set(await session.scalars(select(ReconciliationOutbox.id)))
         failed_delivery = await session.get(DeliveryOutbox, "delivery-failed")
+        failed_inbound = await session.get(InboundUpdate, 3)
         failed_notification = await session.get(NotificationOutbox, "notification-failed")
         failed_reconciliation = await session.get(ReconciliationOutbox, "reconciliation-failed")
         sensitive_message = await session.get(TicketMessage, "sensitive-ticket-message")
 
     assert inbound_ids == {2, 3}
+    assert failed_inbound is not None and failed_inbound.payload == {}
     assert delivery_ids == {"delivery-failed"}
     assert notification_ids == {"notification-failed"}
     assert reconciliation_ids == {"reconciliation-failed"}

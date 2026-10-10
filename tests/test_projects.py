@@ -48,10 +48,70 @@ from resolvate.models import (
 from resolvate.projects import ProjectService, membership, runtime_settings
 from resolvate.service_types import TicketNotFoundError
 from resolvate.services import TicketService
+from resolvate.web_identity import lock_web_identity_mode
 from resolvate.web_models import MediaAsset, SystemSetting
+from resolvate.web_support_service import WebSupportService
 
 PASSWORD = "project-test-password-only"
 ORIGIN = "http://localhost:8080"
+
+
+async def test_configure_web_identity_mode_is_bound_per_project(installation: Any) -> None:
+    database, _, _, _, alice, bob, first, second, projects = installation
+    await projects.configure(alice, first.id, {"web_identity_mode": "email"})
+    await WebSupportService(database.for_project(first.id)).ensure_web_identity_mode("email")
+    async with database.session() as session:
+        before = await session.get(Project, first.id)
+        assert before
+        revision = before.revision
+    with pytest.raises(HTTPException) as error:
+        await projects.configure(alice, first.id, {"web_identity_mode": "external_id"})
+    assert error.value.status_code == 409
+    async with database.session() as session:
+        after = await session.get(Project, first.id)
+        assert after and after.settings["web_identity_mode"] == "email"
+        assert after.revision == revision
+    await projects.configure(bob, second.id, {"web_identity_mode": "external_id"})
+    await projects.configure(alice, first.id, {"web_identity_mode": "email"})
+
+
+async def test_stale_runtime_cannot_bind_old_identity_mode(installation: Any) -> None:
+    database, _, _, _, alice, _, first, _, projects = installation
+    await projects.configure(alice, first.id, {"web_identity_mode": "email"})
+    web = WebSupportService(database.for_project(first.id))
+    with pytest.raises(HTTPException) as error:
+        await web.ensure_web_identity_mode("external_id")
+    assert error.value.status_code == 503
+    async with database.for_project(first.id).session() as session:
+        assert await session.get(SystemSetting, "web_identity_mode") is None
+    await web.ensure_web_identity_mode("email")
+    # A request in the old runtime may arrive after the new one bound its mode.
+    with pytest.raises(HTTPException) as bound_error:
+        await web.ensure_web_identity_mode("external_id")
+    assert bound_error.value.status_code == 503
+
+
+async def test_first_web_admission_fences_concurrent_configuration(installation: Any) -> None:
+    database, _, _, _, alice, _, first, _, projects = installation
+    scoped = database.for_project(first.id)
+    async with scoped.session() as session:
+        await lock_web_identity_mode(session, first.id)
+        session.add(SystemSetting(key="web_identity_mode", value="external_id"))
+        await session.flush()
+        changing = asyncio.create_task(
+            projects.configure(alice, first.id, {"web_identity_mode": "email"})
+        )
+        try:
+            await asyncio.sleep(0.05)
+            assert not changing.done()
+            await session.commit()
+            with pytest.raises(HTTPException) as error:
+                await asyncio.wait_for(changing, 5)
+            assert error.value.status_code == 409
+        finally:
+            if not changing.done():
+                changing.cancel()
+            await asyncio.gather(changing, return_exceptions=True)
 
 
 def logo_bytes(color: str = "blue", *, size: tuple[int, int] = (800, 400)) -> bytes:

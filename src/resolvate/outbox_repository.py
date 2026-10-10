@@ -436,6 +436,9 @@ class OutboxRepository:
                 )
                 .values(
                     status=case((uncertain, DeliveryStatus.FAILED), else_=DeliveryStatus.PENDING),
+                    next_attempt_at=case(
+                        (uncertain, utcnow()), else_=DeliveryOutbox.next_attempt_at
+                    ),
                     last_error=case(
                         (uncertain, "outcome_unknown"), else_=DeliveryOutbox.last_error
                     ),
