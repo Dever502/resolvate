@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, useId, useTemplateRef, watch } from "vue";
 import type { QuickReply, QuickReplyGroup } from "../../api/types";
-import { fileLabel } from "../../lib/format";
 import { useChatStore } from "../../stores/chat";
 import { useProjectsStore } from "../../stores/projects";
 import { useSessionStore } from "../../stores/session";
@@ -9,6 +8,7 @@ import { useWorkspaceStore } from "../../stores/workspace";
 import Icon from "../ui/Icon.vue";
 import IconButton from "../ui/IconButton.vue";
 import QuickReplies from "./QuickReplies.vue";
+import AttachmentPreview from "./AttachmentPreview.vue";
 
 // The reply box. Every dialogue keeps its own draft (text, file and the idempotency key of the
 // last attempt; any edit drops the key, a failed send keeps it). Enter sends, Shift+Enter starts a
@@ -203,12 +203,7 @@ onUnmounted(closeReplies);
       :group="group?.name ?? ''" :loading="loading" :more="hasMore" :query="query" :button-mode="buttonMode"
       @choose="choose" @hover="active = $event" @back="back" @close="closeReplies"
       @search="search" @more="search(query, true)" @keydown="onKeyDown" />
-    <div v-if="file" class="attachment">
-      <span class="min-w-0 [overflow-wrap:anywhere]">{{ fileLabel(file) }}</span>
-      <IconButton class="quiet min-w-9" label="Убрать вложение" :disabled="chat.sending" @click="chat.attach(null)">
-        <Icon name="close" />
-      </IconButton>
-    </div>
+    <AttachmentPreview v-if="file" :file="file" :disabled="chat.sending" @remove="chat.attach(null)" />
     <form class="composer" @submit.prevent="submit">
       <IconButton
         class="icon-button"
