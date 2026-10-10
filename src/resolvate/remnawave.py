@@ -10,6 +10,7 @@ from urllib.parse import quote
 import httpx
 from pydantic import SecretStr
 
+from resolvate.integration_http import integration_request
 from resolvate.metrics import MetricsRegistry
 
 
@@ -212,7 +213,8 @@ class RemnawaveClient:
         started_at = time.monotonic()
         outcome = "request_error"
         try:
-            response = await client.request(
+            response = await integration_request(
+                client,
                 method,
                 f"{self.base_url}{path}",
                 headers={"Authorization": f"Bearer {self.api_token.get_secret_value()}"},

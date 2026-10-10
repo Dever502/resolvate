@@ -17,7 +17,7 @@ QUICK_RESPONSE_MAX_TAGS = 5
 QUICK_RESPONSE_VALID = "valid"
 QUICK_RESPONSE_PENDING_DELETION = "pending_deletion"
 QUICK_RESPONSE_DELETED = "deleted"
-QUICK_RESPONSE_PUBLICATION_FORMAT_VERSION = 2
+QUICK_RESPONSE_PUBLICATION_FORMAT_VERSION = 3
 
 
 class QuickResponseDeletedError(RuntimeError):
@@ -32,8 +32,8 @@ class QuickResponseView:
     created_by_telegram_id: int
     created_by_display_name: str | None
     created_by_username: str | None
-    source_chat_id: int
-    source_message_id: int
+    source_chat_id: int | None
+    source_message_id: int | None
     published_message_id: int | None
     publication_format_version: int
     state: str
@@ -43,6 +43,9 @@ class QuickResponseView:
     deleted_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    group_name: str
+    revision: int
+    published_revision: int | None
 
 
 def utf16_code_units(value: str) -> int:
@@ -80,6 +83,9 @@ def _view(response: QuickResponse) -> QuickResponseView:
         deleted_at=_as_utc(response.deleted_at),
         created_at=response.created_at,
         updated_at=response.updated_at,
+        group_name=response.group.name if response.group is not None else "общее",
+        revision=response.revision,
+        published_revision=response.published_revision,
     )
 
 
@@ -285,6 +291,7 @@ class QuickReplyService:
                     QuickResponse.publication_format_version
                     < QUICK_RESPONSE_PUBLICATION_FORMAT_VERSION,
                     QuickResponse.warning_message_id.is_not(None),
+                    QuickResponse.published_revision.is_distinct_from(QuickResponse.revision),
                 )
             )
         async with self.database.session() as session:
@@ -392,24 +399,40 @@ class QuickReplyService:
 
     async def record_publication(self, response_id: int, message_id: int) -> None:
         async with self.database.session() as session:
-            response = await session.get(QuickResponse, response_id)
-            if response is None or response.state != QUICK_RESPONSE_VALID:
+            response = await session.get(QuickResponse, response_id, with_for_update=True)
+            # Retain the ID even after a concurrent delete, so cleanup can remove it.
+            if response is None:
                 return
             response.published_message_id = message_id
             await session.commit()
 
-    async def complete_publication(self, response_id: int, message_id: int) -> bool:
+    async def complete_publication(
+        self, response_id: int, message_id: int, *, revision: int | None = None
+    ) -> bool:
         async with self.database.session() as session:
-            response = await session.get(QuickResponse, response_id)
+            response = await session.get(QuickResponse, response_id, with_for_update=True)
             if (
                 response is None
                 or response.state != QUICK_RESPONSE_VALID
                 or response.published_message_id != message_id
+                or (revision is not None and response.revision != revision)
             ):
                 return False
             response.publication_format_version = QUICK_RESPONSE_PUBLICATION_FORMAT_VERSION
+            response.published_revision = response.revision
             await session.commit()
             return True
+
+    async def reset_publications(self) -> None:
+        from sqlalchemy import update
+
+        async with self.database.session() as session:
+            await session.execute(
+                update(QuickResponse).values(
+                    published_message_id=None, published_revision=None, publication_format_version=0
+                )
+            )
+            await session.commit()
 
     @staticmethod
     def _instruction_setting_key(support_group_id: int) -> str:

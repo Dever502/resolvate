@@ -62,6 +62,17 @@ def _client(app: Any) -> AsyncClient:
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
 
 
+async def test_non_ascii_auth_token_is_rejected_and_rate_limited(api_context: Any) -> None:
+    app, _, _, _ = api_context
+    async with _client(app) as client:
+        responses = [
+            await client.get("/health", headers=[(b"X-API-Token", b"invalid-\xff-token")])
+            for _ in range(API_AUTH_FAILURE_LIMIT + 1)
+        ]
+    assert all(response.status_code == 401 for response in responses[:-1])
+    assert responses[-1].status_code == 429
+
+
 async def _api_message_counts(database: Database, ticket_id: str) -> tuple[int, int, int, int]:
     message_key_prefix = f"api:message:{ticket_id}:%"
     reopen_key_prefix = f"api:message-reopen:{ticket_id}:%"

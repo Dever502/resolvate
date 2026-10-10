@@ -483,6 +483,15 @@ class SupportBlock(ProjectScoped):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class QuickResponseGroup(ProjectScoped):
+    __tablename__ = "quick_response_groups"
+    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_quick_response_groups_name"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String(48), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+
 class QuickResponse(ProjectScoped):
     __tablename__ = "quick_responses"
     __table_args__ = (
@@ -503,16 +512,23 @@ class QuickResponse(ProjectScoped):
             "invalid_until",
             "id",
         ),
+        Index("ix_quick_responses_group", "project_id", "group_id", "state", "id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     text: Mapped[str] = mapped_column(Text, nullable=False)
+    group_id: Mapped[str | None] = mapped_column(
+        ForeignKey("quick_response_groups.id", ondelete="RESTRICT")
+    )
+    group: Mapped[QuickResponseGroup | None] = relationship(lazy="selectin")
+    revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    published_revision: Mapped[int | None] = mapped_column(Integer)
     tags: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
     created_by_telegram_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     created_by_display_name: Mapped[str | None] = mapped_column(String(255))
     created_by_username: Mapped[str | None] = mapped_column(String(255))
-    source_chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    source_message_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    source_chat_id: Mapped[int | None] = mapped_column(BigInteger)
+    source_message_id: Mapped[int | None] = mapped_column(BigInteger)
     published_message_id: Mapped[int | None] = mapped_column(BigInteger)
     publication_format_version: Mapped[int] = mapped_column(
         Integer,

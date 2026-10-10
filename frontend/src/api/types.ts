@@ -129,4 +129,12 @@ export interface MessagePage {
 export interface QuickReply {
   id: string;
   text: string;
+  group_id: string;
+  revision: number;
+}
+
+export interface QuickReplyGroup {
+  id: string;
+  name: string;
+  revision: number;
 }

@@ -30,7 +30,7 @@ from resolvate.services import TicketService
 logger = logging.getLogger(__name__)
 UUID_PATTERN = r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
 CONSOLE_PATH = re.compile(
-    rf"^/console/projects/({UUID_PATTERN})/((?:folders|tickets|media|retry)(?:/.*)?|replies|events)$"
+    rf"^/console/projects/({UUID_PATTERN})/((?:folders|tickets|media|retry|replies|reply-groups)(?:/.*)?|events)$"
 )
 API_PATH = re.compile(
     rf"^/projects/({UUID_PATTERN})(/(?:api/v1(?:/.*)?|health|ready|metrics|docs|openapi\.json))$"
@@ -130,11 +130,15 @@ class ProjectManager:
         try:
             settings = runtime_settings(self.settings, project)
             await run_project(settings, self.database.for_project(project.id), publish, stop)
-        except Exception:
+        except Exception as error:
             # Never put stored project settings or exception payloads in shared logs.
             logger.error(
                 "Project runtime stopped",
-                extra={"project_id": project.id, "event": "project_failed"},
+                extra={
+                    "project_id": project.id,
+                    "event": "project_failed",
+                    "exception_type": type(error).__name__,
+                },
             )
             self.retry_after[project.id] = time.monotonic() + 30
         finally:
@@ -165,7 +169,18 @@ class ProjectManager:
     async def run(self) -> None:
         try:
             while not self.stopping.is_set():
-                await self.reconcile()
+                try:
+                    await self.reconcile()
+                except Exception as error:
+                    # Preserve running projects through a transient control-plane
+                    # failure. Progress stays stale so health checks still detect it.
+                    logger.error(
+                        "Project reconciliation failed; retrying",
+                        extra={
+                            "event": "project_reconcile_failed",
+                            "exception_type": type(error).__name__,
+                        },
+                    )
                 try:
                     await asyncio.wait_for(self.stopping.wait(), 3)
                 except TimeoutError:

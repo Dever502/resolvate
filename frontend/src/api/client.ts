@@ -5,7 +5,7 @@ export const NO_PROJECT = "Выберите доступный проект.";
 export const OFFLINE = "Нет связи с сервером.";
 
 // Paths served by the project runtime; the router forwards /console/projects/<id>/<path>.
-const PROJECT_SCOPED = /^(folders(?:\/|$)|tickets(?:\/|$)|media\/|retry\/|replies(?:\?|$))/;
+const PROJECT_SCOPED = /^(folders(?:\/|$)|tickets(?:\/|$)|media\/|retry\/|(?:replies|reply-groups)(?:[/?]|$))/;
 
 export class ApiError extends Error {
   constructor(

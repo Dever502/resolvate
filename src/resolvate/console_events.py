@@ -70,5 +70,13 @@ class ConsoleEvents:
 
 # Ignore receipts/queue claims: broadcasting them would create refresh feedback loops.
 VISIBLE_TABLES = frozenset(
-    {"tickets", "ticket_messages", "ticket_folders", "users", "media_assets", "quick_responses"}
+    {
+        "tickets",
+        "ticket_messages",
+        "ticket_folders",
+        "users",
+        "media_assets",
+        "quick_responses",
+        "quick_response_groups",
+    }
 )

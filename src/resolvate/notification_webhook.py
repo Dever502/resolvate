@@ -13,6 +13,7 @@ from pathlib import Path
 import httpx
 
 from resolvate.config import Settings
+from resolvate.integration_http import integration_request
 from resolvate.metrics import MetricsRegistry
 from resolvate.outbox_repository import OutboxRepository
 from resolvate.runtime_defaults import (
@@ -126,11 +127,14 @@ class NotificationWebhookWorker:
         started_at = time.monotonic()
         outcome = "request_error"
         try:
-            response = await client.post(
+            response = await integration_request(
+                client,
+                "POST",
                 self.url,
                 content=body,
                 headers=headers,
                 timeout=NOTIFICATION_WEBHOOK_TIMEOUT_SECONDS,
+                read_body=False,
             )
             outcome = f"http_{response.status_code // 100}xx"
         except httpx.HTTPError as error:

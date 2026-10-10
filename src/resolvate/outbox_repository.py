@@ -359,6 +359,26 @@ class OutboxRepository:
             },
         )
 
+    async def defer_delivery(
+        self, delivery_id: str, *, claim_token: str, retry_after_seconds: float
+    ) -> bool:
+        """A definite flood-control refusal is not a failed delivery attempt."""
+        return await self._transition_delivery(
+            delivery_id,
+            claim_token,
+            {
+                "status": DeliveryStatus.PENDING,
+                "next_attempt_at": utcnow() + timedelta(seconds=max(0, retry_after_seconds)),
+                "claimed_at": None,
+                "claim_token": None,
+                "last_error": "telegram_flood_control",
+                "attempt_count": case(
+                    (DeliveryOutbox.attempt_count > 0, DeliveryOutbox.attempt_count - 1),
+                    else_=0,
+                ),
+            },
+        )
+
     async def mark_delivery_retry(
         self,
         delivery_id: str,

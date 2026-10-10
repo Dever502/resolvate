@@ -43,6 +43,7 @@ async def test_publication_candidates_filter_and_paginate_pending_work(
                     source_message_id=300 + i,
                     published_message_id=500 + i,
                     publication_format_version=QUICK_RESPONSE_PUBLICATION_FORMAT_VERSION,
+                    published_revision=0,
                     state=QUICK_RESPONSE_VALID,
                 )
                 for i in range(6)

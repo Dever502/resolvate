@@ -117,6 +117,28 @@ async def installation(migrated_postgres_database_url: str, tmp_path: Path) -> A
         await provisioner.dispose()
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("support_bot_token", "123456:" + "a" * 35), ("support_group_id", -100123456)],
+)
+async def test_duplicate_destination_returns_conflict_without_partial_update(
+    installation: Any, field: str, value: str | int
+) -> None:
+    database, _, _, _, alice, bob, first, second, service = installation
+    await service.configure(alice, first.id, {field: value})
+    async with database.session() as session:
+        project = await session.get(Project, second.id)
+        previous_settings = dict(project.settings)
+        previous_revision = project.revision
+    with pytest.raises(HTTPException) as error:
+        await service.configure(bob, second.id, {field: value})
+    assert error.value.status_code == 409
+    async with database.session() as session:
+        project = await session.get(Project, second.id)
+        assert project.settings == previous_settings
+        assert project.revision == previous_revision
+
+
 async def test_database_boundary_and_pool_reuse(installation: Any) -> None:
     database, _, _, _, _, _, first, second, _ = installation
     await validate_project_database(database)

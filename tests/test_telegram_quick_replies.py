@@ -1,1008 +1,246 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from dataclasses import replace
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, call
+from unittest.mock import AsyncMock
 
 import pytest
-from aiogram.enums import ChatType, MessageEntityType
-from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
-from aiogram.methods import DeleteMessage, EditMessageText
-from aiogram.types import Chat, Message, MessageEntity, User
-from project_support import ProjectDatabase as Database
-from pydantic import SecretStr
-from sqlalchemy import event
+from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError, TelegramRetryAfter
+from aiogram.methods import DeleteMessage, EditMessageText, SendMessage
+from project_support import ADMIN_ID, ProjectDatabase
 
-from resolvate.authorization import AuthorizationService
 from resolvate.config import Settings
-from resolvate.models import QuickResponse
-from resolvate.quick_replies import (
-    QUICK_RESPONSE_DELETED,
-    QUICK_RESPONSE_PENDING_DELETION,
-    QUICK_RESPONSE_PUBLICATION_FORMAT_VERSION,
-    QUICK_RESPONSE_TEXT_MAX_LENGTH,
-    QUICK_RESPONSE_VALID,
-    QuickReplyService,
-    render_quick_response,
-)
+from resolvate.models import ConsoleAccount, QuickResponse
+from resolvate.quick_replies import QuickReplyService
+from resolvate.quick_reply_catalog import QuickReplyCatalog
 from resolvate.telegram_quick_replies import (
-    QUICK_RESPONSE_DELETE_CALLBACK_PREFIX,
     QUICK_RESPONSE_DELETED_TEXT,
-    QUICK_RESPONSE_INSTRUCTION_TEXT,
-    QUICK_RESPONSE_LENGTH_WARNING_TEXT,
-    QUICK_RESPONSE_WARNING_TEXT,
     QuickResponseTopicRefreshWorker,
     TelegramQuickReplyHandlers,
-    quick_response_delete_keyboard,
+    publication,
 )
 
 
-@pytest.mark.parametrize(
-    "text", ["а" * 4090, "а" * 4096, "😀" * 2045], ids=["long", "maximum", "emoji"]
-)
-async def test_long_reply_warns_preserves_deadline_and_accepts_correction(
-    postgres_database_url: str, text: str
-) -> None:
-    database = Database(postgres_database_url)
-    await database.create_schema_for_tests()
+@pytest.fixture
+async def catalog_runtime(migrated_postgres_database_url):
+    database = ProjectDatabase(migrated_postgres_database_url)
     service = QuickReplyService(database)
-    bot = _bot()
-    harness = _harness(service, bot)
-    try:
-        message = _message(text=text)
-        assert await harness.handle_quick_reply_topic_message(message)
-        message.reply.assert_awaited_once_with(QUICK_RESPONSE_LENGTH_WARNING_TEXT, parse_mode=None)
-        bot.send_message.assert_not_awaited()
-        pending = await service.get_by_source(source_chat_id=-100123, source_message_id=301)
-        assert pending is not None and pending.state == QUICK_RESPONSE_PENDING_DELETION
-        assert pending.text == text
-        deadline = pending.invalid_until
-
-        # Further invalid edits, including a change of reason, keep the original deadline.
-        message.text = "а" * 4091
-        await harness.handle_quick_reply_topic_message(message)
-        message.text = "Ответ #1 #2 #3 #4 #5 #6"
-        await harness.handle_quick_reply_topic_message(message)
-        current = await service.get(pending.id)
-        assert current is not None and current.invalid_until == deadline
-        bot.edit_message_text.assert_awaited_with(
-            chat_id=-100123,
-            message_id=901,
-            text=QUICK_RESPONSE_WARNING_TEXT,
-            parse_mode=None,
-            reply_markup=None,
-        )
-
-        message.text = "😀" * 2044
-        await harness.handle_quick_reply_topic_message(message)
-        saved = await service.get(pending.id)
-        assert saved is not None and saved.state == QUICK_RESPONSE_VALID
-        assert saved.invalid_until is None and saved.warning_message_id is None
-        assert saved.id not in harness._quick_response_tasks
-        assert bot.send_message.await_args.kwargs["text"] == render_quick_response(message.text)
-    finally:
-        await harness.shutdown_quick_reply_runtime()
-        await database.dispose()
-
-
-async def test_maximum_length_reply_is_published(postgres_database_url: str) -> None:
-    database = Database(postgres_database_url)
-    await database.create_schema_for_tests()
-    harness = _harness(QuickReplyService(database), _bot())
-    try:
-        message = _message(text="а" * QUICK_RESPONSE_TEXT_MAX_LENGTH)
-        await harness.handle_quick_reply_topic_message(message)
-        message.reply.assert_not_awaited()
-        assert len(harness.bot.send_message.await_args.kwargs["text"]) == 4096
-    finally:
-        await harness.shutdown_quick_reply_runtime()
-        await database.dispose()
-
-
-@pytest.mark.parametrize(
-    "edit_error",
-    [None, "message is not modified", "message to edit not found", "temporary failure"],
-)
-async def test_old_deleted_reply_is_replaced_or_retried(
-    postgres_database_url: str, edit_error: str | None
-) -> None:
-    database = Database(postgres_database_url)
-    await database.create_schema_for_tests()
-    service = QuickReplyService(database)
-    bot = _bot()
-    harness = _harness(service, bot)
-    try:
-        await harness.handle_quick_reply_topic_message(_message(text="Старый ответ #VPN"))
-        saved = await service.get_by_source(source_chat_id=-100123, source_message_id=301)
-        assert saved is not None
-        bot.delete_message.reset_mock()
-        bot.delete_message.side_effect = TelegramBadRequest(
-            method=DeleteMessage(chat_id=-100123, message_id=501),
-            message="Bad Request: message can't be deleted",
-        )
-        if edit_error is not None:
-            error_class = (
-                TelegramNetworkError if edit_error == "temporary failure" else TelegramBadRequest
-            )
-            bot.edit_message_text.side_effect = error_class(
-                method=EditMessageText(chat_id=-100123, message_id=501, text="deleted"),
-                message=edit_error,
-            )
-        callback = SimpleNamespace(
-            data=f"{QUICK_RESPONSE_DELETE_CALLBACK_PREFIX}:{saved.id}",
-            from_user=User(id=7, is_bot=False, first_name="Operator"),
-            message=Message(
-                message_id=501,
-                date=datetime(2020, 1, 1, tzinfo=UTC),
-                chat=Chat(id=-100123, type=ChatType.SUPERGROUP),
-                message_thread_id=777,
-                text=render_quick_response(saved.text),
-            ),
-            answer=AsyncMock(),
-        )
-        await harness.handle_quick_response_delete_callback(callback)
-        bot.edit_message_text.assert_awaited_once_with(
-            chat_id=-100123,
-            message_id=501,
-            text=QUICK_RESPONSE_DELETED_TEXT,
-            parse_mode=None,
-            reply_markup=None,
-        )
-        deleted = await service.get(saved.id)
-        assert deleted is not None and deleted.state == QUICK_RESPONSE_DELETED
-        if edit_error == "temporary failure":
-            assert deleted.published_message_id == 501
-            assert callback.answer.await_args.kwargs["show_alert"] is True
-            bot.edit_message_text.side_effect = None
-            await harness._cleanup_deleted_publications()
-        else:
-            assert deleted.published_message_id is None
-            callback.answer.assert_awaited_once_with("Быстрый ответ удалён.", show_alert=False)
-        assert await service.list_deleted_with_publication() == []
-        attempts = bot.delete_message.await_count
-        await harness._cleanup_deleted_publications()
-        await harness._restore_valid_responses(all_responses=True)
-        assert bot.delete_message.await_count == attempts
-        assert bot.send_message.await_count == 1  # Only the original publication.
-    finally:
-        await harness.shutdown_quick_reply_runtime()
-        await database.dispose()
-
-
-async def test_idle_catalogue_uses_one_query_and_full_scan_is_paginated(
-    postgres_database_url: str,
-) -> None:
-    database = Database(postgres_database_url)
-    await database.create_schema_for_tests()
-    service = QuickReplyService(database)
-    harness = _harness(service, _bot())
-    try:
-        async with database.session() as session:
-            session.add_all(
-                QuickResponse(
-                    text=f"Ответ {i}",
-                    tags=[],
-                    created_by_telegram_id=7,
-                    source_chat_id=-100123,
-                    source_message_id=1000 + i,
-                    published_message_id=2000 + i,
-                    publication_format_version=QUICK_RESPONSE_PUBLICATION_FORMAT_VERSION,
-                    state=QUICK_RESPONSE_VALID,
-                )
-                for i in range(205)
-            )
-            await session.commit()
-        queries: list[str] = []
-
-        def capture(connection, cursor, statement, parameters, context, executemany):
-            queries.append(statement)
-
-        event.listen(database.engine.sync_engine, "before_cursor_execute", capture)
-        try:
-            await harness._restore_valid_responses(all_responses=False)
-        finally:
-            event.remove(database.engine.sync_engine, "before_cursor_execute", capture)
-        assert len(queries) == 2  # One transaction scope statement, one catalogue query.
-        harness.bot.send_message.assert_not_awaited()
-        harness._publish_valid_response = AsyncMock()
-        await harness._restore_valid_responses(all_responses=False, verify_existing=True)
-        published_ids = [
-            item.args[0].id for item in harness._publish_valid_response.await_args_list
-        ]
-        assert len(published_ids) == 205 and len(set(published_ids)) == 205
-
-        # A selected record deleted before its lock is acquired must not be republished.
-        candidate = (await service.list_valid())[0]
-        original_query = service.list_publication_candidates
-
-        async def delete_after_selection(**kwargs):
-            batch = await original_query(**kwargs)
-            if kwargs["after_id"] == 0:
-                await service.soft_delete_valid(
-                    candidate.id,
-                    published_message_id=candidate.published_message_id,
-                    operator_telegram_id=7,
-                )
-            return batch
-
-        service.list_publication_candidates = delete_after_selection
-        harness._publish_valid_response.reset_mock()
-        await harness._restore_valid_responses(all_responses=True)
-        assert candidate.id not in [
-            item.args[0].id for item in harness._publish_valid_response.await_args_list
-        ]
-    finally:
-        await harness.shutdown_quick_reply_runtime()
-        await database.dispose()
-
-
-class FakeLimiter:
-    def __init__(self) -> None:
-        self.wait_count = 0
-
-    async def wait(self) -> None:
-        self.wait_count += 1
-
-
-class QuickReplyHarness(TelegramQuickReplyHandlers):
-    pass
-
-
-def _settings() -> Settings:
-    return Settings(
-        support_bot_token=SecretStr("test-token"),
-        support_group_id=-100123,
-        admin_telegram_ids={7},
-    )
-
-
-def _hashtags(text: str) -> list[MessageEntity]:
-    entities: list[MessageEntity] = []
-    cursor = 0
-    for part in text.split():
-        offset = text.index(part, cursor)
-        cursor = offset + len(part)
-        if part.startswith("#"):
-            entities.append(
-                MessageEntity(
-                    type=MessageEntityType.HASHTAG,
-                    offset=offset,
-                    length=len(part),
-                )
-            )
-    return entities
-
-
-def _message(
-    *,
-    text: str,
-    message_id: int = 301,
-    topic_id: int = 777,
-    warning_message_id: int = 901,
-) -> AsyncMock:
-    message = AsyncMock(spec=Message)
-    message.message_id = message_id
-    message.message_thread_id = topic_id
-    message.chat = SimpleNamespace(id=-100123)
-    message.from_user = SimpleNamespace(
-        id=7,
-        is_bot=False,
-        full_name="Operator",
-        username="operator",
-    )
-    message.text = text
-    message.entities = _hashtags(text)
-    message.reply = AsyncMock(return_value=SimpleNamespace(message_id=warning_message_id))
-    return message
-
-
-def _bot() -> SimpleNamespace:
-    return SimpleNamespace(
-        delete_message=AsyncMock(),
+    catalog = QuickReplyCatalog(database)
+    async with database.session() as session:
+        actor = await session.get(ConsoleAccount, ADMIN_ID)
+    group = await catalog.create_group(actor, "оплата")
+    reply = await catalog.save(actor, group["id"], "Оплатите <счёт> & сохраните чек 😀")
+    topic = TelegramQuickReplyHandlers()
+    topic.settings = Settings(_env_file=None, support_group_id=-100123)
+    topic.bot = SimpleNamespace(
         send_message=AsyncMock(return_value=SimpleNamespace(message_id=501)),
         edit_message_text=AsyncMock(),
+        delete_message=AsyncMock(),
         pin_chat_message=AsyncMock(),
     )
-
-
-def _harness(service: QuickReplyService, bot: SimpleNamespace) -> QuickReplyHarness:
-    harness = QuickReplyHarness()
-    harness.bot = bot
-    harness.settings = _settings()
-    harness.authorization = AuthorizationService(harness.settings)
-    harness.limiter = FakeLimiter()  # type: ignore[assignment]
-    harness.quick_reply_service = service
-    harness.quick_replies_topic_id = 777
-    harness.recover_quick_replies_topic = None
-    harness.initialize_quick_reply_runtime()
-    return harness
-
-
-async def test_valid_quick_response_is_saved_unchanged(
-    postgres_database_url: str,
-) -> None:
-    database = Database(postgres_database_url)
-    await database.create_schema_for_tests()
-    harness = QuickReplyHarness()
+    topic.limiter = SimpleNamespace(wait=AsyncMock(), defer=AsyncMock())
+    topic.quick_reply_service = service
+    topic.quick_replies_topic_id = 777
+    topic.recover_quick_replies_topic = AsyncMock(return_value=888)
+    topic.initialize_quick_reply_runtime()
+    await service.save_instruction_message_id(-100123, 900, 777)
     try:
-        service = QuickReplyService(database)
-        bot = _bot()
-        harness = _harness(service, bot)
-        message = _message(
-            text="Переустановите TikTok #TikTok #Android #VPN #Инструкция #Поддержка"
-        )
-
-        assert await harness.handle_quick_reply_topic_message(message) is True
-
-        saved = await service.get_by_source(
-            source_chat_id=-100123,
-            source_message_id=301,
-        )
-        assert saved is not None
-        assert saved.state == QUICK_RESPONSE_VALID
-        assert saved.text == message.text
-        assert saved.tags == ("#TikTok", "#Android", "#VPN", "#Инструкция", "#Поддержка")
-        assert saved.published_message_id == 501
-        assert saved.publication_format_version == QUICK_RESPONSE_PUBLICATION_FORMAT_VERSION
-        assert saved.warning_message_id is None
-        bot.send_message.assert_awaited_once_with(
-            chat_id=-100123,
-            message_thread_id=777,
-            text=render_quick_response(message.text),
-            parse_mode=None,
-            reply_markup=quick_response_delete_keyboard(saved.id),
-        )
-        bot.delete_message.assert_awaited_once_with(chat_id=-100123, message_id=301)
-        message.reply.assert_not_awaited()
+        yield topic, service, catalog, actor, group, reply
     finally:
-        await harness.shutdown_quick_reply_runtime()
         await database.dispose()
 
 
-async def test_numeric_hashtags_are_valid_without_telegram_entities(
-    postgres_database_url: str,
-) -> None:
-    database = Database(postgres_database_url)
-    await database.create_schema_for_tests()
-    harness = QuickReplyHarness()
-    try:
-        service = QuickReplyService(database)
-        bot = _bot()
-        harness = _harness(service, bot)
-        message = _message(text="Ответ #1 #2 #3 #4 #Билайн")
-        message.entities = []
-
-        assert await harness.handle_quick_reply_topic_message(message) is True
-
-        saved = await service.get_by_source(
-            source_chat_id=-100123,
-            source_message_id=301,
-        )
-        assert saved is not None
-        assert saved.state == QUICK_RESPONSE_VALID
-        assert saved.tags == ("#1", "#2", "#3", "#4", "#Билайн")
-        message.reply.assert_not_awaited()
-    finally:
-        await harness.shutdown_quick_reply_runtime()
-        await database.dispose()
+async def test_web_reply_published_as_copyable_block_without_metadata(catalog_runtime):
+    topic, service, _, _, _, reply = catalog_runtime
+    await topic.ensure_quick_response_topic()
+    sent = topic.bot.send_message.await_args.kwargs
+    assert sent["text"] == "/оплата\n\n" + reply["text"]
+    assert sent["parse_mode"] is None and "reply_markup" not in sent
+    (entity,) = sent["entities"]
+    assert entity.type == "pre"
+    assert entity.offset == len("/оплата\n\n")
+    assert entity.length == len(reply["text"]) + 1
+    saved = await service.get(int(reply["id"]))
+    assert saved.published_revision == saved.revision
+    assert saved.published_message_id == 501
+    assert await service.list_publication_candidates() == []
 
 
-async def test_existing_separate_save_reply_is_replaced_by_one_canonical_message(
-    postgres_database_url: str,
-) -> None:
-    database = Database(postgres_database_url)
-    await database.create_schema_for_tests()
-    harness = QuickReplyHarness()
-    try:
-        service = QuickReplyService(database)
-        pending = await service.save_pending_deletion(
-            text="Старый ответ #VPN",
-            tags=["#VPN"],
-            operator_telegram_id=7,
-            operator_display_name="Operator",
-            operator_username="operator",
-            source_chat_id=-100123,
-            source_message_id=301,
-            invalid_until=datetime.now(UTC),
-        )
-        assert await service.attach_warning(pending.id, 901) is True
-        saved = await service.save_valid(
-            text="Старый ответ #VPN",
-            tags=["#VPN"],
-            operator_telegram_id=7,
-            operator_display_name="Operator",
-            operator_username="operator",
-            source_chat_id=-100123,
-            source_message_id=301,
-        )
-        await service.record_publication(saved.id, 301)
-
-        bot = _bot()
-        harness = _harness(service, bot)
-        await harness._restore_valid_responses(all_responses=False)
-
-        converted = await service.get_by_source(
-            source_chat_id=-100123,
-            source_message_id=301,
-        )
-        assert converted is not None
-        assert converted.published_message_id == 501
-        assert converted.publication_format_version == QUICK_RESPONSE_PUBLICATION_FORMAT_VERSION
-        assert converted.warning_message_id is None
-        bot.send_message.assert_awaited_once_with(
-            chat_id=-100123,
-            message_thread_id=777,
-            text=render_quick_response("Старый ответ #VPN"),
-            parse_mode=None,
-            reply_markup=quick_response_delete_keyboard(saved.id),
-        )
-        assert bot.delete_message.await_args_list == [
-            call(chat_id=-100123, message_id=301),
-            call(chat_id=-100123, message_id=901),
-        ]
-    finally:
-        await harness.shutdown_quick_reply_runtime()
-        await database.dispose()
+async def test_edit_and_group_rename_keep_message_identity(catalog_runtime):
+    topic, service, catalog, actor, group, reply = catalog_runtime
+    await topic.ensure_quick_response_topic()
+    await catalog.save(actor, group["id"], "Новый текст", reply_id=int(reply["id"]), revision=0)
+    await topic.ensure_quick_response_topic()
+    topic.bot.send_message.assert_awaited_once()
+    assert topic.bot.edit_message_text.await_args.kwargs["text"] == "/оплата\n\nНовый текст"
+    await catalog.change_group(actor, group["id"], 0, "платежи")
+    await topic.ensure_quick_response_topic()
+    assert topic.bot.edit_message_text.await_args.kwargs["text"] == "/платежи\n\nНовый текст"
+    assert (await service.get(int(reply["id"]))).published_message_id == 501
 
 
-async def test_invalid_response_gets_exact_warning_and_edit_makes_it_valid(
-    postgres_database_url: str,
-) -> None:
-    database = Database(postgres_database_url)
-    await database.create_schema_for_tests()
-    harness = QuickReplyHarness()
-    try:
-        service = QuickReplyService(database)
-        bot = _bot()
-        harness = _harness(service, bot)
-        message = _message(text="Текст #1 #2 #3 #4 #5 #6")
-
-        await harness.handle_quick_reply_topic_message(message)
-
-        pending = await service.get_by_source(
-            source_chat_id=-100123,
-            source_message_id=301,
-        )
-        assert pending is not None
-        assert pending.state == QUICK_RESPONSE_PENDING_DELETION
-        assert pending.warning_message_id == 901
-        message.reply.assert_awaited_once_with(
-            QUICK_RESPONSE_WARNING_TEXT,
-            parse_mode=None,
-        )
-
-        message.text = "Исправленный текст #1 #2 #3 #4 #5"
-        message.entities = _hashtags(message.text)
-        await harness.handle_quick_reply_topic_message(message)
-
-        corrected = await service.get_by_source(
-            source_chat_id=-100123,
-            source_message_id=301,
-        )
-        assert corrected is not None
-        assert corrected.state == QUICK_RESPONSE_VALID
-        assert corrected.published_message_id == 501
-        assert corrected.publication_format_version == QUICK_RESPONSE_PUBLICATION_FORMAT_VERSION
-        assert corrected.warning_message_id is None
-        bot.send_message.assert_awaited_once_with(
-            chat_id=-100123,
-            message_thread_id=777,
-            text=render_quick_response(message.text),
-            parse_mode=None,
-            reply_markup=quick_response_delete_keyboard(corrected.id),
-        )
-        assert bot.delete_message.await_args_list == [
-            call(chat_id=-100123, message_id=301),
-            call(chat_id=-100123, message_id=901),
-        ]
-        assert message.reply.await_count == 1
-    finally:
-        await harness.shutdown_quick_reply_runtime()
-        await database.dispose()
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        "Ответ # Fuck",
-        "Ответ #",
-        "Ответ #-VPN",
-        "Ответ ##VPN",
-        "Ответ #___",
-    ],
-)
-async def test_malformed_hashtag_is_rejected(
-    text: str,
-    postgres_database_url: str,
-) -> None:
-    database = Database(postgres_database_url)
-    await database.create_schema_for_tests()
-    harness = QuickReplyHarness()
-    try:
-        service = QuickReplyService(database)
-        bot = _bot()
-        harness = _harness(service, bot)
-        message = _message(text=text)
-
-        await harness.handle_quick_reply_topic_message(message)
-
-        pending = await service.get_by_source(
-            source_chat_id=-100123,
-            source_message_id=301,
-        )
-        assert pending is not None
-        assert pending.state == QUICK_RESPONSE_PENDING_DELETION
-        assert pending.warning_message_id == 901
-        message.reply.assert_awaited_once_with(
-            QUICK_RESPONSE_WARNING_TEXT,
-            parse_mode=None,
-        )
-        bot.send_message.assert_not_awaited()
-    finally:
-        await harness.shutdown_quick_reply_runtime()
-        await database.dispose()
-
-
-async def test_invalid_response_and_warning_are_deleted_after_deadline(
-    postgres_database_url: str,
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr(
-        "resolvate.telegram_quick_replies.QUICK_RESPONSE_DELETE_DELAY_SECONDS",
-        0,
-    )
-    database = Database(postgres_database_url)
-    await database.create_schema_for_tests()
-    harness = QuickReplyHarness()
-    try:
-        service = QuickReplyService(database)
-        bot = _bot()
-        harness = _harness(service, bot)
-        message = _message(text="Текст #1 #2 #3 #4 #5 #6")
-
-        await harness.handle_quick_reply_topic_message(message)
-        await asyncio.sleep(0.05)
-
-        assert (
-            await service.get_by_source(
-                source_chat_id=-100123,
-                source_message_id=301,
-            )
-            is None
-        )
-        assert bot.delete_message.await_args_list == [
-            call(chat_id=-100123, message_id=301),
-            call(chat_id=-100123, message_id=901),
-        ]
-    finally:
-        await harness.shutdown_quick_reply_runtime()
-        await database.dispose()
-
-
-async def test_message_outside_quick_response_topic_is_not_consumed(
-    postgres_database_url: str,
-) -> None:
-    database = Database(postgres_database_url)
-    await database.create_schema_for_tests()
-    harness = QuickReplyHarness()
-    try:
-        service = QuickReplyService(database)
-        harness = _harness(service, _bot())
-
-        assert (
-            await harness.handle_quick_reply_topic_message(
-                _message(text="Обычный ответ", topic_id=778)
-            )
-            is False
-        )
-        assert await service.list_valid() == []
-    finally:
-        await harness.shutdown_quick_reply_runtime()
-        await database.dispose()
-
-
-async def test_delete_button_soft_deletes_response_without_confirmation(
-    postgres_database_url: str,
-) -> None:
-    database = Database(postgres_database_url)
-    await database.create_schema_for_tests()
-    harness = QuickReplyHarness()
-    try:
-        service = QuickReplyService(database)
-        saved = await service.save_valid(
-            text="Неправильный ответ #VPN",
-            tags=["#VPN"],
-            operator_telegram_id=7,
-            operator_display_name="Operator",
-            operator_username="operator",
-            source_chat_id=-100123,
-            source_message_id=301,
-        )
-        await service.record_publication(saved.id, 501)
-        assert await service.complete_publication(saved.id, 501) is True
-        bot = _bot()
-        harness = _harness(service, bot)
-        callback = SimpleNamespace(
-            data=f"{QUICK_RESPONSE_DELETE_CALLBACK_PREFIX}:{saved.id}",
-            from_user=User(id=7, is_bot=False, first_name="Operator"),
-            message=Message(
-                message_id=501,
-                date=datetime.now(UTC),
-                chat=Chat(id=-100123, type=ChatType.SUPERGROUP),
-                from_user=User(id=42, is_bot=True, first_name="Bot"),
-                message_thread_id=777,
-                text=render_quick_response(saved.text),
-            ),
-            answer=AsyncMock(),
-        )
-
-        await harness.handle_quick_response_delete_callback(callback)  # type: ignore[arg-type]
-
-        deleted = await service.get_by_source(
-            source_chat_id=-100123,
-            source_message_id=301,
-        )
-        assert deleted is not None
-        assert deleted.state == QUICK_RESPONSE_DELETED
-        assert deleted.deleted_by_telegram_id == 7
-        assert deleted.deleted_at is not None
-        assert deleted.published_message_id is None
-        assert await service.list_valid() == []
-        callback.answer.assert_awaited_once_with(
-            "Быстрый ответ удалён.",
-            show_alert=False,
-        )
-        bot.delete_message.assert_awaited_once_with(chat_id=-100123, message_id=501)
-        bot.send_message.assert_not_awaited()
-    finally:
-        await harness.shutdown_quick_reply_runtime()
-        await database.dispose()
-
-
-async def test_failed_telegram_delete_is_retried_from_tombstone(
-    postgres_database_url: str,
-) -> None:
-    database = Database(postgres_database_url)
-    await database.create_schema_for_tests()
-    harness = QuickReplyHarness()
-    try:
-        service = QuickReplyService(database)
-        saved = await service.save_valid(
-            text="Ответ для удаления #VPN",
-            tags=["#VPN"],
-            operator_telegram_id=7,
-            operator_display_name="Operator",
-            operator_username="operator",
-            source_chat_id=-100123,
-            source_message_id=301,
-        )
-        await service.record_publication(saved.id, 501)
-        assert await service.complete_publication(saved.id, 501) is True
-        rejected_delete = TelegramNetworkError(
+@pytest.mark.parametrize("old", [False, True])
+async def test_web_delete_removes_publication_or_tombstones_old_message(catalog_runtime, old):
+    topic, service, catalog, actor, _, reply = catalog_runtime
+    await topic.ensure_quick_response_topic()
+    if old:
+        topic.bot.delete_message.side_effect = TelegramBadRequest(
             method=DeleteMessage(chat_id=-100123, message_id=501),
-            message="Connection timed out",
+            message="message can't be deleted",
         )
-        bot = _bot()
-        bot.delete_message = AsyncMock(side_effect=rejected_delete)
-        harness = _harness(service, bot)
-        callback = SimpleNamespace(
-            data=f"{QUICK_RESPONSE_DELETE_CALLBACK_PREFIX}:{saved.id}",
-            from_user=User(id=7, is_bot=False, first_name="Operator"),
-            message=Message(
-                message_id=501,
-                date=datetime.now(UTC),
-                chat=Chat(id=-100123, type=ChatType.SUPERGROUP),
-                from_user=User(id=42, is_bot=True, first_name="Bot"),
-                message_thread_id=777,
-                text=render_quick_response(saved.text),
-            ),
-            answer=AsyncMock(),
+    await catalog.delete(actor, int(reply["id"]), 0)
+    await topic.ensure_quick_response_topic()
+    assert (await service.get(int(reply["id"]))).published_message_id is None
+    if old:
+        assert topic.bot.edit_message_text.await_args.kwargs["text"] == QUICK_RESPONSE_DELETED_TEXT
+    topic.initialize_quick_reply_runtime()
+    await topic.ensure_quick_response_topic()
+    topic.bot.send_message.assert_awaited_once()  # Deleted catalog entries never return.
+
+
+async def test_edit_during_publish_is_not_acknowledged_as_new_revision(catalog_runtime):
+    topic, service, catalog, actor, group, reply = catalog_runtime
+
+    async def send(**kwargs):
+        await catalog.save(
+            actor, group["id"], "Concurrent edit", reply_id=int(reply["id"]), revision=0
         )
+        return SimpleNamespace(message_id=501)
 
-        await harness.handle_quick_response_delete_callback(callback)  # type: ignore[arg-type]
-
-        tombstone = await service.get(saved.id)
-        assert tombstone is not None
-        assert tombstone.state == QUICK_RESPONSE_DELETED
-        assert tombstone.published_message_id == 501
-        callback.answer.assert_awaited_once_with(
-            "Ответ исключён из каталога. Очистка сообщения будет повторена.", show_alert=True
-        )
-        bot.edit_message_text.assert_not_awaited()
-
-        bot.delete_message = AsyncMock()
-        await harness._cleanup_deleted_publications()
-
-        cleaned = await service.get(saved.id)
-        assert cleaned is not None
-        assert cleaned.published_message_id is None
-        bot.delete_message.assert_awaited_once_with(chat_id=-100123, message_id=501)
-    finally:
-        await harness.shutdown_quick_reply_runtime()
-        await database.dispose()
+    topic.bot.send_message.side_effect = send
+    await topic.ensure_quick_response_topic()
+    assert len(await service.list_publication_candidates()) == 1
+    topic.bot.send_message.side_effect = None
+    await topic.ensure_quick_response_topic()
+    assert await service.list_publication_candidates() == []
+    assert topic.bot.edit_message_text.await_args.kwargs["text"].endswith("Concurrent edit")
 
 
-async def test_unauthorized_operator_cannot_delete_quick_response(
-    postgres_database_url: str,
-) -> None:
-    database = Database(postgres_database_url)
-    await database.create_schema_for_tests()
-    harness = QuickReplyHarness()
-    try:
-        service = QuickReplyService(database)
-        saved = await service.save_valid(
-            text="Ответ #VPN",
-            tags=["#VPN"],
-            operator_telegram_id=7,
-            operator_display_name="Operator",
-            operator_username="operator",
-            source_chat_id=-100123,
-            source_message_id=301,
-        )
-        await service.record_publication(saved.id, 501)
-        bot = _bot()
-        harness = _harness(service, bot)
-        callback = SimpleNamespace(
-            data=f"{QUICK_RESPONSE_DELETE_CALLBACK_PREFIX}:{saved.id}",
-            from_user=User(id=8, is_bot=False, first_name="Other"),
-            message=None,
-            answer=AsyncMock(),
-        )
+async def test_delete_during_publish_retains_message_id_for_cleanup(catalog_runtime):
+    topic, service, catalog, actor, _, reply = catalog_runtime
 
-        await harness.handle_quick_response_delete_callback(callback)  # type: ignore[arg-type]
+    async def send(**kwargs):
+        await catalog.delete(actor, int(reply["id"]), 0)
+        return SimpleNamespace(message_id=501)
 
-        active = await service.get_by_source(
-            source_chat_id=-100123,
-            source_message_id=301,
-        )
-        assert active is not None
-        assert active.state == QUICK_RESPONSE_VALID
-        callback.answer.assert_awaited_once_with("Недостаточно прав.", show_alert=True)
-        bot.delete_message.assert_not_awaited()
-    finally:
-        await harness.shutdown_quick_reply_runtime()
-        await database.dispose()
+    topic.bot.send_message.side_effect = send
+    await topic.ensure_quick_response_topic()
+    assert (await service.get(int(reply["id"]))).published_message_id == 501
+    await topic.ensure_quick_response_topic()
+    assert (await service.get(int(reply["id"]))).published_message_id is None
 
 
-async def test_instruction_is_plain_pinned_message_without_buttons(
-    postgres_database_url: str,
-) -> None:
-    database = Database(postgres_database_url)
-    await database.create_schema_for_tests()
-    harness = QuickReplyHarness()
-    try:
-        service = QuickReplyService(database)
-        bot = _bot()
-        harness = _harness(service, bot)
-
-        await harness.ensure_quick_response_topic()
-
-        bot.send_message.assert_awaited_once_with(
-            chat_id=-100123,
-            message_thread_id=777,
-            text=QUICK_RESPONSE_INSTRUCTION_TEXT,
-            parse_mode=None,
-        )
-        bot.pin_chat_message.assert_awaited_once_with(
-            chat_id=-100123,
-            message_id=501,
-            disable_notification=True,
-        )
-        assert await service.instruction_message_id(-100123) == 501
-    finally:
-        await harness.shutdown_quick_reply_runtime()
-        await database.dispose()
-
-
-async def test_deleted_topic_is_recreated_and_valid_responses_are_restored(
-    postgres_database_url: str,
-) -> None:
-    database = Database(postgres_database_url)
-    await database.create_schema_for_tests()
-    harness = QuickReplyHarness()
-    try:
-        service = QuickReplyService(database)
-        saved = await service.save_valid(
-            text="Сохранённый ответ #VPN",
-            tags=["#VPN"],
-            operator_telegram_id=7,
-            operator_display_name="Operator",
-            operator_username="operator",
-            source_chat_id=-100123,
-            source_message_id=401,
-        )
-        await service.save_instruction_message_id(-100123, 500, 777)
-        missing_topic = TelegramBadRequest(
-            method=EditMessageText(
-                chat_id=-100123,
-                message_id=500,
-                text=QUICK_RESPONSE_INSTRUCTION_TEXT,
-            ),
-            message="Bad Request: message thread not found",
-        )
-        bot = _bot()
-        bot.edit_message_text = AsyncMock(side_effect=missing_topic)
-        bot.send_message = AsyncMock(
-            side_effect=[
-                SimpleNamespace(message_id=501),
-                SimpleNamespace(message_id=502),
-            ]
-        )
-        harness = _harness(service, bot)
-        recover = AsyncMock(return_value=888)
-        harness.recover_quick_replies_topic = recover
-
-        await harness.ensure_quick_response_topic()
-
-        recover.assert_awaited_once_with(777)
-        assert harness.quick_replies_topic_id == 888
-        assert [item.kwargs["message_thread_id"] for item in bot.send_message.await_args_list] == [
-            888,
-            888,
-        ]
-        assert bot.send_message.await_args_list[1].kwargs["text"] == render_quick_response(
-            "Сохранённый ответ #VPN"
-        )
-        assert bot.send_message.await_args_list[1].kwargs[
-            "reply_markup"
-        ] == quick_response_delete_keyboard(saved.id)
-        restored = await service.get_by_source(
-            source_chat_id=-100123,
-            source_message_id=401,
-        )
-        assert restored is not None
-        assert restored.id == saved.id
-        assert restored.published_message_id == 502
-        assert restored.publication_format_version == QUICK_RESPONSE_PUBLICATION_FORMAT_VERSION
-        assert restored.warning_message_id is None
-        assert await service.instruction_message_id(-100123) == 501
-    finally:
-        await harness.shutdown_quick_reply_runtime()
-        await database.dispose()
-
-
-async def test_topic_recovered_before_adapter_start_restores_responses(
-    postgres_database_url: str,
-) -> None:
-    database = Database(postgres_database_url)
-    await database.create_schema_for_tests()
-    harness = QuickReplyHarness()
-    try:
-        service = QuickReplyService(database)
-        await service.save_valid(
-            text="Ответ переживёт рестарт #VPN",
-            tags=["#VPN"],
-            operator_telegram_id=7,
-            operator_display_name="Operator",
-            operator_username="operator",
-            source_chat_id=-100123,
-            source_message_id=401,
-        )
-        await service.save_instruction_message_id(-100123, 500, 777)
-        bot = _bot()
-        bot.send_message = AsyncMock(
-            side_effect=[
-                SimpleNamespace(message_id=501),
-                SimpleNamespace(message_id=502),
-            ]
-        )
-        harness = _harness(service, bot)
-        harness.quick_replies_topic_id = 888
-
-        await harness.ensure_quick_response_topic()
-
-        bot.edit_message_text.assert_not_awaited()
-        assert [item.kwargs["message_thread_id"] for item in bot.send_message.await_args_list] == [
-            888,
-            888,
-        ]
-        assert bot.send_message.await_args_list[1].kwargs["text"] == (
-            render_quick_response("Ответ переживёт рестарт #VPN")
-        )
-        assert await service.instruction_topic_id(-100123) == 888
-    finally:
-        await harness.shutdown_quick_reply_runtime()
-        await database.dispose()
-
-
-async def test_manually_deleted_active_response_is_restored_after_restart(
-    postgres_database_url: str,
-) -> None:
-    database = Database(postgres_database_url)
-    await database.create_schema_for_tests()
-    harness = QuickReplyHarness()
-    try:
-        service = QuickReplyService(database)
-        saved = await service.save_valid(
-            text="Надёжный ответ #VPN",
-            tags=["#VPN"],
-            operator_telegram_id=7,
-            operator_display_name="Operator",
-            operator_username="operator",
-            source_chat_id=-100123,
-            source_message_id=301,
-        )
-        await service.record_publication(saved.id, 501)
-        assert await service.complete_publication(saved.id, 501) is True
-        missing_message = TelegramBadRequest(
-            method=EditMessageText(
-                chat_id=-100123,
-                message_id=501,
-                text=render_quick_response(saved.text),
-            ),
-            message="Bad Request: message to edit not found",
-        )
-        bot = _bot()
-        bot.edit_message_text = AsyncMock(side_effect=missing_message)
-        bot.send_message = AsyncMock(
-            side_effect=[
-                SimpleNamespace(message_id=600),
-                SimpleNamespace(message_id=502),
-            ]
-        )
-        harness = _harness(service, bot)
-
-        await harness.ensure_quick_response_topic()
-
-        restored = await service.get_by_source(
-            source_chat_id=-100123,
-            source_message_id=301,
-        )
-        assert restored is not None
-        assert restored.state == QUICK_RESPONSE_VALID
-        assert restored.published_message_id == 502
-        assert bot.send_message.await_args_list[1].kwargs[
-            "reply_markup"
-        ] == quick_response_delete_keyboard(saved.id)
-    finally:
-        await harness.shutdown_quick_reply_runtime()
-        await database.dispose()
-
-
-async def test_pending_expirations_are_restored_after_restart(
-    postgres_database_url: str,
-) -> None:
-    database = Database(postgres_database_url)
-    await database.create_schema_for_tests()
-    harness = QuickReplyHarness()
-    try:
-        service = QuickReplyService(database)
-        await service.save_pending_deletion(
-            text="Текст #1 #2 #3 #4 #5 #6",
-            tags=["#1", "#2", "#3", "#4", "#5", "#6"],
-            operator_telegram_id=7,
-            operator_display_name="Operator",
-            operator_username="operator",
-            source_chat_id=-100123,
-            source_message_id=301,
-            invalid_until=datetime.now(UTC),
-        )
-        bot = _bot()
-        harness = _harness(service, bot)
-
-        await harness.restore_pending_quick_response_expirations()
-        await asyncio.sleep(0.05)
-
-        bot.delete_message.assert_awaited_with(chat_id=-100123, message_id=301)
-    finally:
-        await harness.shutdown_quick_reply_runtime()
-        await database.dispose()
-
-
-async def test_quick_response_topic_worker_refreshes_and_stops() -> None:
-    refreshed = asyncio.Event()
-
-    async def ensure_topic() -> None:
-        refreshed.set()
-
-    topic = SimpleNamespace(ensure_quick_response_topic=ensure_topic)
-    worker = QuickResponseTopicRefreshWorker(
-        topic,  # type: ignore[arg-type]
-        interval_seconds=0.01,
+@pytest.mark.parametrize("kind", ["429", "network"])
+async def test_telegram_outage_retries_without_stopping_project(catalog_runtime, kind):
+    topic, service, _, _, _, _ = catalog_runtime
+    method = SendMessage(chat_id=-100123, text="reply")
+    topic.bot.send_message.side_effect = (
+        TelegramRetryAfter(method=method, message="flood", retry_after=10)
+        if kind == "429"
+        else TelegramNetworkError(method=method, message="offline")
     )
-    task = asyncio.create_task(worker.run())
+    await topic.ensure_quick_response_topic()
+    assert len(await service.list_publication_candidates()) == 1
+    if kind == "429":
+        topic.limiter.defer.assert_awaited_once_with(10)
+    topic.bot.send_message.side_effect = None
+    await topic.ensure_quick_response_topic()
+    assert await service.list_publication_candidates() == []
 
-    await asyncio.wait_for(refreshed.wait(), timeout=1)
+
+async def test_missing_topic_recovery_republishes_catalog(catalog_runtime):
+    topic, service, _, _, _, reply = catalog_runtime
+    await topic.ensure_quick_response_topic()
+    topic.bot.edit_message_text.side_effect = [
+        TelegramBadRequest(
+            method=EditMessageText(chat_id=-100123, message_id=900, text="help"),
+            message="Bad Request: message thread not found",
+        ),
+        True,
+    ]
+    topic.bot.send_message.side_effect = [
+        SimpleNamespace(message_id=901),
+        SimpleNamespace(message_id=502),
+    ]
+    await topic.ensure_quick_response_topic()
+    assert topic.quick_replies_topic_id == 888
+    assert (await service.get(int(reply["id"]))).published_message_id == 502
+    assert await service.instruction_topic_id(-100123) == 888
+
+
+async def test_read_only_topic_preserves_operator_text_and_old_delete_callback(catalog_runtime):
+    topic, service, _, _, _, _ = catalog_runtime
+    message = SimpleNamespace(
+        message_thread_id=777,
+        from_user=SimpleNamespace(is_bot=False),
+        text="Не потерять текст",
+        reply=AsyncMock(),
+    )
+    assert await topic.handle_quick_reply_topic_message(message)
+    message.reply.assert_awaited_once()
+    assert len(await service.list_valid()) == 1
+    topic.bot.delete_message.assert_not_awaited()
+    callback = SimpleNamespace(answer=AsyncMock())
+    await topic.handle_quick_response_delete_callback(callback)
+    callback.answer.assert_awaited_once()
+    message.message_thread_id = 999
+    assert not await topic.handle_quick_reply_topic_message(message)
+
+
+async def test_block_offset_handles_unicode_group(catalog_runtime):
+    _, service, _, _, _, reply = catalog_runtime
+    view = await service.get(int(reply["id"]))
+    rendered, entities = publication(replace(view, group_name="𐐨"))
+    assert rendered.startswith("/𐐨\n\n")
+    assert entities[0].offset == 5
+
+
+async def test_worker_retries_and_stops():
+    finished = asyncio.Event()
+    attempts = 0
+
+    async def sync():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError()
+        finished.set()
+
+    topic = SimpleNamespace(ensure_quick_response_topic=AsyncMock(side_effect=sync))
+    worker = QuickResponseTopicRefreshWorker(topic, interval_seconds=0.001)
+    task = asyncio.create_task(worker.run())
+    async with asyncio.timeout(2):
+        await finished.wait()
     worker.stop()
-    await asyncio.wait_for(task, timeout=1)
+    await task
+
+
+async def test_instruction_pin_failure_is_retried(catalog_runtime):
+    topic, service, _, _, _, _ = catalog_runtime
+    topic.bot.pin_chat_message.side_effect = TelegramNetworkError(
+        method=SendMessage(chat_id=-100123, text="help"), message="offline"
+    )
+    await topic.ensure_quick_response_topic()
+    assert not topic._quick_response_catalog_verified
+    topic.bot.send_message.assert_not_awaited()
+    topic.bot.pin_chat_message.side_effect = None
+    await topic.ensure_quick_response_topic()
+    assert topic.bot.pin_chat_message.await_count == 2
+    assert await service.list_publication_candidates() == []
+
+
+async def test_legacy_warning_too_old_to_delete_is_tombstoned(catalog_runtime):
+    topic, service, _, _, _, reply = catalog_runtime
+    async with service.database.session() as session:
+        saved = await session.get(QuickResponse, int(reply["id"]))
+        saved.warning_message_id = 700
+        await session.commit()
+    topic.bot.delete_message.side_effect = TelegramBadRequest(
+        method=DeleteMessage(chat_id=-100123, message_id=700), message="message can't be deleted"
+    )
+    await topic.ensure_quick_response_topic()
+    saved = await service.get(int(reply["id"]))
+    assert saved.warning_message_id is None
+    assert await service.list_publication_candidates() == []
+    assert topic.bot.edit_message_text.await_args.kwargs["message_id"] == 700

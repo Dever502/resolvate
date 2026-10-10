@@ -103,7 +103,7 @@ class ConsoleAuth:
         if request.method not in {"GET", "HEAD"}:
             self.same_origin(request)
             if not secrets.compare_digest(
-                request.headers.get("x-csrf-token", ""), digest("csrf:" + token)
+                request.headers.get("x-csrf-token", "").encode(), digest("csrf:" + token).encode()
             ):
                 raise HTTPException(403, "Обновите страницу и повторите действие.")
         return account
@@ -126,9 +126,10 @@ class ConsoleAuth:
     async def login(self, login: str, password: str, client: str) -> tuple[ConsoleAccount, str]:
         login = login.strip().casefold()
         for limiter, key in (
-            (self.global_limiter, "login"),
             (self.login_limiter, client),
             (self.login_limiter, "account:" + login.casefold()),
+            # Rejected clients must not consume the installation-wide hash budget.
+            (self.global_limiter, "login"),
         ):
             allowed, retry = await limiter.consume(key)
             if not allowed:

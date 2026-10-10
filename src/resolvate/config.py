@@ -92,6 +92,10 @@ def validate_enabled_secret(variable_name: str, value: SecretStr) -> None:
     """Validate an enabled integration secret without exposing it in errors."""
 
     raw_value = value.get_secret_value()
+    if variable_name in {"API_ADMIN_TOKEN", "WEB_API_TOKEN", "REMNAWAVE_API_TOKEN"} and not all(
+        "!" <= character <= "~" for character in raw_value
+    ):
+        raise ValueError(f"{variable_name} must contain only printable ASCII without spaces")
     normalized_value = raw_value.casefold()
     is_placeholder = normalized_value in PLACEHOLDER_SECRETS or any(
         not normalized_value.replace(part, "").strip("-_. ") for part in PLACEHOLDER_SECRET_PARTS
@@ -298,8 +302,8 @@ class Settings(BaseSettings):
                 raise ValueError("WEB_API_TOKEN is required when Web API is enabled")
             validate_enabled_secret("WEB_API_TOKEN", self.web_api_token)
             if self.api_admin_token is not None and secrets.compare_digest(
-                self.web_api_token.get_secret_value(),
-                self.api_admin_token.get_secret_value(),
+                self.web_api_token.get_secret_value().encode(),
+                self.api_admin_token.get_secret_value().encode(),
             ):
                 raise ValueError("WEB_API_TOKEN must differ from API_ADMIN_TOKEN")
         if self.remnawave_enabled and (not self.remnawave_base_url or not self.remnawave_api_token):

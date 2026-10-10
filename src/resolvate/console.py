@@ -6,7 +6,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, SecretStr
@@ -21,9 +21,10 @@ from resolvate.console_folders import ConsoleFolders
 from resolvate.console_service import ConsoleService, delta
 from resolvate.database import Database
 from resolvate.media_storage import LocalMediaStorage, MediaValidationError
-from resolvate.models import ConsoleAccount, ConsoleSession, QuickResponse
+from resolvate.models import ConsoleAccount, ConsoleSession
 from resolvate.project_branding import MAX_LOGO_BYTES
 from resolvate.projects import membership
+from resolvate.quick_reply_catalog import QuickReplyCatalog
 from resolvate.service_types import TicketNotFoundError
 from resolvate.services import TicketService
 from resolvate.thumbnails import Thumbnails
@@ -99,6 +100,15 @@ class MoveToFolder(BaseModel):
     revision: int = Field(ge=0, le=2**31 - 1)
 
 
+class ReplyBody(BaseModel):
+    group_id: uuid.UUID
+    text: str = Field(min_length=1, max_length=3900)
+
+
+class EditReply(ReplyBody, FolderRevision):
+    pass
+
+
 def create_console(
     database: Database,
     tickets: TicketService,
@@ -111,6 +121,7 @@ def create_console(
     auth = ConsoleAuth(database, settings.console_origin)
     service = ConsoleService(database, tickets, settings)
     folders = ConsoleFolders(database)
+    catalog = QuickReplyCatalog(database)
     thumbnails = Thumbnails()
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.state.auth = auth
@@ -422,17 +433,58 @@ def create_console(
         return {"ok": True}
 
     @app.get("/replies")
-    async def replies(actor: Actor, q: str = "") -> list[dict[str, str]]:
-        if len(q) > 100:
-            raise HTTPException(422)
-        statement = select(QuickResponse).where(QuickResponse.state == "valid")
-        if q:
-            statement = statement.where(QuickResponse.text.icontains(q, autoescape=True))
-        async with database.session() as session:
-            rows = (
-                await session.scalars(statement.order_by(QuickResponse.created_at.desc()).limit(50))
-            ).all()
-        return [{"id": str(row.id), "text": row.text} for row in rows]
+    async def replies(
+        actor: Actor,
+        q: str = Query(default="", max_length=100),
+        group_id: uuid.UUID | None = None,
+        offset: int = Query(default=0, ge=0, le=100_000),
+    ) -> list[dict[str, Any]]:
+        return await catalog.replies(str(group_id) if group_id else None, q, offset)
+
+    @app.get("/reply-groups")
+    async def reply_groups(
+        actor: Actor,
+        q: str = Query(default="", max_length=100),
+        offset: int = Query(default=0, ge=0, le=100_000),
+    ) -> list[dict[str, Any]]:
+        return await catalog.groups(q, offset)
+
+    @app.post("/reply-groups")
+    async def create_reply_group(payload: FolderName, actor: Actor) -> dict[str, Any]:
+        return await catalog.create_group(actor, payload.name)
+
+    @app.post("/reply-groups/{group_id}/rename")
+    async def rename_reply_group(
+        group_id: uuid.UUID, payload: RenameFolder, actor: Actor
+    ) -> dict[str, bool]:
+        await catalog.change_group(actor, str(group_id), payload.revision, payload.name)
+        return {"ok": True}
+
+    @app.post("/reply-groups/{group_id}/delete")
+    async def delete_reply_group(
+        group_id: uuid.UUID, payload: FolderRevision, actor: Actor
+    ) -> dict[str, bool]:
+        await catalog.change_group(actor, str(group_id), payload.revision)
+        return {"ok": True}
+
+    @app.post("/replies")
+    async def create_reply(payload: ReplyBody, actor: Actor) -> dict[str, Any]:
+        return await catalog.save(actor, str(payload.group_id), payload.text)
+
+    @app.post("/replies/{reply_id}/edit")
+    async def edit_reply(reply_id: int, payload: EditReply, actor: Actor) -> dict[str, Any]:
+        if not 0 < reply_id <= 2**31 - 1:
+            raise HTTPException(422, "Неверный ID ответа.")
+        return await catalog.save(
+            actor, str(payload.group_id), payload.text, reply_id=reply_id, revision=payload.revision
+        )
+
+    @app.post("/replies/{reply_id}/delete")
+    async def delete_reply(reply_id: int, payload: FolderRevision, actor: Actor) -> dict[str, bool]:
+        if not 0 < reply_id <= 2**31 - 1:
+            raise HTTPException(422, "Неверный ID ответа.")
+        await catalog.delete(actor, reply_id, payload.revision)
+        return {"ok": True}
 
     @app.get("/media/{media_id}/thumbnail")
     async def thumbnail(media_id: uuid.UUID, actor: Actor) -> Response:

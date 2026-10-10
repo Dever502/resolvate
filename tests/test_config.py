@@ -21,6 +21,22 @@ def settings(**overrides: object) -> Settings:
     return Settings(**values)  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("token", ["я" * 32, "a" * 31 + "\n", "a" * 16 + " " + "b" * 16])
+@pytest.mark.parametrize("kind", ["api", "web", "remnawave"])
+def test_http_tokens_reject_non_header_safe_characters(token: str, kind: str) -> None:
+    options = {
+        "api": {"api_enabled": True, "api_admin_token": SecretStr(token)},
+        "web": {"web_api_enabled": True, "web_api_token": SecretStr(token)},
+        "remnawave": {
+            "remnawave_enabled": True,
+            "remnawave_base_url": "https://panel.example",
+            "remnawave_api_token": SecretStr(token),
+        },
+    }
+    with pytest.raises(ValidationError, match="printable ASCII"):
+        settings(**options[kind])
+
+
 def test_database_url_is_required(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DATABASE_URL")
     with pytest.raises(ValidationError, match="database_url"):

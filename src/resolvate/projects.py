@@ -375,20 +375,22 @@ class ProjectService:
                 for key in PROJECT_FIELDS
             }
             project.revision += 1
-            await session.execute(
-                delete(ProjectCredential).where(ProjectCredential.project_id == project_id)
-            )
-            await session.flush()
-            for field in ("api_admin_token", "web_api_token"):
-                credential = getattr(validated, field)
-                if credential is not None:
-                    session.add(
-                        ProjectCredential(
-                            project_id=project_id, fingerprint=digest(credential.get_secret_value())
-                        )
-                    )
-            self._audit(session, actor, "project_configured", project_id)
             try:
+                # execute() can autoflush the project before commit(), including unique keys.
+                await session.execute(
+                    delete(ProjectCredential).where(ProjectCredential.project_id == project_id)
+                )
+                await session.flush()
+                for field in ("api_admin_token", "web_api_token"):
+                    credential = getattr(validated, field)
+                    if credential is not None:
+                        session.add(
+                            ProjectCredential(
+                                project_id=project_id,
+                                fingerprint=digest(credential.get_secret_value()),
+                            )
+                        )
+                self._audit(session, actor, "project_configured", project_id)
                 await session.commit()
             except IntegrityError:
                 raise HTTPException(
