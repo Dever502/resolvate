@@ -35,6 +35,7 @@ async function submit(): Promise<void> {
     <form
       id="login-form"
       class="w-full max-w-[420px] rounded-[20px] bg-surface p-10 shadow-[0_12px_48px_#1d1d1f0a] narrow:px-6 narrow:py-8"
+      :aria-busy="busy || undefined"
       @submit.prevent="submit"
     >
       <div class="brand mb-11">
@@ -43,11 +44,14 @@ async function submit(): Promise<void> {
       </div>
       <h1 class="mb-2.5">Вход в поддержку</h1>
       <p class="muted mb-8">Войдите в свой рабочий аккаунт.</p>
+      <!-- Keep the checked credentials visible until the response; readonly preserves focus. -->
       <label>
         Логин
         <input
           ref="login-field"
           v-model="loginName"
+          :readonly="busy"
+          @input="error = ''"
           name="login"
           autocomplete="username"
           required
@@ -58,6 +62,8 @@ async function submit(): Promise<void> {
         Пароль
         <input
           v-model="password"
+          :readonly="busy"
+          @input="error = ''"
           name="password"
           type="password"
           autocomplete="current-password"
@@ -68,7 +74,9 @@ async function submit(): Promise<void> {
       </label>
       <p id="login-error" class="error" :class="{ success }" role="alert">{{ message }}</p>
       <!-- aria-disabled, not disabled: a disabled button drops keyboard focus while the request runs. -->
-      <button class="primary mt-2 min-h-11 w-full" type="submit" :aria-disabled="busy || undefined">Войти</button>
+      <button class="primary mt-2 min-h-11 w-full" type="submit" :aria-disabled="busy || undefined">
+        {{ busy ? "Проверяем…" : "Войти" }}
+      </button>
       <p class="hint">Доступ выдаёт администратор вашей поддержки.</p>
     </form>
   </main>

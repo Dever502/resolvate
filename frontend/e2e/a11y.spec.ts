@@ -23,7 +23,7 @@ test.describe("keyboard and screen readers", () => {
     await page.goto(CONSOLE);
     const login = page.getByRole("textbox", { name: "Логин" });
     const password = page.getByRole("textbox", { name: "Пароль" });
-    const submit = page.getByRole("button", { name: "Войти" });
+    const submit = page.locator('#login-form button[type="submit"]');
     await expect(login).toBeFocused();
     await expect(page.locator("body")).toMatchAriaSnapshot(`
       - main:
@@ -53,6 +53,44 @@ test.describe("keyboard and screen readers", () => {
     await expect(page.locator("#workspace")).toBeVisible();
     // The form that held focus is gone: focus starts at the workspace heading, not on the page.
     await expect(page.getByRole("heading", { name: "Диалоги" })).toBeFocused();
+  });
+
+  test("slow sign-in cannot show an old password error against newly edited credentials", async ({ page, request, consoleErrors }) => {
+    void consoleErrors;
+    await scenario(request, { me: "session" });
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    await page.route("**/console/login", async route => {
+      await pending;
+      await route.continue();
+    });
+    await page.goto(CONSOLE);
+    const login = page.getByRole("textbox", { name: "Логин" });
+    const password = page.getByRole("textbox", { name: "Пароль" });
+    const submit = page.locator('#login-form button[type="submit"]');
+    await login.fill("operator");
+    await password.fill("wrong password!");
+    await password.press("Enter");
+    await expect(submit).toHaveText("Проверяем…");
+    await expect(login).not.toBeEditable();
+    await expect(password).not.toBeEditable();
+    await expect(password).toBeFocused();
+    // Real keyboard edits and another Enter while the request runs must not change the
+    // credentials on screen or launch a second, overlapping authentication request.
+    await password.press("ControlOrMeta+a");
+    await password.pressSequentially("correct horse battery");
+    await expect(password).toHaveValue("wrong password!");
+    await password.press("Enter");
+    release();
+    await expect(page.getByRole("alert")).toHaveText("Неверный логин или пароль.");
+    expect((await stubLog(request)).filter(entry => entry.path === "/console/login")).toHaveLength(1);
+    await expect(login).toBeEditable();
+    await expect(password).toBeEditable();
+    await password.fill(PASSWORD);
+    await expect(page.locator("#login-error")).toBeEmpty();
+    await password.press("Enter");
+    await expect(page.locator("#workspace")).toBeVisible();
+    expect((await stubLog(request)).filter(entry => entry.path === "/console/login")).toHaveLength(2);
   });
 
   test("workspace: landmarks, Tab order, tooltips on focus and hover, Esc, Enter and Space", async ({ page, context, request, consoleErrors }) => {
