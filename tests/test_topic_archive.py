@@ -34,6 +34,7 @@ from resolvate.models import (
     utcnow,
 )
 from resolvate.outbox_repository import OutboxRepository
+from resolvate.rotation_recovery import RotationRecovery
 from resolvate.services import TicketService
 from resolvate.telegram_archive_media import TelegramArchiveMedia
 from resolvate.telegram_rotation import TopicRotationWorker
@@ -442,6 +443,126 @@ def rotation_worker(repo: TopicArchiveRepository, tmp_path: Path) -> TopicRotati
         customer_card=AsyncMock(return_value="Customer card"),
         poll_progress=Mock(ready_to_delete=Mock(return_value=True)),
     )
+
+
+@pytest.mark.parametrize("outcome", ["absent", "empty", "setup"])
+async def test_offline_rotation_recovery_reuses_verified_topic(
+    archive_repo: TopicArchiveRepository, tmp_path: Path, outcome: str
+) -> None:
+    archive_id = await make_topic(archive_repo)
+    await identify_customer(archive_repo, archive_id)
+    worker = rotation_worker(archive_repo, tmp_path)
+    await archive_repo.prepare(archive_id, capacity=False)
+    assert await archive_repo.begin_switch(archive_id)
+    token = await worker.repository.claim_creation(archive_id)
+    assert token
+    expected = "creating"
+    if outcome == "setup":
+        assert await worker.repository.created(archive_id, token, 20)
+        await archive_repo.begin_write(20)
+        expected = "installing"
+    assert await worker.repository.transition(archive_id, expected, "uncertain")
+    recovery = RotationRecovery(archive_repo.database)
+    row = (await recovery.inspect())[0]
+    arguments = dict(
+        token=token,
+        revision=row["revision"],
+        empty_topic_id=None if outcome == "absent" else 20,
+        confirmed_stopped=True,
+        confirmed_outcome=True,
+    )
+    await recovery.recover(archive_id, **arguments)
+    with pytest.raises(ValueError, match="changed"):
+        await recovery.recover(archive_id, **arguments)
+    await worker.advance(archive_id)
+    await worker.advance(archive_id)
+    current = await worker.repository.get(archive_id)
+    assert current and current.state == "retiring" and current.replacement_topic_id == 20
+    assert worker.bot.create_forum_topic.await_count == (1 if outcome == "absent" else 0)
+    worker.bot.send_message.assert_awaited_once()
+    worker.bot.delete_forum_topic.assert_not_awaited()
+
+
+async def test_recovery_refuses_unverified_stale_or_nonempty_target(
+    archive_repo: TopicArchiveRepository, tmp_path: Path
+) -> None:
+    archive_id = await make_topic(archive_repo)
+    worker = rotation_worker(archive_repo, tmp_path)
+    await archive_repo.prepare(archive_id, capacity=False)
+    assert await archive_repo.begin_switch(archive_id)
+    token = await worker.repository.claim_creation(archive_id)
+    assert token and await worker.repository.created(archive_id, token, 20)
+    await worker.repository.transition(archive_id, "installing", "uncertain")
+    recovery = RotationRecovery(archive_repo.database)
+    row = (await recovery.inspect())[0]
+    arguments = dict(
+        token=token,
+        revision=row["revision"],
+        empty_topic_id=20,
+        confirmed_stopped=True,
+        confirmed_outcome=True,
+    )
+    for override in (
+        {"confirmed_stopped": False},
+        {"confirmed_outcome": False},
+        {"token": "stale"},
+        {"revision": row["revision"] + 1},
+        {"empty_topic_id": 10},
+        {"empty_topic_id": 30},
+        {"empty_topic_id": None},
+    ):
+        with pytest.raises(ValueError):
+            await recovery.recover(archive_id, **{**arguments, **override})
+    await archive_repo.observe(topic_id=20, message_id=21, payload={"text": "Customer history"})
+    with pytest.raises(ValueError, match="history"):
+        await recovery.recover(archive_id, **arguments)
+    assert (await worker.repository.get(archive_id)).state == "uncertain"
+
+
+async def test_recovered_rotation_waits_for_reopened_conversation(
+    archive_repo: TopicArchiveRepository, tmp_path: Path
+) -> None:
+    archive_id = await make_topic(archive_repo)
+    ticket_id = await identify_customer(archive_repo, archive_id)
+    worker = rotation_worker(archive_repo, tmp_path)
+    await archive_repo.prepare(archive_id, capacity=False)
+    assert await archive_repo.begin_switch(archive_id)
+    token = await worker.repository.claim_creation(archive_id)
+    assert token
+    await worker.repository.transition(archive_id, "creating", "uncertain")
+    row = (await RotationRecovery(archive_repo.database).inspect())[0]
+    async with archive_repo.database.session() as session:
+        ticket = await session.get(Ticket, ticket_id)
+        ticket.status = TicketStatus.OPEN
+        ticket.closed_at = None
+        await session.commit()
+    await RotationRecovery(archive_repo.database).recover(
+        archive_id,
+        token=token,
+        revision=row["revision"],
+        empty_topic_id=20,
+        confirmed_stopped=True,
+        confirmed_outcome=True,
+    )
+    await worker.advance(archive_id)
+    assert (await worker.repository.get(archive_id)).state == "live"
+    assert (await worker.tickets.get_ticket(ticket_id)).topic_id == 10
+    worker.bot.create_forum_topic.assert_not_awaited()
+    worker.bot.send_message.assert_not_awaited()
+    worker.bot.reopen_forum_topic.assert_awaited_once()
+    async with archive_repo.database.session() as session:
+        ticket = await session.get(Ticket, ticket_id)
+        ticket.status = TicketStatus.CLOSED
+        ticket.closed_at = utcnow() - timedelta(minutes=10)
+        ticket.close_cycle += 1
+        await session.commit()
+    # Capacity cleanup must not orphan an already adopted replacement.
+    prepared = await archive_repo.prepare(archive_id, capacity=True)
+    assert prepared and prepared.mode == "replace"
+    await worker.advance(archive_id)
+    await worker.advance(archive_id)
+    assert (await worker.tickets.get_ticket(ticket_id)).topic_id == 20
+    worker.bot.create_forum_topic.assert_not_awaited()
 
 
 async def age_retirement(repo: TopicArchiveRepository, archive_id: str) -> None:

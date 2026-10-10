@@ -30,6 +30,7 @@ from resolvate.rotation_gate import (
     lock_rotation_gate,
     ticket_is_switching,
 )
+from resolvate.work_retention import failed_work_expired
 
 MAX_RECONCILIATION_ATTEMPTS = 20
 
@@ -323,6 +324,14 @@ class DurableWorkRepository:
         inbound_before = current_time - inbound_retention
         outbox_before = current_time - outbox_retention
         async with self.database.session() as session:
+            await session.execute(
+                update(InboundUpdate)
+                .where(
+                    failed_work_expired(InboundUpdate, current_time),
+                    InboundUpdate.payload != {},
+                )
+                .values(payload={})
+            )
             sensitive_messages = await session.execute(
                 update(TicketMessage)
                 .where(

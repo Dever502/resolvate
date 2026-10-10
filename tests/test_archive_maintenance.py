@@ -124,6 +124,44 @@ async def test_expiry_keeps_metadata_and_removes_only_old_files(
     assert (maintenance.storage.root / "aa/11.blob").exists()
 
 
+@pytest.mark.parametrize("kind", ["inbound", "delivery"])
+@pytest.mark.parametrize("recent_attempt", [False, True])
+async def test_failed_work_protects_only_during_recovery_window(
+    maintenance: ArchiveMaintenance, kind: str, recent_attempt: bool
+) -> None:
+    _, media_id, ticket_id = await seed(maintenance, days=90)
+    now = utcnow()
+    old = now - timedelta(days=31)
+    async with maintenance.archives.database.session() as session:
+        common = dict(created_at=old, next_attempt_at=now if recent_attempt else old)
+        if kind == "delivery":
+            session.add(
+                DeliveryOutbox(
+                    ticket_id=ticket_id,
+                    direction=Direction.USER_TO_OPERATOR,
+                    idempotency_key="failed-recovery-window",
+                    status=DeliveryStatus.FAILED,
+                    payload={},
+                    **common,
+                )
+            )
+        else:
+            session.add(
+                InboundUpdate(
+                    telegram_update_id=123,
+                    ordering_key="chat:-100123:thread:10",
+                    status=WorkStatus.FAILED,
+                    payload={"photo": {"file_unique_id": "unique-10"}},
+                    **common,
+                )
+            )
+        await session.commit()
+    assert await maintenance.retention.media_candidates(now - timedelta(days=30)) == (
+        [] if recent_attempt else [media_id]
+    )
+    assert await maintenance.retention.purge_transcripts(now) == (0 if recent_attempt else 1)
+
+
 async def test_compression_candidate_limit_keeps_contiguous_cursor(
     maintenance: ArchiveMaintenance,
 ) -> None:

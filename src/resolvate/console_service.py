@@ -36,6 +36,7 @@ from resolvate.system_messages import operator_system_text, rating_data, rating_
 from resolvate.topic_messages import topic_deliveries
 from resolvate.web_models import MediaAsset, TicketLifecycleEvent
 from resolvate.web_support_service import decode_cursor, encode_cursor
+from resolvate.work_retention import delivery_recovery_expired
 
 
 def fingerprint(value: object) -> str:
@@ -499,6 +500,8 @@ class ConsoleService:
                 raise HTTPException(404, "Отправка не найдена.")
             if job.status != DeliveryStatus.FAILED:
                 return
+            if delivery_recovery_expired(job, utcnow()):
+                raise HTTPException(410, "Срок повторной отправки истёк (30 дней).")
             if job.last_error == "outcome_unknown":
                 raise HTTPException(409, "Результат неизвестен. Сначала проверьте Telegram.")
             payload = dict(command.deliveries[delivery_id])

@@ -21,13 +21,7 @@ from resolvate.models import (
 )
 from resolvate.rotation_gate import ingress_matches_archive, lock_rotation_gate
 from resolvate.topic_archive import TopicArchiveRepository
-
-UNFINISHED_DELIVERIES = (
-    DeliveryStatus.PENDING,
-    DeliveryStatus.PROCESSING,
-    DeliveryStatus.WAITING_TOPIC,
-    DeliveryStatus.FAILED,
-)
+from resolvate.work_retention import work_protects_archive
 
 
 class TopicRotationRepository:
@@ -147,7 +141,7 @@ class TopicRotationRepository:
                     await session.scalars(
                         select(DeliveryOutbox).where(
                             DeliveryOutbox.ticket_id == ticket.id,
-                            DeliveryOutbox.status.in_(UNFINISHED_DELIVERIES),
+                            work_protects_archive(DeliveryOutbox),
                         )
                     )
                 ).all()
@@ -214,7 +208,7 @@ class TopicRotationRepository:
                 select(
                     exists().where(
                         DeliveryOutbox.ticket_id == ticket.id,
-                        DeliveryOutbox.status.in_(UNFINISHED_DELIVERIES),
+                        work_protects_archive(DeliveryOutbox),
                     )
                 )
             )
@@ -262,7 +256,7 @@ class TopicRotationRepository:
                 select(
                     exists().where(
                         DeliveryOutbox.ticket_id == ticket.id,
-                        DeliveryOutbox.status.in_(UNFINISHED_DELIVERIES),
+                        work_protects_archive(DeliveryOutbox),
                     )
                 )
             )

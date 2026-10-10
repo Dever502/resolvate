@@ -184,6 +184,13 @@ class TopicRotationWorker:
                         )
                         return
                 if not await self.archives.begin_switch(archive.id):
+                    current = await self.repository.get(archive.id)
+                    if (
+                        current is not None
+                        and current.state == "live"
+                        and archive.replacement_token is not None
+                    ):
+                        await self._reopen(current)
                     return
                 archive = await self.repository.get(archive_id)
                 assert archive is not None
@@ -199,6 +206,11 @@ class TopicRotationWorker:
                         raise
                 if archive.mode == "evict":
                     await self.repository.start_eviction(archive.id)
+                    return
+                if archive.replacement_topic_id is not None:
+                    # Offline recovery adopted an existing, verified empty topic.
+                    # All ordinary cutover checks above still apply.
+                    await self.repository.transition(archive.id, "switching", "installing")
                     return
                 token = await self.repository.claim_creation(archive.id)
                 if token is None:
@@ -275,7 +287,9 @@ class TopicRotationWorker:
                     current.state,
                     current.state,
                     delay=60,
-                    error="telegram_or_storage_error",
+                    error=current.error_code
+                    if current.state == "uncertain"
+                    else "telegram_or_storage_error",
                 )
                 if current.state == "uncertain":
                     await self._reopen(current)

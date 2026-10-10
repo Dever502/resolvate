@@ -416,7 +416,7 @@ class TopicArchiveRepository:
             if not self._closed(ticket) or ticket is None or ticket.topic_id != archive.topic_id:
                 return None
             archive.state = "preparing"
-            archive.mode = "evict" if capacity else "replace"
+            archive.mode = "evict" if capacity and not archive.replacement_topic_id else "replace"
             archive.prepared_revision = archive.revision
             archive.prepared_close_cycle = ticket.close_cycle
             await session.commit()

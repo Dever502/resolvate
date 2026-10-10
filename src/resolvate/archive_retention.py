@@ -9,7 +9,6 @@ from sqlalchemy.orm import aliased
 
 from resolvate.models import (
     DeliveryOutbox,
-    DeliveryStatus,
     InboundUpdate,
     Ticket,
     TicketMessage,
@@ -17,15 +16,15 @@ from resolvate.models import (
     TranscriptMedia,
     TranscriptMessage,
     UserIdentity,
-    WorkStatus,
     utcnow,
 )
 from resolvate.rotation_gate import ingress_matches_archive, lock_rotation_gate
 from resolvate.topic_archive import TopicArchiveRepository
 from resolvate.web_models import MediaAsset
+from resolvate.work_retention import work_protects_archive
 
 
-def protected_archive() -> ColumnElement[bool]:
+def protected_archive(now: datetime | None = None) -> ColumnElement[bool]:
     return or_(
         TopicArchive.state != "archived",
         TopicArchive.archived_at.is_(None),
@@ -36,7 +35,7 @@ def protected_archive() -> ColumnElement[bool]:
         ),
         exists().where(
             DeliveryOutbox.ticket_id == TopicArchive.ticket_id,
-            DeliveryOutbox.status != DeliveryStatus.DELIVERED,
+            work_protects_archive(DeliveryOutbox, now),
         ),
         exists(
             select(InboundUpdate.telegram_update_id)
@@ -47,7 +46,7 @@ def protected_archive() -> ColumnElement[bool]:
                 (UserIdentity.user_id == Ticket.user_id) & (UserIdentity.provider == "telegram"),
             )
             .where(
-                InboundUpdate.status != WorkStatus.DELIVERED,
+                work_protects_archive(InboundUpdate, now),
                 ingress_matches_archive(InboundUpdate.ordering_key),
             )
             .correlate(TopicArchive)
@@ -85,7 +84,7 @@ def eligible_media(before: datetime) -> ColumnElement[bool]:
     )
     # Admission can precede journaling: protect attachments in not-yet-handled updates too.
     queued_attachment = exists().where(
-        InboundUpdate.status != WorkStatus.DELIVERED,
+        work_protects_archive(InboundUpdate),
         func.jsonb_path_exists(
             InboundUpdate.payload,
             literal_column("'$.**.file_unique_id ? (@ == $file)'::jsonpath"),
@@ -178,7 +177,7 @@ class ArchiveRetention:
                         select(TopicArchive.id)
                         .where(
                             TopicArchive.archived_at <= before,
-                            ~protected_archive(),
+                            ~protected_archive(now),
                             or_(
                                 exists().where(TranscriptMessage.archive_id == TopicArchive.id),
                                 exists().where(TicketMessage.archive_id == TopicArchive.id),
@@ -197,7 +196,7 @@ class ArchiveRetention:
                     .where(
                         TopicArchive.id == archive_id,
                         TopicArchive.archived_at <= before,
-                        ~protected_archive(),
+                        ~protected_archive(now),
                     )
                     .with_for_update()
                 )

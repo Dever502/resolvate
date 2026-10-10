@@ -24,6 +24,8 @@ from resolvate.models import (
     ProjectCredential,
     ProjectMember,
 )
+from resolvate.web_identity import WEB_IDENTITY_MODE_KEY, lock_web_identity_mode
+from resolvate.web_models import SystemSetting
 
 SECRET_FIELDS = frozenset(
     {
@@ -326,14 +328,20 @@ class ProjectService:
     ) -> None:
         if set(values) - PROJECT_FIELDS:
             raise HTTPException(422, "Неизвестные настройки проекта.")
-        async with self.database.session() as session:
+        async with self.database.for_project(project_id).session() as session:
             project = await self._project(session, actor, project_id)
+            await lock_web_identity_mode(session, project_id)
+            bound_mode = await session.get(SystemSetting, WEB_IDENTITY_MODE_KEY)
             previous = project.settings
             project.settings = {**previous, **values}
             try:
                 validated = runtime_settings(self.settings, project)
             except (ValidationError, ValueError):
                 raise HTTPException(422, "Проверьте настройки и ключи интеграций.") from None
+            if bound_mode is not None and bound_mode.value != validated.web_identity_mode:
+                raise HTTPException(
+                    409, "Режим идентификации нельзя менять после первого Web-обращения."
+                )
             token = validated.support_bot_token.get_secret_value()
             for field in ("remnawave_base_url", "notification_webhook_url"):
                 value = getattr(validated, field)
