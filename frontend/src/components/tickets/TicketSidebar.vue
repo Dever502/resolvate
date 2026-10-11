@@ -99,6 +99,6 @@ function more(): void {
         </div>
       </TabsContent>
     </TabsRoot>
-    <AccountFooter @error="workspace.show($event)" />
+    <AccountFooter />
   </aside>
 </template>

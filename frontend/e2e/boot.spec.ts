@@ -46,7 +46,7 @@ test.describe("start of the console", () => {
     expect(layout.form.right).toBeLessThanOrEqual(320);
   });
 
-  test("sign in, cycle the theme, sign out", async ({ page, request, consoleErrors }) => {
+  test("sign in, choose the theme, sign out", async ({ page, request, consoleErrors }) => {
     void consoleErrors;
     await scenario(request, { me: "session" });
     await page.goto(CONSOLE);
@@ -56,22 +56,22 @@ test.describe("start of the console", () => {
     await expect(page.locator("#workspace")).toBeVisible();
     await expect(page.getByText("Оператор Тест")).toBeVisible();
 
-    const toggle = page.locator("[data-theme-toggle]");
+    await page.getByRole("button", { name: /Меню аккаунта:/ }).click();
     const states = [
-      ["system", "Системная тема · переключить на светлую", null],
-      ["light", "Светлая тема · переключить на тёмную", "light"],
-      ["dark", "Тёмная тема · переключить на системную", "dark"],
-      ["system", "Системная тема · переключить на светлую", null],
+      ["system", "Системная тема", null],
+      ["dark", "Тёмная тема", "dark"],
+      ["light", "Светлая тема", "light"],
+      ["system", "Системная тема", null],
     ] as const;
-    for (const [index, [preference, label, stored]] of states.entries()) {
-      if (index) await toggle.click();
-      await expect(toggle).toHaveAttribute("data-theme-preference", preference);
-      await expect(toggle).toHaveAttribute("aria-label", label);
+    for (const [, label, stored] of states) {
+      const option = page.getByRole("menuitemradio", { name: label });
+      await option.click();
+      await expect(option).toHaveAttribute("aria-checked", "true");
       expect(await page.evaluate(() => localStorage.getItem("resolvate.theme"))).toBe(stored);
       if (stored) expect(await page.evaluate(() => document.documentElement.dataset.theme)).toBe(stored);
     }
 
-    await page.getByRole("button", { name: "Выйти" }).click();
+    await page.getByRole("menuitem", { name: "Выйти" }).click();
     await expect(page.locator("#login-screen")).toBeVisible();
   });
 
@@ -156,8 +156,9 @@ test.describe("workspace frame", () => {
       await context.addCookies([SESSION_COOKIE]);
       await page.setViewportSize(viewport);
       await page.goto(CONSOLE);
-      await page.getByRole("button", { name: "Выйти" }).click();
-      // Exactly one notice is visible: in the conversation panel, or above the list where that panel is hidden.
+      await page.getByRole("button", { name: /Меню аккаунта:/ }).click();
+      await page.getByRole("menuitem", { name: "Выйти" }).click();
+      // Exactly one notice is visible inside the account menu, including on phones.
       const alert = page.getByRole("alert");
       await expect(alert).toHaveText("Запрос не выполнен. Повторите позже.");
       await expect(alert).toBeInViewport();

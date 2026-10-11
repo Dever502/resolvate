@@ -6,13 +6,11 @@ export type ThemePreference = "system" | "light" | "dark";
 /** Same key and values as the classic console: "light", "dark", or no value for the system theme. */
 export const THEME_KEY = "resolvate.theme";
 
-const NEXT: Record<ThemePreference, ThemePreference> = { system: "light", light: "dark", dark: "system" };
-
-/** The button names the current theme and what a click does. */
+/** Accessible names of the three direct theme choices. */
 export const THEME_LABELS: Record<ThemePreference, string> = {
-  system: "Системная тема · переключить на светлую",
-  light: "Светлая тема · переключить на тёмную",
-  dark: "Тёмная тема · переключить на системную",
+  system: "Системная тема",
+  light: "Светлая тема",
+  dark: "Тёмная тема",
 };
 
 export function normalizeTheme(value: string | null): ThemePreference {
@@ -43,8 +41,8 @@ export const useThemeStore = defineStore("theme", () => {
     preference.value === "system" ? (systemDark.value ? "dark" : "light") : preference.value,
   );
 
-  function cycle(): void {
-    preference.value = NEXT[preference.value];
+  function setPreference(value: ThemePreference): void {
+    preference.value = value;
     writePreference(preference.value);
   }
 
@@ -53,5 +51,5 @@ export const useThemeStore = defineStore("theme", () => {
     preference.value = normalizeTheme(value);
   }
 
-  return { preference, systemDark, resolved, cycle, adopt };
+  return { preference, systemDark, resolved, setPreference, adopt };
 });

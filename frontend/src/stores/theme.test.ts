@@ -8,14 +8,16 @@ describe("theme store", () => {
     setActivePinia(createPinia());
   });
 
-  it("cycles system → light → dark → system and stores it like the classic console", () => {
+  it("selects themes directly and stores them like the classic console", () => {
     const theme = useThemeStore();
     expect(theme.preference).toBe("system");
-    theme.cycle();
-    expect([theme.preference, localStorage.getItem(THEME_KEY)]).toEqual(["light", "light"]);
-    theme.cycle();
+    theme.setPreference("dark");
     expect([theme.preference, localStorage.getItem(THEME_KEY)]).toEqual(["dark", "dark"]);
-    theme.cycle();
+    theme.setPreference("light");
+    expect([theme.preference, localStorage.getItem(THEME_KEY)]).toEqual(["light", "light"]);
+    theme.setPreference("light");
+    expect([theme.preference, localStorage.getItem(THEME_KEY)]).toEqual(["light", "light"]);
+    theme.setPreference("system");
     expect([theme.preference, localStorage.getItem(THEME_KEY)]).toEqual(["system", null]);
   });
 
@@ -35,11 +37,11 @@ describe("theme store", () => {
     expect(normalizeTheme(null)).toBe("system");
   });
 
-  it("labels name the current theme and the next action", () => {
+  it("labels name the direct choices", () => {
     expect(THEME_LABELS).toEqual({
-      system: "Системная тема · переключить на светлую",
-      light: "Светлая тема · переключить на тёмную",
-      dark: "Тёмная тема · переключить на системную",
+      system: "Системная тема",
+      light: "Светлая тема",
+      dark: "Тёмная тема",
     });
   });
 });
