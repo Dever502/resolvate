@@ -52,6 +52,7 @@ async function save(unlink = false): Promise<void> {
     :title="`Telegram ID: ${account?.name ?? ''}`"
     description="С Telegram ID и доступом к проекту сотрудник отвечает клиентам из группы поддержки. Один Telegram ID — у одного аккаунта."
     :locked="request.busy"
+    @open-auto-focus="(event: Event) => { event.preventDefault(); field?.focus(); }"
   >
     <form class="mt-2" novalidate @submit.prevent="save()">
       <label :for="id" class="field-label">Telegram ID</label>

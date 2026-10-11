@@ -23,7 +23,9 @@ const props = withDefaults(defineProps<{
   limit?: number;
   /** The status once someone is chosen: the next step. */
   chosenHint?: string;
-}>(), { placeholder: "Найти по имени или логину", disabled: false, limit: 50, chosenHint: "" });
+  /** Why the form refused to go on (nobody chosen): announced and tied to the field. */
+  error?: string;
+}>(), { placeholder: "Найти по имени или логину", disabled: false, limit: 50, chosenHint: "", error: "" });
 const chosen = defineModel<StaffOption | null>({ required: true });
 
 const id = useId();
@@ -121,7 +123,8 @@ onBeforeUnmount(stop);
           :placeholder="placeholder"
           maxlength="100"
           spellcheck="false"
-          :aria-describedby="`${id}-status`"
+          :aria-describedby="error ? `${id}-status ${id}-error` : `${id}-status`"
+          :aria-invalid="error ? 'true' : undefined"
           @input="typed"
           @focus="load"
           @click="clicked"
@@ -135,5 +138,6 @@ onBeforeUnmount(stop);
       </ComboboxContent>
     </ComboboxRoot>
     <p :id="`${id}-status`" class="muted small mt-1.5 mb-0" role="status">{{ status }}</p>
+    <p v-if="error" :id="`${id}-error`" class="field-error" role="alert">{{ error }}</p>
   </div>
 </template>

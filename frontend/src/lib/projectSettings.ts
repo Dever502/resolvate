@@ -132,6 +132,23 @@ const INTEGER = /^[0-9]+$/;
 const PRINTABLE = /^[!-~]+$/;
 const ASCII_KEYS = new Set(["web_api_token", "api_admin_token", "remnawave_api_token"]);
 const MIN_SECRET = 32;
+const HOST_LABEL = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/;
+// The switch that makes the server check a key: config.py checks a key only for an enabled integration.
+const KEY_SWITCH: Record<string, string> = {
+  web_api_token: "web_api_enabled",
+  api_admin_token: "api_enabled",
+  remnawave_api_token: "remnawave_enabled",
+  notification_webhook_secret: "notification_webhook_enabled",
+};
+// PLACEHOLDER_SECRETS and PLACEHOLDER_SECRET_PARTS of config.py.
+const PLACEHOLDERS = new Set(["change-me", "changeme", "placeholder", "replace-me", "secret", "test-secret", "test-token", "your-secret", "your-token"]);
+const PLACEHOLDER_PARTS = ["change-me", "placeholder", "replace-me", "secret", "test-secret", "test-token", "your-secret", "your-token"];
+
+function placeholder(value: string): boolean {
+  const normalized = value.toLowerCase();
+  return PLACEHOLDERS.has(normalized)
+    || PLACEHOLDER_PARTS.some((part) => !normalized.split(part).join("").replace(/^[-_. ]+|[-_. ]+$/g, ""));
+}
 
 /** Values as the inputs hold them: text, or a flag for a switch. Secrets start empty. */
 export type SettingsForm = Record<string, string | boolean>;
@@ -177,7 +194,12 @@ function urlProblem(value: string): string {
   if (url.protocol !== "https:") return "Нужен адрес HTTPS.";
   if (url.username || url.password) return "Адрес не должен содержать логин и пароль.";
   if (url.hash) return "Адрес не должен содержать #фрагмент.";
-  if (url.hostname === "localhost" || url.hostname.endsWith(".localhost")) return "Нужен публичный адрес.";
+  if (url.hostname === "localhost") return "Нужен публичный адрес.";
+  // An IPv6 literal is checked by the URL parser; names follow config.py's label rule.
+  const host = url.hostname.replace(/\.$/, "");
+  if (!host.startsWith("[") && (!host || host.length > 253 || !host.split(".").every((label) => HOST_LABEL.test(label)))) {
+    return "Неверное имя сервера в адресе.";
+  }
   return "";
 }
 
@@ -194,10 +216,14 @@ export function validate(form: SettingsForm, saved: ProjectSettings): Record<str
         if (!BOT_TOKEN.test(raw) || Number(raw.split(":")[0]) > MAX_ID) {
           errors[field.key] = "Неверный формат токена: номер бота, двоеточие и ключ от 20 символов.";
         }
+      } else if (!form[KEY_SWITCH[field.key] ?? ""]) {
+        // Kept for a switched-off integration without checks, as on the server.
       } else if ([...raw].length < MIN_SECRET || raw !== value) {
         errors[field.key] = "Не короче 32 символов, без пробелов по краям.";
       } else if (ASCII_KEYS.has(field.key) && !PRINTABLE.test(raw)) {
         errors[field.key] = "Только латиница, цифры и знаки, без пробелов.";
+      } else if (placeholder(raw)) {
+        errors[field.key] = "Похоже на заглушку: задайте настоящий ключ.";
       }
     } else if (field.kind === "group" && value) {
       if (!GROUP_ID.test(value) || Math.abs(Number(value)) > MAX_ID) {
@@ -227,7 +253,7 @@ export function validate(form: SettingsForm, saved: ProjectSettings): Record<str
     need("notification_webhook_url", Boolean(text("notification_webhook_url")), "Нужен адрес, чтобы отправлять события.");
     need("notification_webhook_secret", keyKnown("notification_webhook_secret"), "Нужен секрет, чтобы отправлять события.");
   }
-  if (form.web_api_token && form.web_api_token === form.api_admin_token && !errors.api_admin_token) {
+  if (form.web_api_enabled && form.web_api_token && form.web_api_token === form.api_admin_token && !errors.api_admin_token) {
     errors.api_admin_token = "Ключи Web API и Operator API должны различаться.";
   }
   const number = (key: string, fallback = 0) => (text(key) ? Number(text(key)) : fallback);

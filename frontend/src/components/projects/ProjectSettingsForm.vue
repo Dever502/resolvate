@@ -84,6 +84,16 @@ async function submit(): Promise<void> {
   const settings = payloadFrom(form.value);
   await request.run(async () => {
     await session.api(`projects/${props.project.id}/settings`, { method: "POST", data: { settings } });
+    // The server took these values: the form counts as saved even if reading them back fails.
+    const stored: ProjectSettings = { ...saved.value };
+    for (const field of SETTING_FIELDS) {
+      if (field.key in settings) stored[field.key] = field.kind === "secret" ? true : settings[field.key] ?? null;
+    }
+    saved.value = stored;
+    form.value = formFrom(stored);
+    initial.value = JSON.stringify(form.value);
+    errors.value = {};
+    attempted.value = false;
     await load();
     return "Подключения сохранены. Активный проект перезапустится автоматически.";
   });
@@ -100,12 +110,13 @@ function cancel(): void {
 
 <template>
   <div>
+    <!-- A failed read is shown above the form, which keeps what is on screen. -->
     <p v-if="loadError" class="error" role="alert">
       {{ loadError }}
       <button type="button" class="quiet ml-1" @click="load">Повторить</button>
     </p>
     <p v-else-if="!saved" class="muted">Загружаем подключения…</p>
-    <form v-else ref="form" class="grid gap-3" novalidate :aria-busy="request.busy || undefined" @submit.prevent="submit">
+    <form v-if="saved" ref="form" class="grid gap-3" novalidate :aria-busy="request.busy || undefined" @submit.prevent="submit">
       <p class="muted small m-0">
         Сохранённые ключи не показываются: пустое поле оставляет прежний ключ. После первого сохранения бот и группа закрепляются за проектом.
       </p>

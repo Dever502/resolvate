@@ -105,6 +105,18 @@ export const useProjectsStore = defineStore("projects", () => {
     return change(`projects/${id}/admin`, { login });
   }
 
+  /** Project administrator: a new logo; the list then carries its new version, so every image updates. */
+  async function uploadLogo(id: string, file: File): Promise<void> {
+    const form = new FormData();
+    form.set("file", file);
+    await session.api(`projects/${id}/logo`, { method: "POST", form });
+    await follow();
+  }
+
+  function removeLogo(id: string): Promise<void> {
+    return change(`projects/${id}/logo/remove`);
+  }
+
   function reset(): void {
     all.value = [];
     currentId.value = null;
@@ -115,6 +127,6 @@ export const useProjectsStore = defineStore("projects", () => {
 
   return {
     all, currentId, loaded, error, available, current,
-    refresh, select, create, setActive, grant, revoke, transfer, reset,
+    refresh, select, create, setActive, grant, revoke, transfer, uploadLogo, removeLogo, reset,
   };
 });

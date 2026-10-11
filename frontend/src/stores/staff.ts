@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import type { Account } from "../api/types";
-import { useSessionStore } from "./session";
+import { PASSWORD_CHANGED, useSessionStore } from "./session";
 
 export interface NewAccount {
   name: string;
@@ -54,11 +54,30 @@ export const useStaffStore = defineStore("staff", () => {
     await follow();
   }
 
+  /**
+   * A new password set by the installation administrator, confirmed with their own current password
+   * (POST /console/accounts/{id}/password). The server ends every session of that account; for the
+   * administrator's own account that is this session, so the console signs out like after a change.
+   */
+  async function resetPassword(account: Account, current: string, next: string): Promise<void> {
+    await session.api(`accounts/${account.id}/password`, { method: "POST", data: { current_password: current, new_password: next } });
+    if (account.id === session.account?.id) session.signOut(PASSWORD_CHANGED, true);
+  }
+
+  /**
+   * Hands the installation to another active account (POST /console/installation/admin). The server
+   * makes this account an operator and ends both accounts' sessions: the console signs out and says so.
+   */
+  async function transferInstallation(account: Account): Promise<void> {
+    await session.api("installation/admin", { method: "POST", data: { login: account.login } });
+    session.signOut(`Управление установкой передано: ${account.name} (${account.login}). Войдите снова.`, true);
+  }
+
   function reset(): void {
     accounts.value = [];
     loaded.value = false;
   }
   session.onSessionEnd(reset);
 
-  return { accounts, loaded, refresh, create, setActive, setTelegramId, reset };
+  return { accounts, loaded, refresh, create, setActive, setTelegramId, resetPassword, transferInstallation, reset };
 });

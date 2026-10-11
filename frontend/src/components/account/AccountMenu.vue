@@ -3,10 +3,11 @@ import {
   DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuPortal,
   DropdownMenuRoot, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "reka-ui";
-import { computed, ref } from "vue";
+import { computed, nextTick, ref, useTemplateRef } from "vue";
 import { initials } from "../../lib/initials";
 import { useSessionStore } from "../../stores/session";
 import Icon from "../ui/Icon.vue";
+import PasswordDialog from "./PasswordDialog.vue";
 import ThemeSelector from "./ThemeSelector.vue";
 
 const session = useSessionStore();
@@ -15,6 +16,23 @@ const busy = ref(false);
 const error = ref("");
 const name = computed(() => session.account?.name ?? "");
 const role = computed(() => session.account?.role === "admin" ? "Администратор установки" : "Оператор");
+const trigger = useTemplateRef<{ $el: HTMLElement }>("trigger");
+const passwordOpen = ref(false);
+let passwordRequested = false;
+
+function requestPassword(): void {
+  passwordRequested = true;
+}
+
+// Reka returns focus to the trigger only after a timeout; a window opened earlier would remember the
+// vanishing menu item and lose focus when it closes. The trigger takes focus first, then the window opens.
+function afterClose(event: Event): void {
+  if (!passwordRequested) return;
+  passwordRequested = false;
+  event.preventDefault();
+  trigger.value?.$el.focus();
+  void nextTick(() => { passwordOpen.value = true; });
+}
 
 async function logout(): Promise<void> {
   if (busy.value) return;
@@ -33,7 +51,7 @@ async function logout(): Promise<void> {
 
 <template>
   <DropdownMenuRoot v-model:open="open" :modal="false">
-    <DropdownMenuTrigger class="account-trigger" :aria-label="`Меню аккаунта: ${name}, ${role}`">
+    <DropdownMenuTrigger ref="trigger" class="account-trigger" :aria-label="`Меню аккаунта: ${name}, ${role}`">
       <span class="avatar size-9 shrink-0 text-xs" aria-hidden="true">{{ initials(name) }}</span>
       <span class="min-w-0 flex-1 text-left">
         <strong class="block truncate text-[.8125rem] font-semibold" :title="name">{{ name }}</strong>
@@ -42,7 +60,8 @@ async function logout(): Promise<void> {
       <Icon name="chevron" class="account-chevron size-4 shrink-0" />
     </DropdownMenuTrigger>
     <DropdownMenuPortal>
-      <DropdownMenuContent class="menu account-menu" side="top" align="start" :side-offset="12" :collision-padding="8" loop>
+      <DropdownMenuContent class="menu account-menu" side="top" align="start" :side-offset="12" :collision-padding="8" loop
+        @close-auto-focus="afterClose">
         <DropdownMenuLabel class="account-identity">
           <span class="avatar size-9 shrink-0 text-xs" aria-hidden="true">{{ initials(name) }}</span>
           <span class="min-w-0">
@@ -51,8 +70,12 @@ async function logout(): Promise<void> {
           </span>
         </DropdownMenuLabel>
         <DropdownMenuSeparator class="account-separator" />
-        <!-- Personal settings belong here once a working screen exists. Installation/project
-             administration remains in its separate navigation; no placeholder action. -->
+        <!-- Personal settings. Installation/project administration remains in its separate
+             navigation (the app bar's "Управление"). -->
+        <DropdownMenuItem class="menu-item" @select="requestPassword">
+          <Icon name="lock" class="size-4" />
+          <span>Сменить пароль</span>
+        </DropdownMenuItem>
         <ThemeSelector />
         <DropdownMenuSeparator class="account-separator" />
         <!-- Keep the menu while awaiting the API, including errors. Reka disables selection
@@ -67,4 +90,5 @@ async function logout(): Promise<void> {
   </DropdownMenuRoot>
   <!-- A failed request stays visible even after dismissing the menu, including on phones. -->
   <p v-if="error && !open" class="error account-error" role="alert">{{ error }}</p>
+  <PasswordDialog v-model:open="passwordOpen" />
 </template>

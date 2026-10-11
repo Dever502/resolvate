@@ -8,16 +8,19 @@ import { useProjectsStore } from "../../stores/projects";
 import { useSessionStore } from "../../stores/session";
 import { useStaffStore } from "../../stores/staff";
 import { useWorkspaceStore } from "../../stores/workspace";
+import PasswordDialog from "../account/PasswordDialog.vue";
 import ConfirmDialog from "../ui/ConfirmDialog.vue";
 import Icon from "../ui/Icon.vue";
 import ModalDialog from "../ui/ModalDialog.vue";
+import InstallationTransfer from "./InstallationTransfer.vue";
 import StaffCreateForm from "./StaffCreateForm.vue";
 import TelegramIdDialog from "./TelegramIdDialog.vue";
 
 // "Сотрудники" (installation administrator): every console account with its role, state and links
-// (Telegram ID, projects it administers), a new account, the Telegram ID, and switching an account
-// off or on. Switching off is not deleting: the account and its history stay, its sessions end.
-// The server keeps the rules (the last administrator, project administrators) and checks the rights.
+// (Telegram ID, projects it administers), a new account, the Telegram ID, a password reset,
+// switching an account off or on, and handing the installation over. Switching off is not
+// deleting: the account and its history stay, its sessions end. The server keeps the rules (the
+// last administrator, project administrators) and checks the rights.
 const workspace = useWorkspaceStore();
 const staff = useStaffStore();
 const session = useSessionStore();
@@ -30,6 +33,11 @@ const loadError = ref("");
 const query = ref("");
 const disabling = ref<Account | null>(null);
 const editing = ref<Account | null>(null);
+const resetting = ref<Account | null>(null);
+const resettingOpen = computed({
+  get: () => resetting.value !== null,
+  set: (value) => { if (!value) resetting.value = null; },
+});
 const disablingOpen = computed({
   get: () => disabling.value !== null,
   set: (value) => { if (!value && !confirm.busy) disabling.value = null; },
@@ -139,6 +147,8 @@ function saved(text: string): void {
           <div class="admin-actions">
             <button type="button" class="quiet" :aria-disabled="request.busy || undefined" :aria-label="`Telegram ID: ${account.name}`"
               @click="!request.busy && (editing = account)">Telegram ID</button>
+            <button type="button" class="quiet" :aria-disabled="request.busy || undefined" :aria-label="`Сбросить пароль: ${account.name}`"
+              @click="!request.busy && (resetting = account)">Сбросить пароль</button>
             <button v-if="account.id !== session.account?.id" type="button" :class="account.active ? 'quiet' : 'secondary'"
               :aria-disabled="request.busy || undefined" :aria-label="`${account.active ? 'Отключить' : 'Включить'}: ${account.name}`"
               @click="!request.busy && (account.active ? askDisable(account) : enable(account))">
@@ -153,6 +163,10 @@ function saved(text: string): void {
       <summary>Добавить сотрудника</summary>
       <StaffCreateForm />
     </details>
+    <details class="disclosure">
+      <summary>Передать управление установкой</summary>
+      <InstallationTransfer />
+    </details>
   </ModalDialog>
   <ConfirmDialog
     v-model:open="disablingOpen"
@@ -166,4 +180,5 @@ function saved(text: string): void {
     @confirm="disable"
   />
   <TelegramIdDialog v-model:account="editing" @saved="saved" />
+  <PasswordDialog v-model:open="resettingOpen" :target="resetting" @done="saved" />
 </template>

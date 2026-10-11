@@ -24,10 +24,17 @@ function showLoadError(): void {
   document.getElementById("app")?.replaceChildren(message, reload);
 }
 
-// After a deploy an open tab may request chunks that no longer exist.
+// After a deploy an open tab may request chunks that no longer exist. Before the start nothing works
+// without them; later only the part that needed a chunk fails (a sticker, an administration window),
+// and it reports that itself instead of the whole workspace and its drafts being replaced.
+let started = false;
 window.addEventListener("vite:preloadError", (event) => {
+  if (started) return;
   event.preventDefault();
   showLoadError();
 });
 
-import("./app").then(({ start }) => start(session, controller), showLoadError);
+import("./app").then(({ start }) => {
+  start(session, controller);
+  started = true;
+}, showLoadError);

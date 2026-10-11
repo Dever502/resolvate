@@ -18,6 +18,11 @@ const managed = computed(() => projects.all.find((project) => project.id === man
 // Access or administration changed while the screen was open: the project left the list.
 const gone = computed(() => Boolean(managedId.value) && projects.loaded && !managed.value);
 const dirty = ref(false);
+// The project whose screen was left: the list puts focus back on its button.
+const returnTo = ref<string | null>(null);
+watch(managedId, (now, before) => {
+  if (!now && before) returnTo.value = before;
+});
 const discarding = ref<(() => void) | null>(null);
 const discardOpen = computed({
   get: () => discarding.value !== null,
@@ -82,6 +87,7 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", keep));
     <ProjectList
       v-else-if="view"
       :create="view.create"
+      :return-to="returnTo"
       :notice="gone ? 'Этот проект больше недоступен: изменились доступ или администратор.' : ''"
       @manage="manage"
     />

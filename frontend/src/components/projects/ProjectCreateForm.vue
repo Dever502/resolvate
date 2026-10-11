@@ -78,9 +78,9 @@ async function submit(): Promise<void> {
         label="Администратор проекта"
         :search="accounts"
         chosen-hint="Администратор проекта настраивает бота, группу поддержки и участников."
+        :error="adminError"
         @update:model-value="adminError = ''"
       />
-      <p v-if="adminError" class="field-error">{{ adminError }}</p>
     </div>
     <p v-if="request.status" class="error" :class="{ success: !request.failed }" :role="request.failed ? 'alert' : 'status'">{{ request.status }}</p>
     <div class="mt-3 flex justify-end">

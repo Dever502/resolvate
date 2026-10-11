@@ -401,6 +401,11 @@
   .picker-options { position: absolute; z-index: 5; top: 100%; left: 0; right: 0; margin-top: .25rem; max-height: min(18rem, 50dvh); overflow-y: auto; overscroll-behavior: contain; padding: .375rem; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); box-shadow: 0 6px 32px #1d1d1f26; }
   .picker-option { display: flex; flex-direction: column; gap: .125rem; padding: .5rem .625rem; border-radius: 7px; cursor: pointer; }
   .picker-option[data-highlighted] { background: var(--accent-soft); }
+  /* Project logo (projects/ProjectLogo.vue): the current image, the chosen file's preview. */
+  .logo-frame { display: grid; place-items: center; width: 4.5rem; height: 4.5rem; flex: 0 0 auto; overflow: hidden; border: 1px solid var(--border); border-radius: 14px; background: var(--subtle); color: var(--muted); font-size: 1.5rem; font-weight: 600; }
+  .logo-frame img, .logo-frame canvas { width: 100%; height: 100%; object-fit: contain; }
+  .logo-preview { display: flex; align-items: center; gap: .875rem; margin-top: .75rem; }
+  .logo-progress { display: block; width: 100%; margin-top: .75rem; accent-color: var(--accent); }
 
   /* Modal windows (ui/ModalDialog.vue) and the image viewer, both on Reka Dialog. */
   .dialog-backdrop { position: fixed; inset: 0; z-index: 50; background: var(--backdrop); }

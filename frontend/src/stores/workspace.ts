@@ -7,6 +7,7 @@ import { useTicketsStore } from "./tickets";
 
 export const FAILED = "Не удалось выполнить действие.";
 export const NO_LINK_ACCESS = "Нет доступа к проекту из ссылки.";
+export const WINDOW_UNAVAILABLE = "Не удалось загрузить раздел. Обновите страницу.";
 
 export type ProjectTab = "members" | "settings" | "logo";
 

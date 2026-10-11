@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, nextTick, onMounted, reactive, ref, useTemplateRef } from "vue";
 import type { Project } from "../../api/types";
 import { errorMessage, useRequest } from "../../composables/useRequest";
 import { initials } from "../../lib/initials";
@@ -14,7 +14,7 @@ import ProjectCreateForm from "./ProjectCreateForm.vue";
 // The projects the account sees, with their state and what this account may do with each: open
 // it in the workspace, manage it, switch it on or off, or grant oneself access (installation
 // administrator). The server checks every action again.
-const props = defineProps<{ create: boolean; notice: string }>();
+const props = withDefaults(defineProps<{ create: boolean; notice: string; returnTo?: string | null }>(), { returnTo: null });
 const emit = defineEmits<{ manage: [id: string] }>();
 const session = useSessionStore();
 const projects = useProjectsStore();
@@ -32,6 +32,7 @@ const disablingOpen = computed({
 const loading = ref(false);
 const loadError = ref("");
 const brokenLogos = reactive(new Set<string>());
+const root = useTemplateRef<HTMLElement>("root");
 
 async function load(): Promise<void> {
   loading.value = true;
@@ -46,6 +47,8 @@ async function load(): Promise<void> {
 }
 
 onMounted(() => {
+  // Back from a project's screen, whose controls are gone: focus returns to that project's row.
+  if (props.returnTo) void nextTick(() => root.value?.querySelector<HTMLElement>(`[data-manage="${props.returnTo}"]`)?.focus());
   void load();
   // Names of project administrators; without them the list still works.
   if (owner.value) staff.refresh().catch(() => undefined);
@@ -106,7 +109,7 @@ async function disable(): Promise<void> {
 </script>
 
 <template>
-  <div>
+  <div ref="root">
     <p v-if="props.notice" class="error" role="alert">{{ props.notice }}</p>
     <p class="muted small mt-3 mb-0">
       <template v-if="owner">Вы администратор установки: создаёте проекты, назначаете их администраторов и включаете проекты. Доступ к переписке выдаётся явно, выдача доступа себе записывается в журнал.</template>
@@ -114,12 +117,13 @@ async function disable(): Promise<void> {
       <template v-else>Управлять проектами может администратор установки или администратор проекта.</template>
     </p>
     <p v-if="request.status" class="error" :class="{ success: !request.failed }" :role="request.failed ? 'alert' : 'status'">{{ request.status }}</p>
-    <p v-if="!projects.loaded && loadError" class="error" role="alert">
-      {{ loadError }}
+    <!-- A failed refresh is shown even over a list loaded before: it may be out of date. -->
+    <p v-if="loadError" class="error" role="alert">
+      {{ loadError }}{{ projects.loaded ? " Список ниже может быть устаревшим." : "" }}
       <button type="button" class="quiet ml-1" :aria-disabled="loading || undefined" @click="!loading && load()">Повторить</button>
     </p>
-    <p v-else-if="!projects.loaded" class="muted">Загружаем проекты…</p>
-    <ul v-else-if="projects.all.length" class="admin-list" aria-label="Проекты">
+    <p v-if="!projects.loaded && !loadError" class="muted">Загружаем проекты…</p>
+    <ul v-if="projects.loaded && projects.all.length" class="admin-list" aria-label="Проекты">
       <li v-for="project in projects.all" :key="project.id" class="admin-row">
         <div class="project-emblem" aria-hidden="true">
           <span>{{ initials(project.name) }}</span>
@@ -134,7 +138,8 @@ async function disable(): Promise<void> {
         </div>
         <div class="admin-actions">
           <button v-if="project.role && project.active" type="button" class="secondary" :aria-label="`Открыть проект ${project.name}`" @click="open(project)">Открыть</button>
-          <button v-if="owner || project.role === 'admin'" type="button" class="secondary" :aria-label="`Настроить проект ${project.name}`" @click="emit('manage', project.id)">Настроить</button>
+          <button v-if="owner || project.role === 'admin'" type="button" class="secondary" :data-manage="project.id"
+            :aria-label="`Настроить проект ${project.name}`" @click="emit('manage', project.id)">Настроить</button>
           <button v-if="owner && !project.role" type="button" class="quiet" :aria-disabled="request.busy || undefined"
             :aria-label="`Выдать себе доступ к проекту ${project.name}`" @click="!request.busy && join(project)">Выдать себе доступ</button>
           <button v-if="owner" type="button" class="quiet" :aria-disabled="request.busy || undefined"
@@ -144,7 +149,7 @@ async function disable(): Promise<void> {
         </div>
       </li>
     </ul>
-    <p v-else class="muted">{{ owner ? "Проектов пока нет. Создайте первый проект." : "Проектов, к которым у вас есть доступ, пока нет." }}</p>
+    <p v-else-if="projects.loaded" class="muted">{{ owner ? "Проектов пока нет. Создайте первый проект." : "Проектов, к которым у вас есть доступ, пока нет." }}</p>
     <details v-if="owner" class="disclosure" :open="props.create || (projects.loaded && !projects.all.length)">
       <summary>Новый проект</summary>
       <ProjectCreateForm />

@@ -1,7 +1,7 @@
 import { createPinia, setActivePinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Account } from "../api/types";
-import { useSessionStore } from "./session";
+import { PASSWORD_CHANGED, useSessionStore } from "./session";
 import { useStaffStore } from "./staff";
 
 const ADMIN: Account = { id: "a0", login: "admin", name: "Админ", role: "admin", active: true, telegram_id: null };
@@ -80,5 +80,40 @@ describe("staff of the installation", () => {
     await pending;
     expect(staff.accounts).toEqual([]);
     expect(staff.loaded).toBe(false);
+  });
+});
+
+describe("passwords and the installation", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    useSessionStore().signIn({ account: ADMIN, csrf: "c" });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("resets an employee's password with the administrator's own current one, without ending this session", async () => {
+    const calls = server(() => [200, { ok: true }]);
+    await useStaffStore().resetPassword(PAVEL, "admin password", "new password 123");
+    expect(calls).toEqual([{ url: "/console/accounts/a3/password", method: "POST", body: { current_password: "admin password", new_password: "new password 123" } }]);
+    expect(useSessionStore().status).toBe("signed-in");
+  });
+
+  it("a reset of the own account ends this session like a change, because the server ended it", async () => {
+    server(() => [200, { ok: true }]);
+    await useStaffStore().resetPassword(ADMIN, "admin password", "new password 123");
+    expect([useSessionStore().status, useSessionStore().notice]).toEqual(["signed-out", PASSWORD_CHANGED]);
+  });
+
+  it("hands the installation over by login, then signs out and says to whom", async () => {
+    const calls = server(() => [200, { ok: true }]);
+    await useStaffStore().transferInstallation(PAVEL);
+    expect(calls).toEqual([{ url: "/console/installation/admin", method: "POST", body: { login: "pavel" } }]);
+    const session = useSessionStore();
+    expect([session.status, session.notice, session.noticeIsSuccess]).toEqual(["signed-out", "Управление установкой передано: Павел (pavel). Войдите снова.", true]);
+  });
+
+  it("keeps the session when the server refuses a transfer", async () => {
+    server(() => [404, { detail: "Активная учётная запись с таким логином не найдена." }]);
+    await expect(useStaffStore().transferInstallation(PAVEL)).rejects.toThrow("Активная учётная запись с таким логином не найдена.");
+    expect(useSessionStore().status).toBe("signed-in");
   });
 });

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef } from "vue";
 import type { MemberCandidate, Project, ProjectMember } from "../../api/types";
 import { errorMessage, useRequest } from "../../composables/useRequest";
 import { avatarTone } from "../../lib/format";
@@ -31,6 +31,9 @@ const successor = ref<StaffOption | null>(null);
 const successorKey = ref(0);
 const successorError = ref("");
 const transferring = ref(false);
+const list = useTemplateRef<HTMLElement>("list");
+// After a revoke the row and its button are gone: focus goes to the list instead.
+let focusList = false;
 let controller: AbortController | null = null;
 
 const admin = computed(() => members.value.find((member) => member.role === "admin") ?? null);
@@ -116,6 +119,7 @@ async function remove(): Promise<void> {
     await load();
   });
   if (!done) return;
+  focusList = true;
   removing.value = null;
   request.clear();
   request.status = member.id === session.account?.id
@@ -155,6 +159,13 @@ const transferWarning = computed(() => {
   return `${name} теряет доступ к проекту и его подключениям. Доступ оператора можно выдать снова после передачи.`;
 });
 const ordered = computed(() => [...(admin.value ? [admin.value] : []), ...operators.value]);
+
+function afterConfirm(event: Event): void {
+  if (!focusList) return;
+  focusList = false;
+  event.preventDefault();
+  list.value?.focus();
+}
 </script>
 
 <template>
@@ -166,7 +177,7 @@ const ordered = computed(() => [...(admin.value ? [admin.value] : []), ...operat
     </p>
     <p v-else-if="!loaded" class="muted">Загружаем участников…</p>
     <template v-else>
-      <ul class="admin-list" aria-label="Участники проекта">
+      <ul ref="list" class="admin-list outline-none" aria-label="Участники проекта" tabindex="-1">
         <li v-for="member in ordered" :key="member.id" class="admin-row">
           <span class="avatar" :class="avatarTone(member.id)" aria-hidden="true">{{ initials(member.name) }}</span>
           <div class="min-w-0 flex-1">
@@ -192,9 +203,9 @@ const ordered = computed(() => [...(admin.value ? [admin.value] : []), ...operat
         label="Сотрудник"
         :search="candidates"
         chosen-hint="Нажмите «Выдать доступ», чтобы добавить сотрудника."
+        :error="candidateError"
         @update:model-value="candidateError = ''"
       />
-      <p v-if="candidateError" class="field-error">{{ candidateError }}</p>
       <div class="mt-3 flex justify-end">
         <button type="submit" class="primary" :aria-disabled="request.busy || undefined">{{ request.busy ? "Выдаём…" : "Выдать доступ" }}</button>
       </div>
@@ -213,9 +224,9 @@ const ordered = computed(() => [...(admin.value ? [admin.value] : []), ...operat
           label="Новый администратор"
           :search="successors"
           chosen-hint="Нажмите «Передать проект» и подтвердите передачу."
+          :error="successorError"
           @update:model-value="successorError = ''"
         />
-        <p v-if="successorError" class="field-error">{{ successorError }}</p>
         <div class="mt-3 flex justify-end">
           <button type="submit" class="secondary" :aria-disabled="request.busy || undefined">Передать проект</button>
         </div>
@@ -232,6 +243,7 @@ const ordered = computed(() => [...(admin.value ? [admin.value] : []), ...operat
       :error="confirm.failed ? confirm.status : ''"
       danger
       @confirm="remove"
+      @close-auto-focus="afterConfirm"
     />
     <ConfirmDialog
       v-model:open="transferOpen"

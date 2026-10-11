@@ -3,7 +3,8 @@ import { computed, useId } from "vue";
 import { IDENTITY_MODES, type SettingField } from "../../lib/projectSettings";
 
 // One field of the connections form: a switch, the identity mode, or a text field with its hint
-// and error. `data-field` lets the form focus the first field to correct.
+// and error. `data-field` lets the form focus the first field to correct. The group ID keeps the
+// ordinary keyboard: it starts with "-", which numeric keypads (iOS) do not offer.
 const props = withDefaults(defineProps<{ field: SettingField; error?: string; stored?: boolean }>(), { error: "", stored: false });
 // Every key is filled by formFrom(); the index type of the form still allows undefined.
 const value = defineModel<string | boolean | undefined>({ required: true });
@@ -41,7 +42,7 @@ const placeholder = computed(() => {
       class="field-input"
       :data-field="field.key"
       :type="field.kind === 'secret' ? 'password' : field.kind === 'url' ? 'url' : 'text'"
-      :inputmode="['group', 'count', 'limit'].includes(field.kind) ? 'numeric' : undefined"
+      :inputmode="['count', 'limit'].includes(field.kind) ? 'numeric' : undefined"
       :autocomplete="field.kind === 'secret' ? 'new-password' : 'off'"
       :maxlength="field.kind === 'group' ? 17 : undefined"
       spellcheck="false"

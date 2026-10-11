@@ -46,6 +46,7 @@ describe("project settings form", () => {
   it("names the field and the reason for formats the server would refuse", () => {
     const form = formFrom({});
     Object.assign(form, {
+      web_api_enabled: true, api_enabled: true,
       support_bot_token: "12345:short", support_group_id: "1001", remnawave_base_url: "http://panel.example.com",
       notification_webhook_url: "https://user:pass@hooks.example.com", web_api_token: "кириллица".repeat(4),
       api_admin_token: " padded-key-of-thirty-two-chars-plus ", topic_rotation_topic_limit: "2", user_messages_per_minute: "0",
@@ -64,6 +65,25 @@ describe("project settings form", () => {
     expect(validate({ ...formFrom({}), support_bot_token: TOKEN, support_group_id: "-1001234567890" }, {})).toEqual({});
   });
 
+  it("checks a key only for a switched-on integration, as the server does, including placeholders", () => {
+    const keys = { web_api_token: "short", api_admin_token: "secret".repeat(6), notification_webhook_secret: " x " };
+    expect(validate({ ...formFrom({}), ...keys }, {})).toEqual({});
+    expect(validate({ ...formFrom({}), ...keys, api_enabled: true }, {}))
+      .toEqual({ api_admin_token: "Похоже на заглушку: задайте настоящий ключ." });
+    expect(validate({ ...formFrom({}), api_enabled: true, api_admin_token: "your-token-your-token-your-token__" }, {}))
+      .toEqual({ api_admin_token: "Похоже на заглушку: задайте настоящий ключ." });
+    expect(validate({ ...formFrom({}), api_enabled: true, api_admin_token: "a-real-operator-api-key-0123456789" }, {})).toEqual({});
+  });
+
+  it("refuses server names the backend would refuse, and only the bare localhost", () => {
+    const url = (value: string) => validate({ ...formFrom({}), notification_webhook_url: value }, {}).notification_webhook_url;
+    expect(url("https://hooks_bad.example.com")).toBe("Неверное имя сервера в адресе.");
+    expect(url("https://localhost/hook")).toBe("Нужен публичный адрес.");
+    expect(url("https://hooks.example.com./path")).toBeUndefined();
+    expect(url("https://[2001:db8::1]/hook")).toBeUndefined();
+    expect(url("https://пример.рф/hook")).toBeUndefined();
+  });
+
   it("asks for the key and address of a switched-on integration unless the server already stores the key", () => {
     const form = { ...formFrom({}), web_api_enabled: true, api_enabled: true, remnawave_enabled: true, notification_webhook_enabled: true };
     expect(validate(form, {})).toEqual({
@@ -76,7 +96,7 @@ describe("project settings form", () => {
     });
     const stored = { web_api_token: true, api_admin_token: true, remnawave_api_token: true, notification_webhook_secret: true };
     expect(validate({ ...form, remnawave_base_url: "https://panel.example.com", notification_webhook_url: "https://hooks.example.com" }, stored)).toEqual({});
-    expect(validate({ ...formFrom({}), web_api_token: KEY, api_admin_token: KEY }, {}))
+    expect(validate({ ...formFrom({}), web_api_enabled: true, web_api_token: KEY, api_admin_token: KEY }, {}))
       .toEqual({ api_admin_token: "Ключи Web API и Operator API должны различаться." });
   });
 

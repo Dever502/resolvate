@@ -21,14 +21,19 @@ withDefaults(defineProps<{
   /** The confirm button is red: the action removes access, rights or data. */
   danger?: boolean;
 }>(), { cancelLabel: "Отмена", busy: false, busyLabel: "Выполняем…", error: "", danger: false });
-const emit = defineEmits<{ confirm: [] }>();
+// closeAutoFocus lets the owner put focus elsewhere than back on the button that opened the window.
+const emit = defineEmits<{ confirm: []; closeAutoFocus: [event: Event] }>();
 </script>
 
 <template>
   <AlertDialogRoot v-model:open="open">
     <AlertDialogPortal>
       <AlertDialogOverlay class="dialog-backdrop" />
-      <AlertDialogContent class="dialog" @escape-key-down="(event: KeyboardEvent) => busy && event.preventDefault()">
+      <AlertDialogContent
+        class="dialog"
+        @escape-key-down="(event: KeyboardEvent) => busy && event.preventDefault()"
+        @close-auto-focus="(event: Event) => emit('closeAutoFocus', event)"
+      >
         <AlertDialogTitle class="m-0 text-xl">{{ title }}</AlertDialogTitle>
         <AlertDialogDescription class="muted mt-2 mb-0 text-sm">{{ description }}</AlertDialogDescription>
         <slot />

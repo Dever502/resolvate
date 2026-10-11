@@ -1,5 +1,9 @@
+import { createHash } from "node:crypto";
 import type { APIRequestContext, BrowserContext, Locator, Page } from "@playwright/test";
 import { SESSION_COOKIE, expect, scenario, stubLog, test } from "./fixtures";
+
+// A 1×1 PNG: decodes in every browser and passes the stub's check of the image bytes.
+const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
 
 // Administration on the production build: projects, members, connections and staff, against the
 // stub whose installation routes (e2e/stub/admin.mjs) keep the backend's rights, rules and answers.
@@ -28,7 +32,8 @@ async function manage(page: Page, name: string): Promise<Locator> {
   const dialog = await openWindow(page, "Проекты");
   await row(dialog, "Проекты", name).getByRole("button", { name: `Настроить проект ${name}` }).click();
   const screen = page.getByRole("dialog", { name });
-  await expect(screen.getByRole("button", { name: "Все проекты" })).toBeVisible();
+  // The list's button is gone: focus starts at the way back.
+  await expect(screen.getByRole("button", { name: "Все проекты" })).toBeFocused();
   return screen;
 }
 
@@ -69,6 +74,7 @@ test.describe("first launch and access", () => {
     const token = screen.getByLabel("Токен бота");
     const group = screen.getByRole("textbox", { name: "ID группы поддержки" });
     await expect(token).toHaveAttribute("placeholder", "Не настроено");
+    await expect(group).not.toHaveAttribute("inputmode", /.+/);
     await token.fill("not-a-token");
     await group.fill("123");
     await screen.getByRole("button", { name: "Сохранить подключения" }).click();
@@ -249,6 +255,7 @@ test.describe("project management", () => {
     await expect(confirm).toBeHidden();
     await expect(screen.getByText("Доступ отозван: Ирина Соколова. Переписка проекта сохранена.")).toBeVisible();
     await expect(irina).toHaveCount(0);
+    await expect(members).toBeFocused();
   });
 
   test("the installation administrator hands a project over after a confirmation that names everyone", async ({ page, context, request, consoleErrors }) => {
@@ -258,8 +265,10 @@ test.describe("project management", () => {
     await screen.getByText("Сменить администратора проекта").click();
     await expect(screen.getByText(/Сейчас: вы \(admin\)/)).toBeVisible();
     await screen.getByRole("button", { name: "Передать проект" }).click();
-    await expect(screen.getByText("Выберите нового администратора из списка.")).toBeVisible();
+    await expect(screen.getByRole("alert")).toHaveText("Выберите нового администратора из списка.");
     const picker = screen.getByRole("combobox", { name: "Новый администратор" });
+    await expect(picker).toHaveAttribute("aria-invalid", "true");
+    await expect(picker).toHaveAccessibleDescription(/Выберите нового администратора из списка./);
     await picker.fill("павел");
     await screen.getByRole("option", { name: /Павел Орлов/ }).click();
     await screen.getByRole("button", { name: "Передать проект" }).click();
@@ -331,7 +340,102 @@ test.describe("project management", () => {
     await screen.getByRole("button", { name: "Все проекты" }).click();
     await discard.getByRole("button", { name: "Не сохранять" }).click();
     await expect(page.getByRole("dialog", { name: "Проекты" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Настроить проект Поддержка" })).toBeFocused();
     expect(await leaveIsGuarded(page)).toBe(false);
+  });
+
+  test("logo: the file is checked and previewed, uploaded, replaced and removed; the app bar follows without a reload", async ({ page, context, request, consoleErrors }) => {
+    void consoleErrors;
+    await start(page, context, request, { account: "admin" });
+    // A modal window hides the app bar from the accessibility tree, so the emblem is found by place.
+    const emblem = page.locator("#workspace > header .project-logo");
+    await expect(emblem).toHaveAttribute("src", "/console/projects/p1/logo?v=logo-v1");
+    const screen = await manage(page, "Поддержка");
+    await screen.getByRole("tab", { name: "Логотип" }).click();
+    await expect(screen.getByText("Текущий логотип")).toBeVisible();
+    const input = screen.getByLabel("Новое изображение");
+    await screen.getByRole("button", { name: "Заменить логотип" }).click();
+    await expect(screen.getByText("Выберите изображение PNG, JPEG или WebP до 2 МБ.")).toBeVisible();
+    await input.setInputFiles({ name: "logo.svg", mimeType: "image/svg+xml", buffer: Buffer.from("<svg/>") });
+    await expect(screen.getByText("Логотип: PNG, JPEG или WebP до 2 МБ.")).toBeVisible();
+    await input.setInputFiles({ name: "big.png", mimeType: "image/png", buffer: Buffer.alloc(2 * 1024 * 1024 + 1) });
+    await expect(screen.getByText("Логотип пустой или больше 2 МБ.")).toBeVisible();
+    // The format is right but the bytes are not an image: the server refuses it, the file stays chosen.
+    await input.setInputFiles({ name: "fake.png", mimeType: "image/png", buffer: Buffer.from("not an image at all") });
+    await expect(screen.getByText("Предпросмотр недоступен; сервер проверит изображение при загрузке.")).toBeVisible();
+    await screen.getByRole("button", { name: "Заменить логотип" }).click();
+    await expect(screen.getByRole("alert")).toHaveText("Изображение не прошло проверку. Используйте PNG, JPEG или WebP.");
+    await expect(screen.getByText("fake.png")).toBeVisible();
+
+    await input.setInputFiles({ name: "logo.png", mimeType: "image/png", buffer: PNG });
+    await expect(screen.locator(".logo-preview canvas")).toBeVisible();
+    await expect(screen.getByRole("group", { name: "Выбранное изображение" })).toContainText("logo.png");
+    await screen.getByRole("button", { name: "Заменить логотип" }).click();
+    await expect(screen.getByText("Логотип заменён.")).toBeVisible();
+    const version = createHash("sha256").update(PNG).digest("hex");
+    await expect(emblem).toHaveAttribute("src", `/console/projects/p1/logo?v=${version}`);
+    await expect(screen.locator(".logo-frame img")).toHaveAttribute("src", `/console/projects/p1/logo?v=${version}`);
+    await expect(input).toHaveValue("");
+
+    await screen.getByRole("button", { name: "Удалить логотип" }).click();
+    const confirm = page.getByRole("alertdialog", { name: "Удалить логотип проекта «Поддержка»?" });
+    await expect(confirm.getByRole("button", { name: "Отмена" })).toBeFocused();
+    await confirm.getByRole("button", { name: "Удалить логотип" }).click();
+    await expect(screen.getByText("Логотип удалён.")).toBeVisible();
+    await expect(screen.getByLabel("Изображение", { exact: true })).toBeFocused();
+    await expect(emblem).toHaveCount(0);
+    await expect(screen.getByText("Логотипа нет")).toBeVisible();
+    await expect(screen.getByRole("button", { name: "Загрузить логотип" })).toBeVisible();
+  });
+
+  test("a save the server took stays saved when reading it back fails; a failed list refresh is shown over the old list", async ({ page, context, request, consoleErrors }) => {
+    void consoleErrors;
+    await start(page, context, request, { account: "admin" });
+    const screen = await manage(page, "Поддержка");
+    await screen.getByRole("tab", { name: "Подключения" }).click();
+    let saved = false;
+    await page.route("**/console/projects/p1/settings", async (route) => {
+      if (route.request().method() === "POST") {
+        saved = true;
+        return route.continue();
+      }
+      return saved
+        ? route.fulfill({ status: 502, contentType: "text/html", body: "<html>502</html>" })
+        : route.continue();
+    });
+    await screen.getByRole("textbox", { name: "ID группы поддержки" }).fill("-1001000000001");
+    await screen.getByText("Дополнительно: лимиты, темы и хранение архива").click();
+    await screen.getByRole("textbox", { name: "Не больше сообщений в минуту" }).fill("25");
+    await screen.getByRole("button", { name: "Сохранить подключения" }).click();
+    await expect(screen.getByText("Подключения сохранены. Активный проект перезапустится автоматически.")).toBeVisible();
+    await expect(screen.getByRole("alert")).toContainText("Запрос не выполнен. Повторите позже.");
+    await expect(screen.getByRole("textbox", { name: "Не больше сообщений в минуту" })).toHaveValue("25");
+    expect(await leaveIsGuarded(page)).toBe(false);
+    await page.unroute("**/console/projects/p1/settings");
+
+    await screen.getByRole("button", { name: "Все проекты" }).click();
+    await page.keyboard.press("Escape");
+    await page.route("**/console/projects", (route) => route.request().method() === "GET"
+      ? route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ detail: "Сервер недоступен." }) })
+      : route.continue());
+    const dialog = await openWindow(page, "Проекты");
+    await expect(dialog.getByRole("alert")).toContainText("Сервер недоступен. Список ниже может быть устаревшим.");
+    await expect(row(dialog, "Проекты", "Поддержка")).toBeVisible();
+  });
+
+  test("an administration window that cannot load closes with a notice; the workspace and its draft stay", async ({ page, context, request, consoleErrors }) => {
+    void consoleErrors;
+    await start(page, context, request, { account: "admin" });
+    await page.getByRole("listbox", { name: "Диалоги" }).getByRole("option", { name: /Анна Смирнова/ }).click();
+    const composer = page.getByRole("textbox", { name: "Текст ответа" });
+    await composer.fill("черновик до обновления");
+    await page.route("**/console/assets/StaffDialog-*.js", (route) => route.abort());
+    await adminMenu(page).click();
+    await page.getByRole("menuitem", { name: "Сотрудники" }).click();
+    await expect(page.getByRole("alert")).toHaveText("Не удалось загрузить раздел. Обновите страницу.");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.locator("#workspace")).toBeVisible();
+    await expect(composer).toHaveValue("черновик до обновления");
   });
 
   test("switching a project off asks first; the operators' workspace follows", async ({ page, context, request, consoleErrors }) => {
