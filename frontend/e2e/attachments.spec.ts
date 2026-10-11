@@ -152,7 +152,7 @@ test("document/audio/video cards, invalid images and unsupported formats are saf
 });
 
 for (const width of [1280, 375]) {
-  test(`compact preview and long names fit ${width}px in both themes`, async ({ page, consoleErrors }, testInfo) => {
+  test(`compact preview and long names fit ${width}px in both themes`, async ({ page, consoleErrors, attachScreenshot }) => {
     void consoleErrors;
     await page.setViewportSize({ width, height: 812 });
     const selected = await photo(page);
@@ -169,7 +169,7 @@ for (const width of [1280, 375]) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
     for (const theme of ["light", "dark"]) {
       await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
-      await testInfo.attach(`attachment-${width}-${theme}`, { body: await page.screenshot(), contentType: "image/png" });
+      await attachScreenshot(`attachment-${width}-${theme}`);
     }
     expect(await resources(page)).toEqual({ decoded: 1, closed: 1, urls: 0 });
   });
