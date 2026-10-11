@@ -44,7 +44,26 @@ export async function stubLog(
   return (await request.get("/__stub/log")).json();
 }
 
-export const test = base.extend<{ consoleErrors: string[] }>({
+export const test = base.extend<{
+  consoleErrors: string[];
+  attachScreenshot: (name: string) => Promise<void>;
+}>({
+  attachScreenshot: async ({ page, browserName }, use, testInfo) => {
+    await use(async (name) => {
+      // Playwright's WebKit screenshot preparation injects <style>body {}</style> to
+      // sync animations, even with animations enabled and caret: "initial". Our CSP
+      // correctly rejects it. Omit only this optional report artifact, not the test
+      // or its layout/CSP assertions; Chromium and Firefox still provide screenshots.
+      if (browserName === "webkit") {
+        testInfo.annotations.push({
+          type: "screenshot-omitted",
+          description: `${name}: WebKit screenshot preparation injects an inline stylesheet forbidden by the console CSP.`,
+        });
+        return;
+      }
+      await testInfo.attach(name, { body: await page.screenshot(), contentType: "image/png" });
+    });
+  },
   consoleErrors: async ({ page }, use) => {
     const errors: string[] = [];
     page.on("console", (message) => {

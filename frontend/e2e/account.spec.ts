@@ -153,7 +153,7 @@ test("installation admin identity with a long name fits a narrow screen", async 
 
 for (const width of [320, 375, 1280]) {
   for (const mode of ["light", "dark"] as const) {
-    test(`menu bounds and ${mode} screenshot at ${width}px`, async ({ page, context }, testInfo) => {
+    test(`menu bounds and ${mode} screenshot at ${width}px`, async ({ page, context, attachScreenshot }) => {
       await page.setViewportSize({ width, height: 800 });
       await context.addInitScript(mode => localStorage.setItem("resolvate.theme", mode), mode);
       await page.goto("/console/");
@@ -167,7 +167,7 @@ for (const width of [320, 375, 1280]) {
       expect(bounds!.y).toBeGreaterThanOrEqual(0);
       expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(800);
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
-      await testInfo.attach(`account-${mode}-${width}.png`, { body: await page.screenshot(), contentType: "image/png" });
+      await attachScreenshot(`account-${mode}-${width}.png`);
     });
   }
 }
