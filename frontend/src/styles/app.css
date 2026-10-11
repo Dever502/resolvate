@@ -269,7 +269,11 @@
   .account-trigger:active { background: var(--accent-soft); }
   .account-chevron { transform: rotate(180deg); color: var(--muted); }
   .account-trigger[data-state="open"] .account-chevron { transform: none; }
-  .account-menu { width: 18rem; min-width: 0; max-width: calc(100vw - 1rem); }
+  .account-menu { width: max-content; min-width: min(18rem, calc(100vw - 1rem), var(--reka-dropdown-menu-content-available-width, 100vw)); max-width: min(26rem, calc(100vw - 1rem), var(--reka-dropdown-menu-content-available-width, 100vw)); max-height: min(calc(100dvh - 1rem), var(--reka-dropdown-menu-content-available-height, 100dvh)); overflow-y: auto; overscroll-behavior: contain; }
+  /* Action labels wrap, including unbroken identifiers. Identity names keep their ellipsis/title. */
+  .account-menu .menu-item { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+  .account-menu .menu-item > span { min-width: 0; }
+  .account-menu .menu-item > .icon { flex-shrink: 0; }
   .account-identity { display: flex; align-items: center; gap: .75rem; padding: .75rem .625rem; }
   .account-separator { height: 1px; margin: .375rem .25rem; background: var(--border); }
   .account-theme-row { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .375rem .625rem; }
