@@ -5,9 +5,12 @@ import { useWorkspaceStore } from "../../stores/workspace";
 import ReplyCatalog from "../composer/ReplyCatalog.vue";
 import ProjectPicker from "../projects/ProjectPicker.vue";
 import Icon from "../ui/Icon.vue";
+import AdminMenu from "./AdminMenu.vue";
 
-// Project choice on the left, the product mark in the centre (equal outer tracks keep it centred).
-// In an open dialogue on a narrow screen the bar shrinks to the project only.
+// Project choice on the left, the product mark in the centre (equal outer tracks keep it centred),
+// administration and quick replies on the right. On narrow screens the project choice takes a row
+// of its own and administration moves to the free left track. In an open dialogue on a narrow
+// screen the bar shrinks to the project only.
 const workspace = useWorkspaceStore();
 const projects = useProjectsStore();
 const catalogOpen = ref(false);
@@ -31,9 +34,16 @@ watch(() => projects.currentId, () => { catalogOpen.value = false; });
       <span class="brand-mark bg-white text-selection" aria-hidden="true"><Icon name="resolve" /></span>
       Resolvate
     </div>
-    <button type="button" class="quiet col-start-3 row-start-1 justify-self-end text-sm text-white"
-      :class="{ 'narrow:hidden': workspace.dialogueOpen }" aria-label="Управление готовыми ответами"
-      :disabled="!projects.currentId" @click="catalogOpen = true"><span class="narrow:hidden">Готовые </span>ответы</button>
+    <!-- On narrow screens this group dissolves into the grid: its items take the outer tracks. -->
+    <div class="col-start-3 row-start-1 flex min-w-0 items-center justify-self-end gap-1 narrow:contents">
+      <AdminMenu
+        class="narrow:col-start-1 narrow:row-start-1 narrow:justify-self-start"
+        :class="{ 'narrow:hidden': workspace.dialogueOpen }"
+      />
+      <button type="button" class="quiet text-sm text-white narrow:col-start-3 narrow:row-start-1 narrow:justify-self-end"
+        :class="{ 'narrow:hidden': workspace.dialogueOpen }" aria-label="Управление готовыми ответами"
+        :disabled="!projects.currentId" @click="catalogOpen = true"><span class="narrow:hidden">Готовые </span>ответы</button>
+    </div>
     <ReplyCatalog v-if="projects.currentId" :key="projects.currentId" v-model:open="catalogOpen" :project-id="projects.currentId" />
   </header>
 </template>

@@ -8,6 +8,13 @@ import { useTicketsStore } from "./tickets";
 export const FAILED = "Не удалось выполнить действие.";
 export const NO_LINK_ACCESS = "Нет доступа к проекту из ссылки.";
 
+export type ProjectTab = "members" | "settings" | "logo";
+
+/** The open administration window: the projects (one of them managed) or the staff of the installation. */
+export type AdminView =
+  | { window: "projects"; project: string | null; tab: ProjectTab; create: boolean }
+  | { window: "staff" };
+
 /** State the workspace areas share, and the start and refresh of the operator's data. */
 export const useWorkspaceStore = defineStore("workspace", () => {
   const session = useSessionStore();
@@ -19,6 +26,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   const startPending = ref(false);
   /** A live refresh is running: loading older messages waits for it, and the other way round. */
   const refreshing = ref(false);
+  /** Opened from the app bar and from the empty states; the windows check permissions with the server. */
+  const admin = ref<AdminView | null>(null);
 
   function show(text = ""): void {
     notice.value = text;
@@ -60,13 +69,30 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
   }
 
+  /** The projects window: the list, the new project form, or one project's management screen. */
+  function openProjects(options: { project?: string; tab?: ProjectTab; create?: boolean } = {}): void {
+    admin.value = { window: "projects", project: options.project ?? null, tab: options.tab ?? "members", create: options.create ?? false };
+  }
+
+  function openStaff(): void {
+    admin.value = { window: "staff" };
+  }
+
+  function closeAdmin(): void {
+    admin.value = null;
+  }
+
   function reset(): void {
     notice.value = "";
     dialogueOpen.value = false;
     startPending.value = false;
     refreshing.value = false;
+    admin.value = null;
   }
   session.onSessionEnd(reset);
 
-  return { notice, dialogueOpen, startPending, refreshing, show, fail, enter, refresh, reset };
+  return {
+    notice, dialogueOpen, startPending, refreshing, admin,
+    show, fail, enter, refresh, openProjects, openStaff, closeAdmin, reset,
+  };
 });

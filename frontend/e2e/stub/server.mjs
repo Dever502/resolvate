@@ -12,15 +12,14 @@ const HEADERS = JSON.parse(readFileSync(new URL("../headers.json", import.meta.u
 const ASSET = /^[A-Za-z0-9_-][A-Za-z0-9_.-]*\.(js|css)$/;
 const TYPES = { js: "text/javascript; charset=utf-8", css: "text/css; charset=utf-8" };
 const COOKIE = "resolvate_session=stub-session";
-export const ACCOUNT = { id: "a1", login: "operator", name: "Оператор Тест", role: "operator", active: true, telegram_id: null };
-export const PASSWORD = "correct horse battery";
 
 let scenario = {};
 let meCalls = 0;
 let log = [];
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const hasSession = (request) => (request.headers.cookie ?? "").split(/;\s*/).includes(COOKIE);
+// The cookie alone is not enough: a changed password or a handed-over installation ends the session.
+const hasSession = (request) => (request.headers.cookie ?? "").split(/;\s*/).includes(COOKIE) && api.account() !== null;
 
 function send(response, status, headers, body = "") {
   response.writeHead(status, headers);
@@ -73,7 +72,7 @@ async function me(request, response, entry) {
       response.write('{"account":');
       return stall(response, entry);
     }
-    return json(response, 200, { account: ACCOUNT, csrf: "stub-csrf" });
+    return json(response, 200, { account: api.account(), csrf: "stub-csrf" });
   }
   return failure(response, answer.status, answer.detail);
 }
@@ -123,10 +122,9 @@ http.createServer(async (request, response) => {
   if (path === "/console/login" && request.method === "POST") {
     const body = await readJson(request);
     await sleep(scenario.loginDelay ?? 0);
-    if (body.login !== ACCOUNT.login || body.password !== PASSWORD) {
-      return json(response, 401, { detail: "Неверный логин или пароль." });
-    }
-    return json(response, 200, { account: ACCOUNT, csrf: "stub-csrf" },
+    const account = api.signIn(body.login, body.password);
+    if (!account) return json(response, 401, { detail: "Неверный логин или пароль." });
+    return json(response, 200, { account, csrf: "stub-csrf" },
       { "set-cookie": `${COOKIE}; Path=/console; HttpOnly; SameSite=Strict` });
   }
   if (path === "/console/logout" && request.method === "POST") {

@@ -360,7 +360,8 @@ test.describe("operator flow", () => {
     await control(request, "revoke", { project: "p1", status: 403 });
     await expect(page.getByRole("alert")).toHaveText("Доступ к проекту изменился. Выберите доступный проект.");
     await expect(project(page)).toHaveAccessibleName("Текущий проект Выберите проект");
-    await expect(page.getByRole("heading", { name: "Нет активного проекта" })).toBeVisible();
+    // Another project is still available: the empty state asks to choose it.
+    await expect(page.getByRole("heading", { name: "Выберите проект" })).toBeVisible();
   });
 
   test("a ?project=&ticket= link opens that dialogue; a link to an unavailable project says so", async ({ page, context, request, consoleErrors }) => {

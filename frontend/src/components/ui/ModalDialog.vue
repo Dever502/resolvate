@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { DialogClose, DialogContent, DialogDescription, DialogOverlay, DialogPortal, DialogRoot, DialogTitle } from "reka-ui";
+import { computed, provide, ref } from "vue";
+import { WINDOW_REQUESTS } from "../../composables/useRequest";
 import Icon from "./Icon.vue";
 
 // A modal window on Reka UI: focus is trapped, Esc closes the top window only, focus returns to
 // what opened it. As with the classic <dialog>, a click outside the window does not close it.
 const open = defineModel<boolean>("open", { required: true });
-withDefaults(defineProps<{
+const props = withDefaults(defineProps<{
   title: string;
   description?: string;
   closeLabel?: string;
@@ -14,6 +16,10 @@ withDefaults(defineProps<{
   wide?: boolean;
 }>(), { description: "", closeLabel: "Закрыть", locked: false, wide: false });
 const emit = defineEmits<{ openAutoFocus: [event: Event] }>();
+// Changes sent from inside the window (composables/useRequest) lock it too until they answer.
+const requests = ref(0);
+provide(WINDOW_REQUESTS, requests);
+const blocked = computed(() => props.locked || requests.value > 0);
 </script>
 
 <template>
@@ -25,15 +31,15 @@ const emit = defineEmits<{ openAutoFocus: [event: Event] }>();
         :class="{ 'dialog-wide': wide }"
         v-bind="description ? {} : { 'aria-describedby': undefined }"
         @pointer-down-outside="(event: Event) => event.preventDefault()"
-        @escape-key-down="(event: KeyboardEvent) => locked && event.preventDefault()"
+        @escape-key-down="(event: KeyboardEvent) => blocked && event.preventDefault()"
         @open-auto-focus="(event: Event) => emit('openAutoFocus', event)"
       >
         <header class="flex items-start justify-between gap-4">
           <div class="min-w-0">
-            <DialogTitle class="m-0 text-xl">{{ title }}</DialogTitle>
+            <DialogTitle class="m-0 text-xl [overflow-wrap:anywhere]">{{ title }}</DialogTitle>
             <DialogDescription v-if="description" class="muted mt-2 mb-0 text-sm">{{ description }}</DialogDescription>
           </div>
-          <DialogClose class="quiet min-w-9 shrink-0" :aria-label="closeLabel" :disabled="locked">
+          <DialogClose class="quiet min-w-9 shrink-0" :aria-label="closeLabel" :disabled="blocked">
             <Icon name="close" />
           </DialogClose>
         </header>

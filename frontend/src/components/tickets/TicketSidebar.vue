@@ -6,6 +6,7 @@ import { useTicketsStore } from "../../stores/tickets";
 import { useWorkspaceStore } from "../../stores/workspace";
 import AccountFooter from "../account/AccountFooter.vue";
 import FolderTabs, { ALL } from "../folders/FolderTabs.vue";
+import ProjectsEmptyState from "../projects/ProjectsEmptyState.vue";
 import Icon from "../ui/Icon.vue";
 import IconButton from "../ui/IconButton.vue";
 import TicketList from "./TicketList.vue";
@@ -54,8 +55,9 @@ function more(): void {
     class="flex w-[clamp(var(--sidebar-width),var(--sidebar-preferred-width,var(--sidebar-width)),max(var(--sidebar-width),33.333333vw))] min-w-[16.875rem] shrink-0 flex-col border-r border-border bg-surface narrow:w-full narrow:min-w-0 narrow:flex-1"
     aria-label="Список диалогов"
   >
-    <!-- Narrow screens hide the conversation panel, so its notices show above the list there. -->
-    <p v-if="workspace.notice" class="notice hidden narrow:block" role="alert">{{ workspace.notice }}</p>
+    <!-- Narrow screens hide the conversation panel, so its notices show above the list there.
+         A project list that failed to load is explained by the empty state instead. -->
+    <p v-if="workspace.notice && (projects.loaded || !projects.error)" class="notice hidden narrow:block" role="alert">{{ workspace.notice }}</p>
     <header class="flex items-center justify-between gap-3 pt-6 pr-4 pb-1.5 pl-5 narrow:pt-5">
       <h1 ref="heading" class="m-0 text-[1.625rem] font-[650] tracking-[-.025em] outline-none" tabindex="-1">
         {{ tickets.archived ? "Архив" : "Диалоги" }}
@@ -94,6 +96,8 @@ function more(): void {
       <!-- The panel starts with the focusable list, so it is not a Tab stop of its own. -->
       <TabsContent :value="tab" as-child>
         <div class="flex min-h-0 flex-1 flex-col outline-none" tabindex="-1">
+          <!-- Without a project, phones show here what the conversation panel shows on wider screens. -->
+          <ProjectsEmptyState v-if="!projects.currentId" class="hidden narrow:block" />
           <TicketList />
           <button v-if="tickets.hasMore" class="quiet mx-auto mb-2" type="button" @click="more">Показать ещё</button>
         </div>

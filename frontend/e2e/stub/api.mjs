@@ -1,8 +1,11 @@
 // In-memory stand-in for the project console API (src/resolvate/console.py, console_service.py,
-// console_folders.py, project_routes.py): the same paths, request bodies and response shapes,
-// including revision deltas, history cursors, folder revisions and the server-sent event stream.
+// console_folders.py): the same paths, request bodies and response shapes, including revision deltas,
+// history cursors, folder revisions and the server-sent event stream. Accounts, projects and their
+// administration live in admin.mjs.
 import { createHash, randomUUID } from "node:crypto";
 import { gzipSync } from "node:zlib";
+import * as admin from "./admin.mjs";
+import { multipart } from "./multipart.mjs";
 
 const PAGE = 50;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -33,12 +36,7 @@ function message(fields) {
 export function reset(options = {}) {
   const now = Date.now();
   const at = (minutes) => new Date(now - minutes * 60_000).toISOString();
-  const projects = [
-    { id: "p1", name: "Поддержка", active: true, admin_id: "a0", role: "operator", logo: "logo-v1" },
-    { id: "p2", name: "Второй проект", active: true, admin_id: "a0", role: "operator", logo: null },
-    { id: "p3", name: "Отключённый", active: false, admin_id: "a0", role: "operator", logo: null },
-    { id: "p4", name: "Без доступа", active: true, admin_id: "a0", role: null, logo: null },
-  ];
+  const { accounts, projects, session } = admin.installation(options);
   const tickets = [
     { project: "p1", id: "t1", name: "Анна Смирнова", username: "anna", email: null, channel: "telegram", status: "open", folder_id: null, folder_revision: 0, created_at: at(600) },
     { project: "p1", id: "t2", name: "Борис Петров", username: null, email: "boris@example.com", channel: "web", status: "open", folder_id: "f1", folder_revision: 1, created_at: at(300) },
@@ -81,7 +79,7 @@ export function reset(options = {}) {
     if (!messages.get(ticket.id).length) messages.get(ticket.id).push(message({ text: `Привет от ${ticket.name}`, time: ticket.created_at }));
   }
   state = {
-    projects, tickets, messages, media,
+    accounts, session, projects, tickets, messages, media,
     folders: new Map([["p1", [{ id: "f1", name: "VIP", revision: 0 }]], ["p2", []]]),
     replyGroups: new Map([["p1", [{ id: "g1", name: "общее", revision: 0 }, { id: "g2", name: "оплата", revision: 0 }]], ["p2", []]]),
     replies: new Map([["p1", [
@@ -157,29 +155,6 @@ function messagePage(id, { known = {}, before = null }) {
   };
 }
 
-function multipart(body, type) {
-  const boundary = /boundary=(?:"([^"]+)"|([^;]+))/.exec(type ?? "");
-  const fields = {};
-  const files = [];
-  if (!boundary) return { fields, files };
-  const marker = Buffer.from(`--${boundary[1] ?? boundary[2]}`);
-  let position = body.indexOf(marker);
-  while (position >= 0) {
-    const next = body.indexOf(marker, position + marker.length);
-    if (next < 0) break;
-    const part = body.subarray(position + marker.length + 2, next - 2);
-    const split = part.indexOf("\r\n\r\n");
-    const head = part.subarray(0, split).toString("utf8");
-    const content = part.subarray(split + 4);
-    const name = /name="([^"]*)"/.exec(head)?.[1];
-    const filename = /filename="([^"]*)"/.exec(head)?.[1];
-    if (filename !== undefined) files.push({ name, filename, type: /Content-Type:\s*([^\r\n]+)/i.exec(head)?.[1] ?? "", size: content.length, content });
-    else if (name) fields[name] = content.toString("utf8");
-    position = next;
-  }
-  return { fields, files };
-}
-
 /** Tells every open event stream of the project that something changed. */
 export function changed(project) {
   for (const stream of streams) if (stream.project === project) stream.response.write("event: change\ndata: {}\n\n");
@@ -205,24 +180,39 @@ export function openStreams(project) {
   return [...streams].filter((stream) => stream.project === project).length;
 }
 
+/** The signed-in account as /console/me answers it, or null when the session ended. */
+export function account() {
+  const found = admin.current(state);
+  return found ? admin.accountView(found) : null;
+}
+
+export function signIn(login, password) {
+  return admin.signIn(state, login, password);
+}
+
+// A project created in the projects window starts with empty runtime data.
+function onboard(project) {
+  state.folders.set(project, []);
+  state.replyGroups.set(project, []);
+  state.replies.set(project, []);
+}
+
 /**
  * Answers a console API request, or returns false for paths it does not know.
  * `tools` brings the server's helpers: json, send, readBody, hasSession, headers.
  */
 export async function handle(request, response, path, url, tools) {
   const { json, send, readBody } = tools;
+  if (await admin.handle(state, request, response, path, url, { ...tools, onboard, logoBody: PNG })) return true;
   if (!path.startsWith("/console/projects")) return false;
   if (!tools.hasSession(request)) return json(response, 401, { detail: "Войдите в панель." }), true;
-  if (path === "/console/projects" && request.method === "GET") return json(response, 200, state.projects), true;
   const scoped = /^\/console\/projects\/([^/]+)\/(.+)$/.exec(path);
   if (!scoped) return false;
   const [, projectId, rest] = scoped;
   const project = state.projects.find((item) => item.id === projectId);
-  if (rest === "logo" && request.method === "GET") {
-    if (!project?.logo) return json(response, 404, { detail: "Логотип не задан." }), true;
-    return send(response, 200, { ...tools.headers.api, "content-type": "image/png" }, PNG), true;
-  }
-  if (!project || !project.role || !project.active) return json(response, 404, { detail: "Проект недоступен." }), true;
+  // The project router answers for a missing or switched-off project; the runtime checks membership.
+  if (!project || !project.active) return json(response, 404, { detail: "Проект недоступен." }), true;
+  if (!admin.member(project, admin.current(state))) return json(response, 403, { detail: "Нет доступа к проекту." }), true;
   const post = request.method === "POST";
   const body = post ? await readBody(request) : Buffer.alloc(0);
   const data = () => {
