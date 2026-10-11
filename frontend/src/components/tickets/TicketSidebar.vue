@@ -50,9 +50,11 @@ function more(): void {
 </script>
 
 <template>
+  <!-- min-h-0: on narrow screens the column is a flex item of a column and must shrink to the screen,
+       so the list scrolls inside and the account footer stays visible on a short screen. -->
   <aside
     id="ticket-sidebar"
-    class="flex w-[clamp(var(--sidebar-width),var(--sidebar-preferred-width,var(--sidebar-width)),max(var(--sidebar-width),33.333333vw))] min-w-[16.875rem] shrink-0 flex-col border-r border-border bg-surface narrow:w-full narrow:min-w-0 narrow:flex-1"
+    class="flex min-h-0 w-[clamp(var(--sidebar-width),var(--sidebar-preferred-width,var(--sidebar-width)),max(var(--sidebar-width),33.333333vw))] min-w-[16.875rem] shrink-0 flex-col border-r border-border bg-surface narrow:w-full narrow:min-w-0 narrow:flex-1"
     aria-label="Список диалогов"
   >
     <!-- Narrow screens hide the conversation panel, so its notices show above the list there.
