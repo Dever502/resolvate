@@ -28,6 +28,26 @@ export interface Project {
   logo: string | null;
 }
 
+/** GET /console/projects/{id}/members: the project's administrator and its members. */
+export interface ProjectMember {
+  id: string;
+  login: string;
+  name: string;
+  active: boolean;
+  telegram_id: number | null;
+  role: "admin" | "operator";
+}
+
+/** GET /console/projects/{id}/member-candidates?q=: active accounts without access, at most 50. */
+export interface MemberCandidate {
+  id: string;
+  login: string;
+  name: string;
+}
+
+/** GET /console/projects/{id}/settings: stored values; a secret is only `true` when it is set. */
+export type ProjectSettings = Record<string, string | number | boolean | null>;
+
 export type TicketChannel = "telegram" | "web";
 export type TicketStatus = "provisioning" | "open" | "closed";
 

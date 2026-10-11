@@ -352,6 +352,24 @@ test.describe("operator flow", () => {
     }
   });
 
+  test("a short phone screen keeps the account footer on screen and scrolls the list inside", async ({ page, context, request, consoleErrors }) => {
+    void consoleErrors;
+    await page.setViewportSize({ width: 375, height: 400 });
+    await start(page, context, request, { many: true });
+    await expect(list(page).getByRole("option")).toHaveCount(50);
+    const trigger = page.getByRole("button", { name: /Меню аккаунта:/ });
+    await expect(trigger).toBeInViewport({ ratio: 1 });
+    expect(await list(page).evaluate((element) => {
+      const scroller = element.closest("#ticket-list") as HTMLElement;
+      return scroller.scrollHeight > scroller.clientHeight;
+    })).toBe(true);
+    await trigger.click();
+    const menu = page.getByRole("menu");
+    const box = (await menu.boundingBox())!;
+    expect(box.y).toBeGreaterThanOrEqual(0);
+    expect(box.y + box.height).toBeLessThanOrEqual(400);
+  });
+
   test("a revoked project leaves no project selected and says why", async ({ page, context, request, consoleErrors }) => {
     void consoleErrors;
     await start(page, context, request);
@@ -360,7 +378,8 @@ test.describe("operator flow", () => {
     await control(request, "revoke", { project: "p1", status: 403 });
     await expect(page.getByRole("alert")).toHaveText("Доступ к проекту изменился. Выберите доступный проект.");
     await expect(project(page)).toHaveAccessibleName("Текущий проект Выберите проект");
-    await expect(page.getByRole("heading", { name: "Нет активного проекта" })).toBeVisible();
+    // Another project is still available: the empty state asks to choose it.
+    await expect(page.getByRole("heading", { name: "Выберите проект" })).toBeVisible();
   });
 
   test("a ?project=&ticket= link opens that dialogue; a link to an unavailable project says so", async ({ page, context, request, consoleErrors }) => {

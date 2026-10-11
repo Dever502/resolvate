@@ -1,7 +1,7 @@
 import { createPinia, setActivePinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OFFLINE } from "../api/client";
-import { CHECK_TIMEOUT, RETRY_DELAYS, RETRYING, useSessionStore } from "./session";
+import { CHECK_TIMEOUT, PASSWORD_CHANGED, RETRY_DELAYS, RETRYING, useSessionStore } from "./session";
 
 const ACCOUNT = { id: "a1", login: "operator", name: "Оператор", role: "operator", active: true, telegram_id: null };
 const json = (status: number, body: unknown): Response => new Response(JSON.stringify(body), { status });
@@ -159,5 +159,31 @@ describe("session store", () => {
     expect(session.notice).toBe("");
     await vi.advanceTimersByTimeAsync(RETRY_DELAYS.at(-1)! * 2);
     expect(fetch).toHaveBeenCalledOnce();
+  });
+});
+
+describe("own password change", () => {
+  beforeEach(() => setActivePinia(createPinia()));
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("sends both passwords in the body only, then returns to the sign-in form with a confirmation", async () => {
+    const fetch = vi.fn(async () => json(200, { ok: true }));
+    vi.stubGlobal("fetch", fetch);
+    const session = useSessionStore();
+    session.signIn({ account: { ...ACCOUNT, role: "operator" as const }, csrf: "c" });
+    await session.changePassword("old password!", "new password 123");
+    const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("/console/password");
+    expect(JSON.parse(String(init.body))).toEqual({ current_password: "old password!", new_password: "new password 123" });
+    expect(init.headers).toMatchObject({ "X-CSRF-Token": "c" });
+    expect([session.status, session.notice, session.noticeIsSuccess]).toEqual(["signed-out", PASSWORD_CHANGED, true]);
+  });
+
+  it("keeps the session when the server refuses the current password", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => json(403, { detail: "Неверный текущий пароль вашего аккаунта." })));
+    const session = useSessionStore();
+    session.signIn({ account: { ...ACCOUNT, role: "operator" as const }, csrf: "c" });
+    await expect(session.changePassword("wrong", "new password 123")).rejects.toThrow("Неверный текущий пароль вашего аккаунта.");
+    expect(session.status).toBe("signed-in");
   });
 });

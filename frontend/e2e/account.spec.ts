@@ -20,6 +20,9 @@ test("one account trigger, informational identity, keyboard navigation and outsi
     const system = page.getByRole("menuitemradio", { name: "Системная тема" });
     const light = page.getByRole("menuitemradio", { name: "Светлая тема" });
     const dark = page.getByRole("menuitemradio", { name: "Тёмная тема" });
+    // The personal action comes first, then the theme row.
+    await expect(page.getByRole("menuitem", { name: "Сменить пароль" })).toBeFocused();
+    await page.keyboard.press("ArrowDown");
     await expect(system).toBeFocused();
     await page.keyboard.press("ArrowRight");
     await expect(light).toBeFocused();

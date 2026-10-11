@@ -13,6 +13,8 @@ import type { Account, SessionPayload } from "../api/types";
 export type SessionStatus = "checking" | "signed-out" | "signed-in";
 
 export const RETRYING = "Повторяем проверку входа…";
+/** After a password change the server ends every session of the account (console_auth.py). */
+export const PASSWORD_CHANGED = "Пароль изменён. Войдите с новым паролем.";
 /** Delays between session re-checks after a network or server error, in milliseconds. */
 export const RETRY_DELAYS = [3000, 6000, 12000, 30000];
 /** A session check not finished in this time, response body included, counts as a lost connection. */
@@ -148,8 +150,18 @@ export const useSessionStore = defineStore("session", () => {
     signOut();
   }
 
+  /**
+   * POST /console/password. The server checks the current password, then ends all sessions of the
+   * account and clears the cookie: the console returns to the sign-in form with a confirmation.
+   * The passwords are only passed through, never kept.
+   */
+  async function changePassword(current: string, next: string): Promise<void> {
+    await api("password", { method: "POST", data: { current_password: current, new_password: next } });
+    signOut(PASSWORD_CHANGED, true);
+  }
+
   return {
     status, account, csrf, generation, notice, noticeIsSuccess,
-    api, check, login, logout, signIn, signOut, onSessionEnd,
+    api, check, login, logout, changePassword, signIn, signOut, onSessionEnd,
   };
 });
