@@ -264,6 +264,23 @@
   .menu-item { display: flex; align-items: center; gap: .5rem; min-height: 36px; padding: .5rem .625rem; border-radius: 7px; font-size: .875rem; cursor: pointer; outline: none; }
   .menu-item[data-highlighted] { background: var(--accent-soft); }
   .menu-item[data-state="checked"] { font-weight: 600; }
+  .account-trigger { display: flex; align-items: center; gap: .625rem; width: 100%; min-height: 56px; padding: .5rem; border-radius: 10px; background: transparent; color: var(--text); }
+  .account-trigger:hover, .account-trigger[data-state="open"] { background: var(--hover); }
+  .account-trigger:active { background: var(--accent-soft); }
+  .account-chevron { transform: rotate(180deg); color: var(--muted); }
+  .account-trigger[data-state="open"] .account-chevron { transform: none; }
+  .account-menu { width: 18rem; min-width: 0; max-width: calc(100vw - 1rem); }
+  .account-identity { display: flex; align-items: center; gap: .75rem; padding: .75rem .625rem; }
+  .account-separator { height: 1px; margin: .375rem .25rem; background: var(--border); }
+  .account-theme-row { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .375rem .625rem; }
+  .account-theme-options { display: flex; gap: 2px; padding: 3px; border: 1px solid var(--border); border-radius: 10px; background: var(--footer); }
+  .account-theme-option { display: grid; place-items: center; width: 44px; height: 44px; border: 1px solid transparent; border-radius: 7px; color: var(--muted); cursor: pointer; }
+  .account-theme-option[data-state="checked"] { border-color: var(--border); background: var(--surface); color: var(--text); box-shadow: 0 1px 3px #00000014; }
+  .account-theme-option[data-highlighted] { color: var(--text); outline: 2px solid var(--accent); outline-offset: -2px; }
+  .account-theme-option:active { background: var(--accent-soft); }
+  .account-logout { min-height: 44px; }
+  .account-logout[aria-disabled="true"] { opacity: .55; cursor: wait; }
+  .account-error { margin: .5rem .625rem; font-size: .8125rem; overflow-wrap: anywhere; }
 
   /* Project emblem in the app bar: the logo over the project's initial. */
   .project-emblem { position: relative; display: grid; place-items: center; width: 2.375rem; height: 2.375rem; flex: 0 0 auto; overflow: hidden; border-radius: 10px; background: #3b4b69; color: #fff; font-size: 1.0625rem; font-weight: 600; }
@@ -405,4 +422,5 @@
   .tooltip { border-color: CanvasText; }
   .ticket[data-state="checked"], .folder-tab[data-state="active"] { outline: 2px solid Highlight; outline-offset: -2px; }
   .composer, .reply-options, .menu, .dialog { border: 1px solid ButtonText; }
+  .account-theme-option[data-state="checked"] { outline: 2px solid Highlight; outline-offset: -3px; }
 }

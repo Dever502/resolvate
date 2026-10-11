@@ -4,11 +4,6 @@ import { PASSWORD, SESSION_COOKIE, expect, scenario, stubLog, test } from "./fix
 // Keyboard, focus and screen-reader semantics of the production build under the console CSP
 // (the consoleErrors fixture fails a test on any CSP violation).
 const CONSOLE = "/console/";
-const THEME = {
-  system: "Системная тема · переключить на светлую",
-  light: "Светлая тема · переключить на тёмную",
-  dark: "Тёмная тема · переключить на системную",
-};
 
 // The visible text of the open tooltip. Reka also keeps a visually hidden copy of it inside the content,
 // which IconButton hides from screen readers together with the tooltip.
@@ -114,8 +109,7 @@ test.describe("keyboard and screen readers", () => {
           - listbox "Диалоги":
             - 'option /Анна Смирнова .* Непрочитанных: 2/'
             - 'option /Борис Петров .* Непрочитанных: 1/'
-        - button "${THEME.system}"
-        - button "Выйти"
+        - 'button "Меню аккаунта: Оператор Тест, Оператор"'
       - separator "Ширина списка диалогов"
       - main:
         - heading "Выберите диалог" [level=2]
@@ -124,8 +118,7 @@ test.describe("keyboard and screen readers", () => {
     await expect(page.getByRole("heading", { name: "Диалоги" })).toBeFocused();
 
     const tooltip = page.locator(".tooltip");
-    const theme = page.locator("[data-theme-toggle]");
-    const logout = page.getByRole("button", { name: "Выйти" });
+    const account = page.getByRole("button", { name: /Меню аккаунта:/ });
     // The list column from top to bottom; the list itself is one stop, at its first dialogue.
     for (const stop of [
       page.getByRole("button", { name: "Открыть архив" }),
@@ -133,40 +126,21 @@ test.describe("keyboard and screen readers", () => {
       page.getByRole("tab", { name: "Все" }),
       page.getByRole("button", { name: "Управление общими папками" }),
       page.getByRole("option", { name: /Анна Смирнова/ }),
-      theme,
+      account,
     ]) {
       await page.keyboard.press("Tab");
       await expect(stop).toBeFocused();
     }
-    await expect.poll(() => tooltipText(page)).toBe(THEME.system);
-    // The label is the button's name only: the visible tooltip is neither a description nor a tree node.
-    await expect(theme).toHaveAccessibleName(THEME.system);
-    await expect(theme).toHaveAccessibleDescription("");
-    await expect(page.getByRole("tooltip")).toHaveCount(0);
-    await expect(page.locator("body")).toMatchAriaSnapshot(tree);
-
-    await page.keyboard.press("Escape");
-    await expect(tooltip).toBeHidden();
-    await expect(theme).toBeFocused();
     await page.keyboard.press("Enter");
-    await expect(theme).toHaveAccessibleName(THEME.light);
-    await expect(theme).toBeFocused();
-    await page.keyboard.press("Space");
-    await expect(theme).toHaveAccessibleName(THEME.dark);
-
-    await page.keyboard.press("Tab");
-    await expect(logout).toBeFocused();
-    await expect.poll(() => tooltipText(page)).toBe("Выйти");
+    await expect(page.getByRole("menu")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(account).toBeFocused();
     await page.keyboard.press("Tab");
     await expect(page.getByRole("separator", { name: "Ширина списка диалогов" })).toBeFocused();
     await page.keyboard.press("Shift+Tab");
-    await page.keyboard.press("Shift+Tab");
-    await expect(theme).toBeFocused();
-    await expect.poll(() => tooltipText(page)).toBe(THEME.dark);
-
-    await page.keyboard.press("Escape");
-    await logout.hover();
-    await expect.poll(() => tooltipText(page)).toBe("Выйти");
+    await expect(account).toBeFocused();
+    await page.getByRole("button", { name: "Открыть архив" }).hover();
+    await expect.poll(() => tooltipText(page)).toBe("Открыть архив");
     await page.mouse.move(1, 1);
     await expect(tooltip).toBeHidden();
   });
@@ -177,7 +151,8 @@ test.describe("keyboard and screen readers", () => {
     await context.addCookies([SESSION_COOKIE]);
     await page.goto(CONSOLE);
     await expect(page.getByRole("heading", { name: "Диалоги" })).toBeFocused();
-    const logout = page.getByRole("button", { name: "Выйти" });
+    await page.getByRole("button", { name: /Меню аккаунта:/ }).press("Enter");
+    const logout = page.getByRole("menuitem", { name: "Выйти" });
     await logout.focus();
     await page.keyboard.press("Enter");
     await expect(page.getByRole("alert")).toHaveText("Запрос не выполнен. Повторите позже.");
@@ -202,7 +177,8 @@ test.describe("keyboard and screen readers", () => {
     await context.addCookies([SESSION_COOKIE]);
     await page.goto(CONSOLE);
     await page.route("**/console/logout", (route) => route.abort("connectionreset"));
-    await page.getByRole("button", { name: "Выйти" }).click();
+    await page.getByRole("button", { name: /Меню аккаунта:/ }).click();
+    await page.getByRole("menuitem", { name: "Выйти" }).click();
     await expect(page.getByRole("alert")).toHaveText("Нет связи с сервером.");
   });
 });
