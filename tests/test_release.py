@@ -21,6 +21,9 @@ def test_ci_keeps_verification_socketless_and_excludes_private_cd() -> None:
     jobs = ci["jobs"]
     assert set(jobs) == {
         "quality",
+        "console",
+        "console_engines",
+        "console_integration",
         "tests",
         "coverage",
         "postgres_matrix",
@@ -30,7 +33,8 @@ def test_ci_keeps_verification_socketless_and_excludes_private_cd() -> None:
 
     tests = jobs["tests"]
     assert tests["strategy"]["fail-fast"] is False
-    assert tests["strategy"]["matrix"] == {"shard": [0, 1]}
+    assert tests["strategy"]["matrix"] == {"shard": [0, 1, 2, 3]}
+    assert tests["env"]["PYTEST_SHARD_COUNT"] == "4"
     assert tests["env"]["PYTEST_WORKERS"] == "4"
     assert "postgres" in tests["services"]
     assert tests["env"]["TEST_POSTGRES_DATABASE_URL"].startswith("postgresql+asyncpg://")
@@ -38,10 +42,12 @@ def test_ci_keeps_verification_socketless_and_excludes_private_cd() -> None:
     coverage = jobs["coverage"]
     assert coverage["needs"] == ["tests"]
     assert "needs" not in jobs["image_candidate"]
-    assert jobs["image_candidate"]["if"] == "github.event_name == 'push'"
+    assert "if" not in jobs["image_candidate"]  # PRs verify images without publishing them.
     assert jobs["image_candidate"].get("permissions", ci["permissions"]) == {"contents": "read"}
     assert set(jobs["publish_image"]["needs"]) == {
         "quality",
+        "console",
+        "console_integration",
         "tests",
         "coverage",
         "postgres_matrix",
@@ -63,8 +69,10 @@ def test_ci_keeps_verification_socketless_and_excludes_private_cd() -> None:
     assert "scripts/deploy.sh" not in text
     assert ".gitlab-ci.yml" not in text
     assert "cancel-in-progress" in ci["concurrency"]
+    # Scheduled/manual cross-browser checks must not cancel a push publishing an image.
+    assert "github.event_name" in ci["concurrency"]["group"]
     assert "python -m pip install" not in text
-    assert text.count("astral-sh/setup-uv@") == 4
+    assert text.count("astral-sh/setup-uv@") == 5
     for job_name in ("quality", "tests", "postgres_matrix"):
         command_step = next(
             step
@@ -360,12 +368,41 @@ def test_verification_enforces_coverage_threshold() -> None:
     expected_pattern = "unit-coverage-" + "$" + "{{ github.sha }}-*"
     assert coverage_downloads[0]["with"]["pattern"] == expected_pattern
     assert coverage_downloads[0]["with"]["merge-multiple"] is True
-    assert "coverage-data/coverage-shard-0" in coverage_rendered
-    assert "coverage-data/coverage-shard-1" in coverage_rendered
+    assert "for shard in 0 1 2 3" in coverage_rendered
+    assert 'test -s "coverage-data/coverage-shard-$shard"' in coverage_rendered
+    assert "-eq 4" in coverage_rendered
     assert "find coverage-data -mindepth 1 -maxdepth 1 -type f" in coverage_rendered
     assert "coverage combine" in coverage_rendered
     assert "coverage report --show-missing --fail-under=75" in coverage_rendered
     assert coverage_rendered.count("--fail-under=75") == 1
+
+
+def test_ci_console_jobs_keep_isolation_real_backend_and_diagnostics() -> None:
+    ci, _ = _ci()
+    jobs = ci["jobs"]
+    browser = jobs["console"]
+    assert browser["strategy"]["matrix"] == {"shard": [1, 2]}
+    assert "--shard=${{ matrix.shard }}/2" in str(browser)
+    assert "workers: 1" in (ROOT / "frontend/playwright.config.ts").read_text()
+    engines = jobs["console_engines"]
+    assert engines["strategy"]["matrix"]["browser"] == ["firefox", "webkit"]
+    assert "schedule" in engines["if"] and "workflow_dispatch" in engines["if"]
+    integration = jobs["console_integration"]
+    assert "postgres" in integration["services"]
+    assert "playwright.integration.config.ts" in str(integration)
+    for job in (browser, engines, integration):
+        upload = next(
+            step for step in job["steps"] if "actions/upload-artifact@" in step.get("uses", "")
+        )
+        assert upload["if"] == "failure()"
+        assert upload["with"]["path"] == "frontend/test-results/"
+    config = (ROOT / "frontend/playwright.integration.config.ts").read_text()
+    assert "reuseExistingServer: false" in config
+    assert "console_integration_server.py" in config
+    server = (ROOT / "scripts/console_integration_server.py").read_text()
+    assert "validate_project_database(database)" in server
+    assert "disposable_postgres_database()" in server
+    assert 'host="127.0.0.1"' in server
 
 
 def test_ci_postgres_parallelism_keeps_role_provisioning_serial() -> None:

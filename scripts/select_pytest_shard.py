@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import argparse
 import ast
+import json
+import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from statistics import median
 
 ROOT = Path(__file__).resolve().parents[1]
 _SAFE_TEST_PATH = re.compile(r"tests/(?:[A-Za-z0-9_]+/)*test_[A-Za-z0-9_]+\.py")
@@ -110,18 +113,48 @@ def discover_test_files(root: Path = ROOT) -> list[ShardFile]:
     return files
 
 
-def build_shards(files: list[ShardFile], count: int) -> list[list[Path]]:
+def load_timings(path: Path) -> dict[str, float]:
+    """A reviewed timing snapshot, never arbitrary data fetched from a PR artifact."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or any(
+        not isinstance(key, str)
+        or _SAFE_TEST_PATH.fullmatch(key) is None
+        or isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or not 0 < value < 100_000
+        for key, value in data.items()
+    ):
+        raise ValueError("Invalid pytest timing snapshot")
+    return data
+
+
+def build_shards(
+    files: list[ShardFile], count: int, timings: dict[str, float] | None = None
+) -> list[list[Path]]:
     if count < 1:
         raise ValueError("Shard count must be positive")
     if count > len(files):
         raise ValueError("Shard count cannot exceed the number of test files")
 
+    timings = timings or {}
+    # Use measured file totals; scale the existing estimate for new/unmeasured files.
+    ratios = [
+        timings[item.path.as_posix()] / item.weight
+        for item in files
+        if item.path.as_posix() in timings
+    ]
+    scale = median(ratios) if ratios else 1.0
+
+    def weight(item: ShardFile) -> float:
+        return timings.get(item.path.as_posix(), item.weight * scale)
+
     shards: list[list[Path]] = [[] for _ in range(count)]
-    weights = [0] * count
-    for test_file in sorted(files, key=lambda item: (-item.weight, item.path.as_posix())):
+    weights = [0.0] * count
+    for test_file in sorted(files, key=lambda item: (-weight(item), item.path.as_posix())):
         shard_index = min(range(count), key=lambda index: (weights[index], index))
         shards[shard_index].append(test_file.path)
-        weights[shard_index] += test_file.weight
+        weights[shard_index] += weight(test_file)
     return [sorted(shard) for shard in shards]
 
 
@@ -129,6 +162,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Select a deterministic pytest file shard")
     parser.add_argument("--count", type=int, required=True)
     parser.add_argument("--index", type=int, required=True)
+    parser.add_argument("--timings", type=Path, default=ROOT / "scripts/pytest_timings.json")
     return parser.parse_args()
 
 
@@ -136,7 +170,7 @@ def main() -> None:
     args = parse_args()
     if args.index < 0 or args.index >= args.count:
         raise SystemExit("Shard index must be between zero and count minus one")
-    shard = build_shards(discover_test_files(), args.count)[args.index]
+    shard = build_shards(discover_test_files(), args.count, load_timings(args.timings))[args.index]
     print("\n".join(path.as_posix() for path in shard))
 
 

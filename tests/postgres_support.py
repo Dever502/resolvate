@@ -73,8 +73,19 @@ def _quoted_test_database(database_name: str) -> str:
     return f'"{database_name}"'
 
 
-async def disposable_postgres_database() -> AsyncIterator[str]:
+async def disposable_postgres_database(*, template_url: str | None = None) -> AsyncIterator[str]:
     admin_url = configured_postgres_admin_url()
+    template_clause = ""
+    if template_url is not None:
+        template = make_url(template_url)
+        # Never clone an arbitrary database or a database on a different server.
+        if (
+            not template.database
+            or not template.database.startswith("sbtest_")
+            or template.set(database=POSTGRES_TEST_DATABASE_NAME) != make_url(admin_url)
+        ):
+            raise ValueError("Template must be a disposable database on the test server")
+        template_clause = f" TEMPLATE {_quoted_test_database(template.database)}"
     await _connect_with_retry(admin_url)
     child_name = f"sbtest_{uuid.uuid4().hex}"
     quoted_child_name = _quoted_test_database(child_name)
@@ -86,7 +97,7 @@ async def disposable_postgres_database() -> AsyncIterator[str]:
     created = False
     try:
         async with admin_engine.connect() as connection:
-            await connection.execute(text(f"CREATE DATABASE {quoted_child_name}"))
+            await connection.execute(text(f"CREATE DATABASE {quoted_child_name}{template_clause}"))
         created = True
         child_url = make_url(admin_url).set(database=child_name)
         yield child_url.render_as_string(hide_password=False)

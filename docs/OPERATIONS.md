@@ -280,19 +280,37 @@ DEPLOY_DIR=/opt/resolvate sh scripts/production-compose.sh logs -f --tail=200 re
 DEPLOY_DIR=/opt/resolvate sh scripts/production-compose.sh restart resolvate
 ```
 
-GitHub Actions параллельно выполняет статические проверки, два изолированных шарда непостгресовых
-тестов и PostgreSQL matrix. Каждый тестовый шард использует четыре pytest worker, затем отдельный
-gate объединяет coverage обоих шардов и один раз проверяет общий порог. Обычные PostgreSQL-тесты
-также распараллелены по изолированным БД, а меняющие роли кластера тесты намеренно остаются
-последовательными. Зависимости, слои BuildKit и vulnerability DB Trivy кэшируются, а устаревшие
-прогоны одной ветки отменяются.
+GitHub Actions параллельно выполняет статические проверки, четыре изолированных шарда Python-тестов,
+PostgreSQL matrix, два шарда Chromium и интеграционную проверку Vue с настоящим API/PostgreSQL.
+Каждый Python-шард использует четыре pytest worker; отдельный gate требует все четыре файла coverage
+и проверяет общий порог 75%. Распределение файлов использует измерения `scripts/pytest_timings.json`,
+для новых файлов — оценку по числу тестов и размеру. В каждом worker схема мигрируется один раз;
+каждый сервисный тест получает отдельную БД-копию, а не общую БД с очисткой таблиц. Тесты самих миграций
+по-прежнему начинают с пустой БД. Изменяющие роли кластера PostgreSQL-тесты остаются последовательными.
+У браузерных шардов отдельные серверы заглушек: увеличивать workers у одного общего сервера нельзя.
+Firefox/WebKit полностью проверяются еженедельно и при ручном `workflow_dispatch`. Зависимости,
+слои BuildKit и vulnerability DB Trivy кэшируются, устаревшие прогоны одной ветки и типа события
+отменяются. Плановая или ручная проверка не отменяет push с публикацией образа.
 
-На push кандидатный image собирается параллельно с тестами без прав записи в registry. Smoke test,
+JUnit с длительностями Python-тестов и диагностические файлы упавших браузерных проверок (включая
+Playwright trace) хранятся в Actions artifacts 7 дней. Для обновления профиля соберите XML всех
+четырёх шардов одного успешного запуска и выполните `python scripts/pytest_timings.py PATH_TO_XML ...`.
+Сверьте результат и обновите `scripts/pytest_timings.json` в обычном ревью: профиль влияет только на
+распределение, не на состав тестов. Генератор отказывается от неполных, неуспешных и дублирующихся
+отчётов. Больше параллельных runners сокращает ожидание, но не гарантирует экономии Actions minutes.
+
+В PR, на push и при регулярной проверке кандидатный image собирается параллельно с тестами без прав
+записи в registry. Smoke test,
 Trivy и Syft параллельно проверяют один immutable image archive; runtime stage не содержит build-
-инструменты и исходное дерево проекта. Только после успешных quality, coverage, PostgreSQL и security
+инструменты и исходное дерево проекта. Только на push после успешных quality, browser, integration,
+coverage, PostgreSQL и security
 gates отдельный job сверяет SHA-256 архива, manifest и revision label, загружает этот же image в GHCR,
 создаёт CycloneDX SBOM, checksums, attestation и release evidence. Workflow не имеет доступа к
 production host; deploy остаётся ручной операцией.
+
+Если required checks перечислены в GitHub Ruleset вручную, добавьте новые Python-шарды 2/3, Chromium-шарды,
+`Console with real API and PostgreSQL` и `Build and verify candidate image`; старые проверки не
+удаляйте. Настройки защиты ветки не меняются автоматически вместе с workflow.
 
 ## Health и логи
 

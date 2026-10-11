@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import runpy
 import sys
 from pathlib import Path
 
@@ -19,17 +20,80 @@ SPEC.loader.exec_module(SHARDING)
 ShardFile = SHARDING.ShardFile
 build_shards = SHARDING.build_shards
 discover_test_files = SHARDING.discover_test_files
+collect_timings = runpy.run_path(str(ROOT / "scripts/pytest_timings.py"))["collect_timings"]
 
 
-def test_discovered_test_files_are_partitioned_exactly_once() -> None:
+def test_junit_timings_require_complete_successful_nonduplicate_run(tmp_path: Path) -> None:
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_one.py").write_text("def test_one(): pass\n")
+    (tests / "test_two.py").write_text("def test_two(): pass\n")
+    first, second = tmp_path / "first.xml", tmp_path / "second.xml"
+    first.write_text(
+        '<testsuite><testcase classname="tests.test_one" name="test_one" time="2"/></testsuite>'
+    )
+    second.write_text(
+        '<testsuite><testcase classname="tests.test_two.TestClass" '
+        'name="test_two" time="3"/></testsuite>'
+    )
+    assert collect_timings([first, second], tmp_path) == {
+        "tests/test_one.py": 2.0,
+        "tests/test_two.py": 3.0,
+    }
+    with pytest.raises(ValueError, match="every"):
+        collect_timings([first], tmp_path)
+    with pytest.raises(ValueError, match="duplicate"):
+        collect_timings([first, second, first], tmp_path)
+    second.write_text(
+        '<testsuite><testcase classname="tests.test_two" name="test_two" time="3">'
+        "<failure/></testcase></testsuite>"
+    )
+    with pytest.raises(ValueError, match="successful"):
+        collect_timings([first, second], tmp_path)
+
+
+@pytest.mark.parametrize("count", [2, 4])
+def test_discovered_test_files_are_partitioned_exactly_once(count: int) -> None:
     files = discover_test_files()
-    shards = build_shards(files, 2)
+    shards = build_shards(files, count)
     discovered = {test_file.path for test_file in files}
 
-    assert shards[0]
-    assert shards[1]
-    assert set(shards[0]).isdisjoint(shards[1])
+    assert all(shards)
+    assert len([path for shard in shards for path in shard]) == len(discovered)
     assert set().union(*map(set, shards)) == discovered
+
+
+def test_measured_durations_balance_expensive_small_files() -> None:
+    files = [ShardFile(Path(f"tests/test_{name}.py"), 1, 100) for name in "abcd"]
+    timings = {
+        f"tests/test_{name}.py": duration
+        for name, duration in zip("abcd", [9, 8, 2, 1], strict=True)
+    }
+    shards = build_shards(files, 2, timings)
+    assert shards == build_shards(list(reversed(files)), 2, timings)
+    assert [sum(timings[path.as_posix()] for path in shard) for shard in shards] == [10, 10]
+    # Unmeasured files still participate, obsolete profile entries never select files.
+    timings.pop("tests/test_d.py")
+    timings["tests/test_removed.py"] = 100
+    selected = [path for shard in build_shards(files, 4, timings) for path in shard]
+    assert sorted(selected) == sorted(item.path for item in files)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        "[]",
+        '{"../secret": 1}',
+        '{"tests/test_a.py": -1}',
+        '{"tests/test_a.py": NaN}',
+        '{"tests/test_a.py": true}',
+    ],
+)
+def test_invalid_timing_profile_fails_closed(tmp_path: Path, data: str) -> None:
+    path = tmp_path / "timings.json"
+    path.write_text(data)
+    with pytest.raises(ValueError):
+        SHARDING.load_timings(path)
 
 
 def test_discovery_excludes_module_level_postgres_marker(tmp_path: Path) -> None:
