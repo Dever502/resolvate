@@ -42,7 +42,7 @@ async function logout(): Promise<void> {
       <Icon name="chevron" class="account-chevron size-4 shrink-0" />
     </DropdownMenuTrigger>
     <DropdownMenuPortal>
-      <DropdownMenuContent class="menu account-menu" side="top" align="start" :side-offset="8" :collision-padding="8" loop>
+      <DropdownMenuContent class="menu account-menu" side="top" align="start" :side-offset="12" :collision-padding="8" loop>
         <DropdownMenuLabel class="account-identity">
           <span class="avatar size-9 shrink-0 text-xs" aria-hidden="true">{{ initials(name) }}</span>
           <span class="min-w-0">

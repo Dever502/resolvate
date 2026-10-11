@@ -151,6 +151,87 @@ test("installation admin identity with a long name fits a narrow screen", async 
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
 });
 
+test("menu width follows labels within limits and wraps oversized action text", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/console/");
+  await page.getByRole("button", { name: /Меню аккаунта:/ }).click();
+  const menu = page.getByRole("menu");
+  await expect(menu).toBeVisible();
+  await expect.poll(async () => (await menu.boundingBox())!.width).toBe(288);
+
+  // Exercise future labels without adding a fictitious settings action to the product.
+  const label = page.locator(".account-logout");
+  await label.evaluate(element => {
+    element.textContent = "Настройки уведомлений и автоматизации";
+  });
+  await expect.poll(async () => (await menu.boundingBox())!.width).toBeGreaterThan(288);
+  expect((await menu.boundingBox())!.width).toBeLessThanOrEqual(416);
+  await label.evaluate(element => {
+    const text = document.createElement("span");
+    text.textContent = "ОченьДлинноеНазваниеДействия".repeat(15);
+    element.replaceChildren(text);
+  });
+  for (const width of [1280, 375, 320]) {
+    await page.setViewportSize({ width, height: 800 });
+    await expect.poll(async () => (await menu.boundingBox())!.width).toBe(Math.min(416, width - 16));
+    await expect.poll(() => menu.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+    expect(await label.evaluate(element => element.scrollHeight)).toBeGreaterThan(44);
+    const bounds = (await menu.boundingBox())!;
+    expect(bounds.x).toBeGreaterThanOrEqual(8);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(width - 8);
+  }
+});
+
+test("a long unbroken identity stays capped and ellipsized", async ({ page }) => {
+  const name = `${"account".repeat(50)}@example.test`;
+  await page.route("**/console/me", async route => {
+    const response = await route.fetch();
+    const body = await response.json();
+    await route.fulfill({ response, json: { ...body, account: { ...body.account, name } } });
+  });
+  await page.goto("/console/");
+  await page.getByRole("button", { name: /Меню аккаунта:/ }).click();
+  const menu = page.getByRole("menu");
+  await expect(menu).toBeVisible();
+  expect((await menu.boundingBox())!.width).toBeLessThanOrEqual(416);
+  const identity = page.locator(".account-identity strong");
+  await expect(identity).toHaveAttribute("title", name);
+  expect(await identity.evaluate(element => ({
+    clipped: element.scrollWidth > element.clientWidth,
+    overflow: getComputedStyle(element).textOverflow,
+  }))).toEqual({ clipped: true, overflow: "ellipsis" });
+  expect(await menu.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+});
+
+test("growing menu scrolls inside available height and keeps keyboard actions reachable", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 400 });
+  await page.goto("/console/");
+  const trigger = page.getByRole("button", { name: /Меню аккаунта:/ });
+  await trigger.press("Enter");
+  const menu = page.getByRole("menu");
+  await expect(menu).toBeVisible();
+  // Synthetic informational rows test growth; real Reka items still handle focus/navigation.
+  await page.locator(".account-identity").evaluate(identity => {
+    for (let index = 0; index < 20; index++) {
+      const row = document.createElement("div");
+      row.className = "menu-item";
+      row.textContent = `Дополнительный пункт ${index + 1}`;
+      identity.after(row);
+    }
+  });
+  await expect.poll(() => menu.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+  await expect.poll(async () => (await menu.boundingBox())!.y).toBeGreaterThanOrEqual(8);
+  expect((await menu.boundingBox())!.y + (await menu.boundingBox())!.height).toBeLessThanOrEqual(392);
+  await expect(menu).toHaveAttribute("data-side", "top");
+  await page.keyboard.press("End");
+  const logout = page.getByRole("menuitem", { name: "Выйти" });
+  await expect(logout).toBeFocused();
+  await expect(logout).toBeInViewport();
+  await expect.poll(() => menu.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
+  await page.keyboard.press("Escape");
+  await expect(trigger).toBeFocused();
+});
+
 for (const width of [320, 375, 1280]) {
   for (const mode of ["light", "dark"] as const) {
     test(`menu bounds and ${mode} screenshot at ${width}px`, async ({ page, context, attachScreenshot }) => {
@@ -166,6 +247,9 @@ for (const width of [320, 375, 1280]) {
       expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
       expect(bounds!.y).toBeGreaterThanOrEqual(0);
       expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(800);
+      const footer = (await page.locator("footer").boundingBox())!;
+      // Keep the lower menu border clear of the sidebar/footer divider, not only the trigger.
+      expect(footer.y - (bounds!.y + bounds!.height)).toBeGreaterThanOrEqual(2);
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
       await attachScreenshot(`account-${mode}-${width}.png`);
     });
