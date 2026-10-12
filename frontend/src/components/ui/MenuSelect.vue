@@ -22,7 +22,7 @@ const props = withDefaults(defineProps<{
   label: string;
   placeholder?: string;
   disabled?: boolean;
-  /** "chrome" for the dark app bar. */
+  /** "chrome" for the dark app bar: the chevron follows the value and turns up while the menu is open. */
   tone?: "field" | "chrome";
 }>(), { placeholder: "", disabled: false, tone: "field" });
 const emit = defineEmits<{ "update:modelValue": [value: string] }>();
@@ -42,8 +42,10 @@ const shown = computed(() => props.options.find((option) => option.value === pro
         :disabled="disabled"
         :aria-labelledby="`${id}-label ${id}-value`"
       >
-        <span :id="`${id}-value`" class="min-w-0 flex-1 truncate text-left">{{ shown }}</span>
-        <Icon name="chevron" class="size-4 shrink-0" />
+        <!-- In the app bar the value keeps its own width, so the chevron follows it; the button still spans
+             its column, and its free end opens the menu too. A field stretches the value instead. -->
+        <span :id="`${id}-value`" class="min-w-0 truncate text-left" :class="{ 'flex-1': tone !== 'chrome' }">{{ shown }}</span>
+        <Icon name="chevron" class="size-4 shrink-0" :class="{ 'menu-select-chevron': tone === 'chrome' }" />
       </DropdownMenuTrigger>
       <DropdownMenuPortal>
         <DropdownMenuContent class="menu" align="start" :side-offset="6" :collision-padding="8" loop>

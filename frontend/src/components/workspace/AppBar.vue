@@ -42,7 +42,7 @@ watch(() => projects.currentId, () => { catalogOpen.value = false; });
       />
       <button type="button" class="quiet text-sm text-white narrow:col-start-3 narrow:row-start-1 narrow:justify-self-end"
         :class="{ 'narrow:hidden': workspace.dialogueOpen }" aria-label="Управление готовыми ответами"
-        :disabled="!projects.currentId" @click="catalogOpen = true"><span class="narrow:hidden">Готовые </span>ответы</button>
+        :disabled="!projects.currentId" @click="catalogOpen = true"><span><span class="narrow:hidden">Готовые </span>ответы</span></button>
     </div>
     <ReplyCatalog v-if="projects.currentId" :key="projects.currentId" v-model:open="catalogOpen" :project-id="projects.currentId" />
   </header>
