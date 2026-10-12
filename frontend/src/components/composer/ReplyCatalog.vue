@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, reactive, ref, useTemplateRef, watch } from "vue";
 import { ApiError, type ApiOptions } from "../../api/client";
 import type { QuickReply, QuickReplyGroup } from "../../api/types";
+import { useNotice } from "../../composables/useNotice";
 import { errorMessage, useRequest } from "../../composables/useRequest";
 import { PAGE, findGroup, findReply, readPages } from "../../lib/quickReplies";
 import { useSessionStore } from "../../stores/session";
@@ -82,7 +83,8 @@ const editorDirty = ref(false);
 const conflict = ref<string | null>(null);
 const panelError = ref("");
 const groupError = ref("");
-const status = ref("");
+// A success is a short toast that disappears by itself; a warning stays until the next step.
+const { notice, success, warning, clear: clearNotice } = useNotice();
 const removingReply = ref<QuickReply | null>(null);
 const removingGroup = ref<QuickReplyGroup | null>(null);
 const discarding = ref<(() => void) | null>(null);
@@ -247,7 +249,7 @@ watch(() => (searching.value ? term.value : null), (value, old) => {
     paneBefore = pane.value;
     Object.assign(found, { groups: [], replies: [], moreGroups: false, moreReplies: false, error: "" });
   }
-  status.value = "";
+  clearNotice("warning");
   pane.value = "detail";
   found.loading = true;
   searchTimer = setTimeout(() => void runSearch(), 250);
@@ -313,7 +315,7 @@ function choose(group: QuickReplyGroup, { show = true, keepSearch = false } = {}
 }
 
 function select(group: QuickReplyGroup): void {
-  status.value = "";
+  clearNotice("warning");
   if (group.id === selected.value?.id && !searching.value) guard(() => { closePanel(); pane.value = "detail"; });
   else guard(() => choose(group));
 }
@@ -326,7 +328,7 @@ async function openGroup(id: string): Promise<void> {
     group = rows.find((item) => item.id === id);
   }
   if (!group) {
-    status.value = "Группа не найдена: возможно, её удалил другой оператор.";
+    warning("Группа не найдена: возможно, её удалил другой оператор.");
     return;
   }
   const target = group;
@@ -339,7 +341,7 @@ async function openGroup(id: string): Promise<void> {
 
 function groupGone(group: QuickReplyGroup): void {
   if (selected.value?.id === group.id) {
-    status.value = `Группы /${group.name} больше нет: её удалил другой оператор.`;
+    warning(`Группы /${group.name} больше нет: её удалил другой оператор.`);
     selected.value = null;
     replies.value = [];
     renamingGroup.value = false;
@@ -410,14 +412,14 @@ function groupOf(reply: QuickReply): QuickReplyGroup {
 
 function add(): void {
   if (!selected.value || request.busy) return;
-  status.value = "";
+  clearNotice("warning");
   panel.value = { kind: "editor", reply: null, group: selected.value, missing: false };
   pane.value = "detail";
 }
 
 function act(reply: QuickReply, key: "edit" | "move" | "remove"): void {
   if (request.busy) return;
-  status.value = "";
+  clearNotice("warning");
   if (key === "remove") {
     confirmError.value = "";
     removingReply.value = reply;
@@ -460,7 +462,7 @@ async function saveReply(text: string): Promise<void> {
     else panelError.value = result.message;
     return;
   }
-  status.value = reply ? "Ответ сохранён." : `Ответ добавлен в /${current.group.name}.`;
+  success(reply ? "Ответ сохранён." : `Ответ добавлен в /${current.group.name}.`);
   closePanel();
   await refresh();
   await focusList({ reply: result.value.id });
@@ -503,7 +505,7 @@ async function moveReply(target: QuickReplyGroup): Promise<void> {
       panelError.value = `Группы /${target.name} больше нет: её удалил другой оператор. Выберите другую группу.`;
     } else if (result.status === 404) {
       closePanel();
-      status.value = "Этого ответа больше нет: его удалил или перенёс другой оператор.";
+      warning("Этого ответа больше нет: его удалил или перенёс другой оператор.");
       await refresh();
       await focusList();
     } else if (result.status === 409) {
@@ -520,7 +522,7 @@ async function moveReply(target: QuickReplyGroup): Promise<void> {
         panelError.value = "Ответ изменил другой оператор: проверьте его текущий текст выше и подтвердите перенос снова.";
       } else {
         closePanel();
-        status.value = "Этого ответа больше нет: его удалил или перенёс другой оператор.";
+        warning("Этого ответа больше нет: его удалил или перенёс другой оператор.");
         await refresh();
         await focusList();
       }
@@ -528,7 +530,7 @@ async function moveReply(target: QuickReplyGroup): Promise<void> {
     return;
   }
   remember([target]);
-  status.value = `Ответ перенесён в /${target.name}.`;
+  success(`Ответ перенесён в /${target.name}.`);
   closePanel();
   await refresh();
   await focusNear(index);
@@ -560,7 +562,8 @@ async function removeReply(): Promise<void> {
     return;
   }
   removingReply.value = null;
-  status.value = result.ok ? "Ответ удалён." : "Этого ответа уже нет: его удалил или перенёс другой оператор.";
+  if (result.ok) success("Ответ удалён.");
+  else warning("Этого ответа уже нет: его удалил или перенёс другой оператор.");
   await refresh();
   await focusNear(index);
 }
@@ -582,7 +585,7 @@ async function createGroup(name: string): Promise<void> {
   const group = result.value;
   creatingGroup.value = false;
   remember([group]);
-  status.value = `Группа /${group.name} создана.`;
+  success(`Группа /${group.name} создана.`);
   void loadGroups();
   // A reply being edited meanwhile is not dropped: opening the new group asks first.
   guard(() => {
@@ -627,7 +630,7 @@ async function renameGroup(name: string): Promise<void> {
     remember([fresh]);
   }
   renamingGroup.value = false;
-  status.value = `Группа переименована: /${selected.value?.name ?? group.name}.`;
+  success(`Группа переименована: /${selected.value?.name ?? group.name}.`);
   void loadGroups();
   // Renaming changes the revision of every reply in the group: their fresh revisions are needed.
   void loadReplies();
@@ -636,7 +639,7 @@ async function renameGroup(name: string): Promise<void> {
 
 function askRemoveGroup(): void {
   if (!selected.value || request.busy) return;
-  status.value = "";
+  clearNotice("warning");
   confirmError.value = "";
   removingGroup.value = selected.value;
 }
@@ -670,7 +673,7 @@ async function removeGroup(): Promise<void> {
     return;
   }
   removingGroup.value = null;
-  status.value = `Группа /${group.name} удалена.`;
+  success(`Группа /${group.name} удалена.`);
   if (selected.value?.id === group.id) {
     selected.value = null;
     replies.value = [];
@@ -694,6 +697,7 @@ function setOpen(value: boolean): void {
 watch(open, (value) => {
   clearTimeout(searchTimer);
   clearTimeout(groupTimer);
+  clearNotice();
   if (!value) {
     window.removeEventListener("beforeunload", keep);
     return;
@@ -706,7 +710,6 @@ watch(open, (value) => {
   scope.value = "catalog";
   creatingGroup.value = false;
   renamingGroup.value = false;
-  status.value = "";
   pane.value = "groups";
   paneBefore = "groups";
   closePanel();
@@ -758,7 +761,15 @@ const loadTargets = (q: string, offset: number, signal: AbortSignal) =>
         </button>
       </div>
     </div>
-    <p class="catalog-status" role="status">{{ status }}</p>
+    <div class="catalog-toast-region" role="status">
+      <Transition name="catalog-toast">
+        <p v-if="notice?.kind === 'success'" class="catalog-toast">
+          <Icon name="check" class="size-4 shrink-0 text-success" />
+          <span class="min-w-0">{{ notice.text }}</span>
+        </p>
+      </Transition>
+    </div>
+    <p v-if="notice?.kind === 'warning'" class="catalog-warning" role="alert">{{ notice.text }}</p>
     <div class="catalog-body" :data-pane="pane">
       <ReplyGroupList
         ref="group-list"

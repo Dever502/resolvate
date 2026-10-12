@@ -34,7 +34,17 @@ const card = (scope: Locator, text: string) => scope.getByRole("article", { name
 const cardMenu = (scope: Locator, text: string) => card(scope, text).getByRole("button", { name: /^Действия с ответом/ });
 const editor = (catalog: Locator) => catalog.getByRole("textbox", { name: "Текст готового ответа" });
 const search = (catalog: Locator) => catalog.getByRole("searchbox", { name: "Поиск в каталоге" });
-const status = (catalog: Locator) => catalog.locator(".catalog-status");
+/** The toast of a finished change; it disappears by itself. */
+const status = (catalog: Locator) => catalog.locator(".catalog-toast");
+const warningNotice = (catalog: Locator) => catalog.locator(".catalog-warning");
+const showWhole = (scope: Locator, text: string) => card(scope, text).getByRole("button", { name: "Показать ответ полностью" });
+const collapse = (scope: Locator, text: string) => card(scope, text).getByRole("button", { name: "Свернуть ответ" });
+const lines = (prefix: string, count: number) => Array.from({ length: count }, (_, line) => `${prefix} ${line + 1}`).join("\n");
+/** The reply's text box: what the toggle's aria-controls points at. */
+async function replyText(scope: Locator, text: string): Promise<Locator> {
+  const toggle = card(scope, text).getByRole("button", { name: /^(Показать ответ полностью|Свернуть ответ)$/ });
+  return scope.page().locator(`[id="${await toggle.getAttribute("aria-controls")}"]`);
+}
 
 async function replyAction(page: Page, scope: Locator, text: string, action: "Изменить" | "Перенести" | "Удалить"): Promise<void> {
   await cardMenu(scope, text).click();
@@ -152,6 +162,30 @@ test.describe("quick replies catalog", () => {
     await expect(groupNav(catalog)).toBeVisible();
     await expect(general).toBeVisible();
     await expectNoSidewaysScroll(page, catalog, 900);
+  });
+
+  test("app bar opener: one normal space between the two words of its label, only the second word on a phone", async ({ page, context, request, consoleErrors }) => {
+    void consoleErrors;
+    // Widths of the button and of its copy holding `text` as one plain text run: they differ when the
+    // label spaces its words wider than the font does (the flex gap of .quiet between two flex items).
+    const widths = (text: string) => opener(page).evaluate((button, label) => {
+      const copy = button.cloneNode(false) as HTMLElement;
+      copy.textContent = label;
+      button.after(copy);
+      const result: [number, number] = [button.getBoundingClientRect().width, copy.getBoundingClientRect().width];
+      copy.remove();
+      return result;
+    }, text);
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await start(page, context, request);
+    // innerText follows the layout: a word in a flex item of its own comes out on a line of its own.
+    expect(await opener(page).innerText()).toBe("Готовые ответы");
+    const [desktop, desktopText] = await widths("Готовые ответы");
+    expect(desktop).toBeCloseTo(desktopText, 0);
+    await page.setViewportSize({ width: 375, height: 812 });
+    expect(await opener(page).innerText()).toBe("ответы");
+    const [phone, phoneText] = await widths("ответы");
+    expect(phone).toBeCloseTo(phoneText, 0);
   });
 
   test("groups: a new group opens by itself; the server's refusals stay with the typed name; rename and delete use the group menu", async ({ page, context, request, consoleErrors }) => {
@@ -930,6 +964,246 @@ test.describe("quick replies catalog", () => {
     await expect(group(catalog, "оплата")).toBeFocused();
     await page.keyboard.press("ArrowDown");
     await expect(group(catalog, "ярлыки")).toBeFocused();
+  });
+
+  test("long replies: six lines in the card, the rest opens in place; short ones have no toggle", async ({ page, context, request, consoleErrors }) => {
+    void consoleErrors;
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await start(page, context, request);
+    await other(page, "replies", { group_id: "g1", text: lines("Строка", 6) });
+    await other(page, "replies", { group_id: "g1", text: lines("Пункт", 7) });
+    await other(page, "replies", { group_id: "g1", text: `Слово${"д".repeat(700)}` });
+    const catalog = await openCatalog(page);
+    const general = detail(catalog, "общее");
+    await expect(general.getByRole("article")).toHaveCount(5);
+    // A short reply and exactly six lines fit: no toggle.
+    await expect(card(general, "Здравствуйте! Чем могу").getByRole("button", { name: /полностью|Свернуть/ })).toHaveCount(0);
+    await expect(card(general, "Строка 1").getByRole("button", { name: /полностью|Свернуть/ })).toHaveCount(0);
+
+    const seven = card(general, "Пункт 1");
+    const show = showWhole(general, "Пункт 1");
+    await expect(show).toBeVisible();
+    await expect(show).toHaveAttribute("aria-expanded", "false");
+    // The visible label is short; the hidden word completes the name for a screen reader.
+    await expect(show.locator(".sr-only")).toHaveText("ответ");
+    const body = await replyText(general, "Пункт 1");
+    expect(await body.evaluate((element) => element.scrollHeight > element.clientHeight + 1)).toBe(true);
+    const collapsed = (await box(seven)).height;
+    // The toggle sits at the bottom right, away from the "⋯" menu at the top right.
+    const [toggleBox, menuBox, cardBox] = [await box(show), await box(cardMenu(general, "Пункт 1")), await box(seven)];
+    expect(toggleBox.y).toBeGreaterThan(menuBox.y + menuBox.height);
+    expect(cardBox.x + cardBox.width - (toggleBox.x + toggleBox.width)).toBeLessThan(80);
+
+    await show.click();
+    const hide = collapse(general, "Пункт 1");
+    await expect(hide).toBeFocused();
+    await expect(hide).toHaveAttribute("aria-expanded", "true");
+    expect(await body.evaluate((element) => element.scrollHeight <= element.clientHeight + 1)).toBe(true);
+    expect(await body.evaluate((element) => getComputedStyle(element).overflowY)).toBe("visible");
+    expect((await box(seven)).height).toBeGreaterThan(collapsed + 15);
+    await hide.click();
+    await expect(showWhole(general, "Пункт 1")).toBeFocused();
+    await expect.poll(async () => Math.round((await box(seven)).height)).toBe(Math.round(collapsed));
+
+    // Space and Enter work; the long word wraps and opens too; several cards stay open at once.
+    await page.keyboard.press("Space");
+    await expect(collapse(general, "Пункт 1")).toHaveAttribute("aria-expanded", "true");
+    const word = showWhole(general, "Слово");
+    await word.focus();
+    await page.keyboard.press("Enter");
+    await expect(collapse(general, "Слово")).toHaveAttribute("aria-expanded", "true");
+    await expect(collapse(general, "Пункт 1")).toHaveAttribute("aria-expanded", "true");
+    expect(await (await replyText(general, "Слово")).evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+    await expectNoSidewaysScroll(page, catalog, 1280);
+
+    // Another group and back: every card starts collapsed again.
+    await group(catalog, "оплата").click();
+    await group(catalog, "общее").click();
+    await expect(showWhole(general, "Пункт 1")).toHaveAttribute("aria-expanded", "false");
+    await expect(showWhole(general, "Слово")).toHaveAttribute("aria-expanded", "false");
+
+    // In search results too, and a new result does not inherit the state.
+    await search(catalog).fill("Пункт");
+    const found = results(catalog);
+    await showWhole(found, "Пункт 1").click();
+    await expect(collapse(found, "Пункт 1")).toHaveAttribute("aria-expanded", "true");
+    await search(catalog).fill("Строка");
+    await expect(card(found, "Строка 1")).toBeVisible();
+    await expect(found.getByRole("article")).toHaveCount(1);
+    await expect(card(found, "Строка 1").getByRole("button", { name: /полностью|Свернуть/ })).toHaveCount(0);
+    await search(catalog).fill("Пункт");
+    await expect(showWhole(found, "Пункт 1")).toHaveAttribute("aria-expanded", "false");
+  });
+
+  test("long replies: the width decides, and collapsing a tall card keeps it in view", async ({ page, context, request, consoleErrors }) => {
+    void consoleErrors;
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await start(page, context, request);
+    const paragraph = "Чтобы сменить тариф, откройте раздел настроек и выберите подходящий вариант. ".repeat(3).trim();
+    await other(page, "replies", { group_id: "g1", text: paragraph });
+    await other(page, "replies", { group_id: "g1", text: lines("Абзац длинного ответа", 60) });
+    const catalog = await openCatalog(page);
+    await group(catalog, "общее").click();
+    const general = detail(catalog, "общее");
+    await expect(general.getByRole("article")).toHaveCount(4);
+    // Five lines wide, more than six narrow: the toggle follows the width.
+    await expect(card(general, "Чтобы сменить").getByRole("button", { name: /полностью|Свернуть/ })).toHaveCount(0);
+    await page.setViewportSize({ width: 375, height: 812 });
+    await expect(showWhole(general, "Чтобы сменить")).toBeVisible();
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await expect(card(general, "Чтобы сменить").getByRole("button", { name: /полностью|Свернуть/ })).toHaveCount(0);
+
+    // A 60-line card opened and read to its end: collapsing brings its top back into view.
+    const tall = card(general, "Абзац длинного ответа 1");
+    await showWhole(general, "Абзац длинного ответа 1").click();
+    const hide = collapse(general, "Абзац длинного ответа 1");
+    await hide.scrollIntoViewIfNeeded();
+    const scroller = general.locator(".catalog-scroll");
+    expect((await box(tall)).y).toBeLessThan((await box(scroller)).y);
+    await hide.click();
+    await expect(showWhole(general, "Абзац длинного ответа 1")).toBeFocused();
+    await expect.poll(async () => (await box(tall)).y).toBeGreaterThanOrEqual((await box(scroller)).y - 1);
+    await expect(showWhole(general, "Абзац длинного ответа 1")).toBeInViewport();
+
+    // On a phone the card opens the same way and nothing scrolls sideways.
+    await page.setViewportSize({ width: 375, height: 812 });
+    await showWhole(general, "Чтобы сменить").click();
+    await expect(collapse(general, "Чтобы сменить")).toHaveAttribute("aria-expanded", "true");
+    await expectNoSidewaysScroll(page, catalog, 375);
+  });
+
+  test("notices: a success disappears by itself, a warning and a conflict stay, nothing keeps empty room", async ({ page, context, request, consoleErrors }) => {
+    void consoleErrors;
+    await page.clock.install();
+    await start(page, context, request);
+    const catalog = await openCatalog(page);
+    const general = detail(catalog, "общее");
+    await expect(general.getByRole("article")).toHaveCount(2);
+    const area = catalog.locator(".catalog-body");
+    const toolbar = catalog.locator(".catalog-toolbar");
+    // Measured once the window has finished appearing.
+    await catalog.evaluate((element) => Promise.all(element.getAnimations().map((animation) => animation.finished)));
+    const top = (await box(area)).y;
+    // No room is kept for a notice.
+    expect(top - ((await box(toolbar)).y + (await box(toolbar)).height)).toBeLessThanOrEqual(13);
+
+    await replyAction(page, general, "Здравствуйте! Чем могу", "Удалить");
+    await page.getByRole("alertdialog", { name: "Удалить ответ?" }).getByRole("button", { name: "Удалить ответ" }).click();
+    await expect(status(catalog)).toHaveText("Ответ удалён.");
+    await expect(catalog.getByRole("status").filter({ hasText: "Ответ удалён." })).toHaveCount(1);
+    await expect(catalog.getByRole("alert")).toHaveCount(0);
+    expect((await box(area)).y).toBe(top);
+    expect(await status(catalog).evaluate((element) => getComputedStyle(element.parentElement!).pointerEvents)).toBe("none");
+    await expectApart(status(catalog), catalog.getByRole("button", { name: "Закрыть" }), search(catalog), catalog.getByRole("group", { name: "Где искать" }));
+
+    // A second success gets the full time again; the first one's timer does not remove it.
+    await page.clock.runFor(2500);
+    await general.getByRole("button", { name: "Добавить ответ" }).click();
+    await editor(catalog).fill("Новый ответ");
+    await catalog.locator('form button[type="submit"]').click();
+    await expect(status(catalog)).toHaveText("Ответ добавлен в /общее.");
+    await page.clock.runFor(2500);
+    await expect(status(catalog)).toHaveText("Ответ добавлен в /общее.");
+    await page.clock.runFor(1200);
+    await expect(status(catalog)).toHaveCount(0);
+    expect((await box(area)).y).toBe(top);
+
+    // A reply already deleted by another operator: a warning that stays until the next step.
+    await other(page, "replies/2/delete", { revision: 0 });
+    await replyAction(page, general, "Спасибо за обращение", "Удалить");
+    await page.getByRole("alertdialog", { name: "Удалить ответ?" }).getByRole("button", { name: "Удалить ответ" }).click();
+    await expect(warningNotice(catalog)).toHaveText("Этого ответа уже нет: его удалил или перенёс другой оператор.");
+    await expect(warningNotice(catalog)).toHaveAttribute("role", "alert");
+    await page.clock.runFor(10_000);
+    await expect(warningNotice(catalog)).toBeVisible();
+    await general.getByRole("button", { name: "Добавить ответ" }).click();
+    await expect(warningNotice(catalog)).toHaveCount(0);
+
+    // A revision conflict in the editor is not touched by the success timer.
+    await editor(catalog).fill("Черновик");
+    await catalog.getByRole("button", { name: "Отмена" }).click();
+    await page.getByRole("alertdialog", { name: "Не сохранять изменения?" }).getByRole("button", { name: "Не сохранять" }).click();
+    await replyAction(page, general, "Новый ответ", "Изменить");
+    await editor(catalog).fill("Мой вариант");
+    const fresh = await serverReply(page, "g1", "4");
+    await other(page, "replies/4/edit", { group_id: "g1", text: "Вариант коллеги", revision: fresh!.revision });
+    await catalog.getByRole("button", { name: "Сохранить ответ" }).click();
+    const theirs = catalog.getByRole("group", { name: "Версия другого оператора" });
+    await expect(theirs).toContainText("Вариант коллеги");
+    await page.clock.runFor(10_000);
+    await expect(theirs).toBeVisible();
+    await expect(editor(catalog)).toHaveValue("Мой вариант");
+    await catalog.getByRole("button", { name: "Сохранить ответ" }).click();
+    await expect(status(catalog)).toHaveText("Ответ сохранён.");
+
+    // Closing the window ends the notice; the next opening starts without it.
+    await page.keyboard.press("Escape");
+    await expect(catalog).toBeHidden();
+    await opener(page).click();
+    await expect(detail(catalog, "общее").getByRole("article")).toHaveCount(1);
+    await expect(status(catalog)).toHaveCount(0);
+    await page.clock.runFor(5000);
+    await expect(status(catalog)).toHaveCount(0);
+  });
+
+  test("notices on a phone: the toast stays clear of the close button and the search", async ({ page, context, request, consoleErrors }) => {
+    void consoleErrors;
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.clock.install();
+    await start(page, context, request);
+    const catalog = await openCatalog(page);
+    await group(catalog, "общее").click();
+    const general = detail(catalog, "общее");
+    await replyAction(page, general, "Спасибо за обращение", "Удалить");
+    await page.getByRole("alertdialog", { name: "Удалить ответ?" }).getByRole("button", { name: "Удалить ответ" }).click();
+    await expect(status(catalog)).toHaveText("Ответ удалён.");
+    await expectInside(status(catalog), catalog);
+    await expectApart(status(catalog), catalog.getByRole("button", { name: "Закрыть" }), search(catalog));
+    await expectNoSidewaysScroll(page, catalog, 375);
+    await page.clock.runFor(4000);
+    await expect(status(catalog)).toHaveCount(0);
+  });
+
+  test("screenshots: long replies and a success notice, desktop and phone, light and dark", async ({ page, context, request, consoleErrors, attachScreenshot }) => {
+    void consoleErrors;
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.clock.install();
+    await start(page, context, request);
+    await other(page, "replies", { group_id: "g1", text: "Здравствуйте!\nЧтобы сменить тариф, откройте «Настройки» → «Тариф» и выберите подходящий. Новый тариф начнёт действовать со следующего расчётного периода.\nЕсли что-то не получится, напишите нам — поможем.\nСписок тарифов:\n— «Старт» для одного оператора;\n— «Команда» до десяти операторов;\n— «Компания» без ограничений.\nОплата списывается в начале месяца." });
+    const shoot = async (name: string) => {
+      await page.mouse.move(0, 0);
+      for (const theme of ["light", "dark"]) {
+        await page.evaluate((value) => { document.documentElement.dataset.theme = value; }, theme);
+        await attachScreenshot(`catalog-${name}-${theme}.png`);
+      }
+    };
+    const catalog = await openCatalog(page);
+    const general = detail(catalog, "общее");
+    await expect(showWhole(general, "Здравствуйте! Чтобы сменить")).toBeVisible();
+    await shoot("desktop-reply-collapsed");
+    await showWhole(general, "Здравствуйте! Чтобы сменить").click();
+    await shoot("desktop-reply-expanded");
+    await replyAction(page, general, "Спасибо за обращение", "Удалить");
+    await page.getByRole("alertdialog", { name: "Удалить ответ?" }).getByRole("button", { name: "Удалить ответ" }).click();
+    await expect(status(catalog)).toHaveText("Ответ удалён.");
+    await shoot("desktop-notice");
+
+    await page.keyboard.press("Escape");
+    await expect(catalog).toBeHidden();
+    await page.setViewportSize({ width: 375, height: 812 });
+    await openCatalog(page);
+    await group(catalog, "общее").click();
+    await expect(showWhole(general, "Здравствуйте! Чтобы сменить")).toBeVisible();
+    await shoot("phone-reply-collapsed");
+    await showWhole(general, "Здравствуйте! Чтобы сменить").click();
+    await shoot("phone-reply-expanded");
+    await collapse(general, "Здравствуйте! Чтобы сменить").click();
+    await general.getByRole("button", { name: "Добавить ответ" }).click();
+    await editor(catalog).fill("Спасибо, что написали!");
+    await catalog.locator('form button[type="submit"]').click();
+    await expect(status(catalog)).toHaveText("Ответ добавлен в /общее.");
+    await shoot("phone-notice");
   });
 
   test("screenshots: desktop and phone, light and dark", async ({ page, context, request, consoleErrors, attachScreenshot }) => {
