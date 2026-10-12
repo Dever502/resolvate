@@ -14,7 +14,9 @@ const props = withDefaults(defineProps<{
   /** Esc and the close button do nothing (for example while the window's request runs). */
   locked?: boolean;
   wide?: boolean;
-}>(), { description: "", closeLabel: "Закрыть", locked: false, wide: false });
+  /** A size and layout of one window's own (the quick replies catalog), without changing the others. */
+  contentClass?: string;
+}>(), { description: "", closeLabel: "Закрыть", locked: false, wide: false, contentClass: "" });
 const emit = defineEmits<{ openAutoFocus: [event: Event] }>();
 // Changes sent from inside the window (composables/useRequest) lock it too until they answer.
 const requests = ref(0);
@@ -28,7 +30,7 @@ const blocked = computed(() => props.locked || requests.value > 0);
       <DialogOverlay class="dialog-backdrop" />
       <DialogContent
         class="dialog"
-        :class="{ 'dialog-wide': wide }"
+        :class="[{ 'dialog-wide': wide }, contentClass]"
         v-bind="description ? {} : { 'aria-describedby': undefined }"
         @pointer-down-outside="(event: Event) => event.preventDefault()"
         @escape-key-down="(event: KeyboardEvent) => blocked && event.preventDefault()"

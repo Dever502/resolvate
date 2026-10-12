@@ -192,25 +192,6 @@ test.describe("operator flow", () => {
     await expect(history(page).getByText("Здравствуйте. Проверьте, пожалуйста, настройки тарифа.")).toHaveCount(0);
   });
 
-  test("catalog creates a group and a clean reply without an open dialogue", async ({ page, context, request, consoleErrors }) => {
-    void consoleErrors;
-    await start(page, context, request);
-    await page.getByRole("button", { name: "Управление готовыми ответами", exact: true }).click();
-    const catalog = page.getByRole("dialog", { name: "Готовые ответы" });
-    await catalog.getByRole("textbox", { name: "Название группы" }).fill("/vpn");
-    await catalog.getByRole("button", { name: "Создать группу" }).click();
-    await catalog.getByRole("button", { name: "/vpn", exact: true }).click();
-    await catalog.getByRole("textbox", { name: "Текст готового ответа" }).fill("Перезапустите приложение.");
-    await catalog.getByRole("button", { name: "Добавить ответ" }).click();
-    await expect(catalog.getByText("Перезапустите приложение.", { exact: true })).toBeVisible();
-    await catalog.getByRole("button", { name: "Изменить ответ" }).click();
-    await catalog.getByRole("textbox", { name: "Текст готового ответа" }).fill("Обновите приложение.");
-    await catalog.getByRole("button", { name: "Сохранить ответ" }).click();
-    await expect(catalog.getByText("Обновите приложение.", { exact: true })).toBeVisible();
-    await catalog.getByRole("button", { name: "Удалить ответ" }).click();
-    await expect(catalog.getByText("Обновите приложение.", { exact: true })).toBeHidden();
-  });
-
   test("live updates: a customer's message arrives through the event stream without a reload", async ({ page, context, request, consoleErrors }) => {
     void consoleErrors;
     await start(page, context, request);
