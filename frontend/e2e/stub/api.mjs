@@ -32,7 +32,10 @@ function message(fields) {
   };
 }
 
-/** Fresh data for a test. `many` adds enough dialogues for a second page. */
+/**
+ * Fresh data for a test. `many` adds enough dialogues for a second page; `catalog: "large"` adds
+ * enough reply groups and answers in "общее" for a second page of each.
+ */
 export function reset(options = {}) {
   const now = Date.now();
   const at = (minutes) => new Date(now - minutes * 60_000).toISOString();
@@ -78,15 +81,27 @@ export function reset(options = {}) {
   for (const ticket of tickets) {
     if (!messages.get(ticket.id).length) messages.get(ticket.id).push(message({ text: `Привет от ${ticket.name}`, time: ticket.created_at }));
   }
+  // Every project has a quick replies catalog; only p1 starts with answers.
+  const replyGroups = [{ id: "g1", name: "общее", revision: 0 }, { id: "g2", name: "оплата", revision: 0 }];
+  const replies = [
+    { id: "1", text: "Здравствуйте! Чем могу помочь?", group_id: "g1", revision: 0 },
+    { id: "2", text: "Спасибо за обращение, хорошего дня.", group_id: "g1", revision: 0 },
+    { id: "3", text: "Проверьте, пожалуйста, настройки тарифа.", group_id: "g2", revision: 0 },
+  ];
+  if (options.catalog === "large") {
+    for (let index = 1; index <= 55; index++) {
+      replyGroups.push({ id: `g${index + 2}`, name: `группа_${String(index).padStart(2, "0")}`, revision: 0 });
+      replies.push({ id: String(index + 3), text: `Ответ номер ${index}`, group_id: "g1", revision: 0 });
+    }
+  }
+  const catalog = (rows) => new Map(projects.map((item) => [item.id, item.id === "p1" ? rows : []]));
   state = {
     accounts, session, projects, tickets, messages, media,
     folders: new Map([["p1", [{ id: "f1", name: "VIP", revision: 0 }]], ["p2", []]]),
-    replyGroups: new Map([["p1", [{ id: "g1", name: "общее", revision: 0 }, { id: "g2", name: "оплата", revision: 0 }]], ["p2", []]]),
-    replies: new Map([["p1", [
-      { id: "r1", text: "Здравствуйте! Чем могу помочь?", group_id: "g1", revision: 0 },
-      { id: "r2", text: "Спасибо за обращение, хорошего дня.", group_id: "g1", revision: 0 },
-      { id: "r3", text: "Проверьте, пожалуйста, настройки тарифа.", group_id: "g2", revision: 0 },
-    ]], ["p2", []]]),
+    replyGroups: catalog(replyGroups),
+    replies: catalog(replies),
+    // Answer ids come from one sequence for the whole installation, like the quick_responses table.
+    lastReplyId: replies.length,
     // Everything up to t1's first page is read; the last two customer messages are unread.
     reads: new Map([["t1", at(6)]]),
     sent: new Map(),
@@ -195,6 +210,46 @@ function onboard(project) {
   state.folders.set(project, []);
   state.replyGroups.set(project, []);
   state.replies.set(project, []);
+}
+
+// Quick replies catalog: src/resolvate/quick_reply_catalog.py behind its console.py routes, with the
+// same checks in the same order. INVALID is FastAPI's answer when the route's types or lengths fail.
+const INVALID = "Проверьте введённые данные.";
+const BAD_QUERY = "Некорректный текст поиска.";
+const GROUP_NAME = "Группа: 1–48 букв, цифр или знаков подчёркивания, без пробелов.";
+const GROUP_EXISTS = "Такая группа уже существует.";
+const NO_GROUP = "Группа не найдена.";
+const NO_REPLY = "Ответ не найден.";
+const REPLY_TEXT = "Ответ: непустой текст до 3900 символов (эмодзи могут занимать два).";
+const STALE = "Запись изменена другим оператором. Обновите каталог.";
+// Python's str.isspace(): Unicode White_Space and the separators U+001C-U+001F; str.strip() removes them.
+const SPACE = String.raw`[\p{White_Space}\x1c-\x1f]+`;
+const EDGES = new RegExp(`^${SPACE}|${SPACE}$`, "gu");
+// Pydantic str fields: required, non-empty, max_length in code points.
+const isText = (value, max) => typeof value === "string" && value !== "" && [...value].length <= max;
+const isRevision = (value) => Number.isInteger(value) && value >= 0 && value <= 2 ** 31 - 1;
+// _valid_text(): no NUL and no lone surrogate.
+const validText = (value) => !/\0|[\ud800-\udfff]/u.test(value);
+// save(): not blank, at most 3900 UTF-16 units.
+const isReplyText = (text) => text.replace(EDGES, "") !== "" && text.length <= 3900 && validText(text);
+// ReplyBody: group_id (a UUID for the real route) and text.
+const isReplyBody = ({ group_id: groupId, text }) => typeof groupId === "string" && groupId !== "" && isText(text, 3900);
+// ORDER BY name, id in the production PostgreSQL (Alpine, musl): plain UTF-8 byte order.
+const byNameAndId = (a, b) => Buffer.compare(Buffer.from(a.name), Buffer.from(b.name)) || Buffer.compare(Buffer.from(a.id), Buffer.from(b.id));
+
+/**
+ * group_name(): NFKC, strip, one leading "/", lowercase; null when the result is not a valid name.
+ * toLowerCase() stands in for casefold(); they differ only for sharp s, Greek final sigma and Cherokee.
+ */
+function groupName(value) {
+  const name = value.normalize("NFKC").replace(EDGES, "").replace(/^\//, "").toLowerCase();
+  return [...name].length <= 48 && /^[\p{L}\p{N}_]+$/u.test(name) && /[\p{L}\p{N}]/u.test(name) ? name : null;
+}
+
+/** The `offset` query parameter (0 when absent), or null when the route rejects it. */
+function pageOffset(url) {
+  const value = url.searchParams.get("offset") ?? "0";
+  return /^\d+$/.test(value) && Number(value) <= 100_000 ? Number(value) : null;
 }
 
 /**
@@ -335,35 +390,91 @@ export async function handle(request, response, path, url, tools) {
     changed(projectId);
     return done(200, { ok: true });
   }
+  const groups = state.replyGroups.get(projectId);
+  const replies = state.replies.get(projectId);
   if (rest === "reply-groups" && request.method === "GET") {
-    const query = (url.searchParams.get("q") ?? "").toLowerCase().replace(/^\//, "");
-    const offset = Number(url.searchParams.get("offset") ?? 0);
-    return done(200, state.replyGroups.get(projectId).filter(group => group.name.includes(query)).slice(offset, offset + 50));
+    const query = url.searchParams.get("q") ?? "";
+    const offset = pageOffset(url);
+    if ([...query].length > 100 || offset === null) return done(422, { detail: INVALID });
+    if (!validText(query)) return done(422, { detail: BAD_QUERY });
+    const needle = query.normalize("NFKC").toLowerCase().replace(/^\//, "");
+    return done(200, groups.filter((group) => group.name.includes(needle)).sort(byNameAndId).slice(offset, offset + PAGE));
   }
   if (rest === "reply-groups" && post) {
-    const group = { id: randomUUID(), name: data().name.toLowerCase().replace(/^\//, ""), revision: 0 };
-    state.replyGroups.get(projectId).push(group);
-    return done(200, group);
+    const { name } = data();
+    if (!isText(name, 80)) return done(422, { detail: INVALID });
+    const normalized = groupName(name);
+    if (!normalized) return done(422, { detail: GROUP_NAME });
+    if (groups.some((group) => group.name === normalized)) return done(409, { detail: GROUP_EXISTS });
+    const created = { id: randomUUID(), name: normalized, revision: 0 };
+    groups.push(created);
+    changed(projectId);
+    return done(200, created);
   }
-  if (rest === "replies" && post) {
-    const reply = { id: randomUUID(), text: data().text, group_id: data().group_id, revision: 0 };
-    state.replies.get(projectId).push(reply);
-    return done(200, reply);
-  }
-  if ((match = /^replies\/([^/]+)\/(edit|delete)$/.exec(rest)) && post) {
-    const rows = state.replies.get(projectId);
-    const reply = rows.find(row => row.id === match[1]);
-    if (!reply) return done(404, { detail: "Ответ не найден." });
-    if (reply.revision !== data().revision) return done(409, { detail: "Ответ изменён." });
-    if (match[2] === "delete") rows.splice(rows.indexOf(reply), 1);
-    else Object.assign(reply, { text: data().text, group_id: data().group_id, revision: reply.revision + 1 });
-    return done(200, reply);
+  if ((match = /^reply-groups\/([^/]+)\/(rename|delete)$/.exec(rest)) && post) {
+    const renaming = match[2] === "rename";
+    const { name, revision } = data();
+    if (!isRevision(revision) || (renaming && !isText(name, 80))) return done(422, { detail: INVALID });
+    const normalized = renaming ? groupName(name) : null;
+    if (renaming && !normalized) return done(422, { detail: GROUP_NAME });
+    const group = groups.find((item) => item.id === match[1]);
+    if (!group) return done(404, { detail: NO_GROUP });
+    if (group.revision !== revision) return done(409, { detail: STALE });
+    const members = replies.filter((reply) => reply.group_id === group.id);
+    if (renaming) {
+      if (groups.some((item) => item !== group && item.name === normalized)) return done(409, { detail: GROUP_EXISTS });
+      // Even an unchanged name counts as a change; every answer's publication heading follows it.
+      group.name = normalized;
+      group.revision++;
+      for (const reply of members) reply.revision++;
+    } else {
+      if (members.length) return done(409, { detail: "Сначала перенесите или удалите ответы из группы." });
+      groups.splice(groups.indexOf(group), 1);
+    }
+    changed(projectId);
+    return done(200, { ok: true });
   }
   if (rest === "replies" && request.method === "GET") {
-    const query = (url.searchParams.get("q") ?? "").toLowerCase();
-    const group = url.searchParams.get("group_id");
-    const offset = Number(url.searchParams.get("offset") ?? 0);
-    return done(200, state.replies.get(projectId).filter((reply) => (!group || reply.group_id === group) && reply.text.toLowerCase().includes(query)).slice(offset, offset + 50));
+    const query = url.searchParams.get("q") ?? "";
+    const groupId = url.searchParams.get("group_id");
+    const offset = pageOffset(url);
+    // Without group_id the search spans all groups; an empty group_id is a malformed UUID.
+    if ([...query].length > 100 || groupId === "" || offset === null) return done(422, { detail: INVALID });
+    if (!validText(query)) return done(422, { detail: BAD_QUERY });
+    if (groupId !== null && !groups.some((group) => group.id === groupId)) return done(404, { detail: NO_GROUP });
+    const needle = query.toLowerCase();
+    return done(200, replies
+      .filter((reply) => (groupId === null || reply.group_id === groupId) && reply.text.toLowerCase().includes(needle))
+      .sort((a, b) => Number(a.id) - Number(b.id))
+      .slice(offset, offset + PAGE));
+  }
+  if (rest === "replies" && post) {
+    const input = data();
+    if (!isReplyBody(input)) return done(422, { detail: INVALID });
+    if (!isReplyText(input.text)) return done(422, { detail: REPLY_TEXT });
+    if (!groups.some((group) => group.id === input.group_id)) return done(404, { detail: NO_GROUP });
+    const created = { id: String(++state.lastReplyId), text: input.text, group_id: input.group_id, revision: 0 };
+    replies.push(created);
+    changed(projectId);
+    return done(200, created);
+  }
+  if ((match = /^replies\/([^/]+)\/(edit|delete)$/.exec(rest)) && post) {
+    const editing = match[2] === "edit";
+    const input = data();
+    // reply_id: int in the path, then the route's own range check.
+    const id = /^[+-]?\d+$/.test(match[1]) ? Number(match[1]) : null;
+    if (id === null || !isRevision(input.revision) || (editing && !isReplyBody(input))) return done(422, { detail: INVALID });
+    if (!(id > 0 && id <= 2 ** 31 - 1)) return done(422, { detail: "Неверный ID ответа." });
+    if (editing && !isReplyText(input.text)) return done(422, { detail: REPLY_TEXT });
+    if (editing && !groups.some((group) => group.id === input.group_id)) return done(404, { detail: NO_GROUP });
+    // Deleted answers are gone from the list: the backend's state "deleted" answers 404 too.
+    const reply = replies.find((row) => row.id === String(id));
+    if (!reply) return done(404, { detail: NO_REPLY });
+    if (reply.revision !== input.revision) return done(409, { detail: STALE });
+    if (editing) Object.assign(reply, { text: input.text, group_id: input.group_id, revision: reply.revision + 1 });
+    else replies.splice(replies.indexOf(reply), 1);
+    changed(projectId);
+    return done(200, editing ? reply : { ok: true });
   }
   if ((match = /^retry\/([^/]+)\/([^/]+)$/.exec(rest)) && post) return done(200, { ok: true });
   if ((match = /^media\/([^/]+)(\/thumbnail)?$/.exec(rest)) && request.method === "GET") {
