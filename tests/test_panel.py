@@ -1606,11 +1606,51 @@ async def test_different_panel_mutations_for_one_ticket_are_serialized(
             operator_telegram_id=43,
             action="revoke_subscription_link",
             idempotency_key="concurrent-revoke",
-            payload={},
+            payload={"identity_provider": "telegram", "identity_value": "123456789"},
         ),
     )
 
     assert sorted(results) == ["needs_reconcile", "reserved"]
+
+
+@pytest.mark.parametrize("revoke_first", [False, True], ids=["gift-first", "revoke-first"])
+async def test_either_panel_mutation_can_reserve_first(
+    database: Database, revoke_first: bool
+) -> None:
+    """Cover both winners deterministically, alongside the concurrent race test."""
+    service = PanelService(FakeRemnawave(remnawave_user()), database=database)
+    actions = [
+        ("extend_subscription", {"extend_days": 30}),
+        (
+            "revoke_subscription_link",
+            {"identity_provider": "telegram", "identity_value": "123456789"},
+        ),
+    ]
+    if revoke_first:
+        actions.reverse()
+    results = []
+    for action, payload in actions:
+        results.append(
+            await service._reserve_action(
+                ticket=ticket_view(),
+                operator_telegram_id=42,
+                action=action,
+                idempotency_key=f"first-winner-{action}",
+                payload=payload,
+            )
+        )
+    assert results == ["reserved", "needs_reconcile"]
+    async with database.session() as session:
+        stored = (await session.scalars(select(OperatorAction))).all()
+        intents = (await session.scalars(select(NotificationOutbox))).all()
+    assert len(stored) == 1
+    assert stored[0].action == f"remnawave_{actions[0][0]}"
+    assert len(intents) == int(revoke_first)
+    if revoke_first:
+        assert intents[0].operator_action_id == stored[0].id
+        assert intents[0].recipient_identity_provider == "telegram"
+        assert intents[0].recipient_identity_value == "123456789"
+        assert intents[0].status == NotificationStatus.AWAITING_PAYLOAD
 
 
 @pytest.mark.asyncio
