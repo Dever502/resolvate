@@ -74,6 +74,7 @@ function takeCurrent(): void {
         :id="id"
         ref="field"
         v-model="text"
+        :readonly="busy"
         class="catalog-textarea"
         rows="9"
         :aria-invalid="problem ? 'true' : undefined"

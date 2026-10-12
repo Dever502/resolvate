@@ -62,4 +62,23 @@ describe("reply editor", () => {
     await wrapper.get('[role="group"] button').trigger("click");
     expect(wrapper.get("textarea").element.value).toBe("Версия коллеги");
   });
+
+  it("locks the submitted text while saving and unlocks the retained draft after a refusal", async () => {
+    const wrapper = render();
+    const field = wrapper.get("textarea");
+    await field.setValue("Сохраняемый черновик");
+    await wrapper.get("form").trigger("submit");
+    expect(wrapper.emitted("save")).toEqual([["Сохраняемый черновик"]]);
+    await wrapper.setProps({ busy: true });
+    expect(field.element.readOnly).toBe(true);
+    expect(field.element.disabled).toBe(false);
+    await wrapper.get("form").trigger("submit");
+    expect(wrapper.emitted("save")).toHaveLength(1);
+    await wrapper.setProps({ busy: false, error: "Нет связи с сервером." });
+    expect(field.element.readOnly).toBe(false);
+    expect(field.element.value).toBe("Сохраняемый черновик");
+    await field.setValue("Исправленный черновик");
+    await wrapper.get("form").trigger("submit");
+    expect(wrapper.emitted("save")?.at(-1)).toEqual(["Исправленный черновик"]);
+  });
 });

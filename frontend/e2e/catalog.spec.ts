@@ -611,6 +611,39 @@ test.describe("quick replies catalog", () => {
     await expect(editor(catalog)).toHaveValue("Тариф меняется в настройках профиля.");
   });
 
+  for (const mode of ["create", "edit"] as const) {
+    test(`saving ${mode}: the submitted text stays readonly until the slow request completes`, async ({ page, context, request, consoleErrors }) => {
+      void consoleErrors;
+      await start(page, context, request);
+      const catalog = await openCatalog(page);
+      const general = detail(catalog, "общее");
+      if (mode === "create") await general.getByRole("button", { name: "Добавить ответ" }).click();
+      else await replyAction(page, general, "Здравствуйте! Чем могу помочь?", "Изменить");
+      const field = editor(catalog);
+      await field.fill("Текст для сохранения");
+      let release!: () => void;
+      const pending = new Promise<void>((resolve) => { release = resolve; });
+      await page.route(mode === "create" ? `**${API}/replies` : `**${API}/replies/1/edit`, async (route) => {
+        await pending;
+        await route.fallback();
+      }, { times: 1 });
+      try {
+        await catalog.locator('form button[type="submit"]').click();
+        await expect(field).toHaveJSProperty("readOnly", true);
+        await expect(field).toBeEnabled();
+        await field.focus();
+        await page.keyboard.press("End");
+        await page.keyboard.type(" accidental unsaved change");
+        await expect(field).toHaveValue("Текст для сохранения");
+        await expect(field).toBeFocused();
+      } finally {
+        release();
+      }
+      await expect(field).toHaveCount(0);
+      await expect(card(general, "Текст для сохранения")).toBeVisible();
+    });
+  }
+
   test("errors: a failed save keeps the draft, a repeated click sends once, a failed refresh does not undo a save", async ({ page, context, request, consoleErrors }) => {
     void consoleErrors;
     await start(page, context, request);
