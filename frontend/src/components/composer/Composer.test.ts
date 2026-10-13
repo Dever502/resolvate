@@ -20,7 +20,7 @@ describe("grouped quick replies", () => {
     useProjectsStore().currentId = "p1";
     const chat = useChatStore();
     chat.ticketId = "t1";
-    chat.drafts.set("t1", { text: "", file: null, key: null });
+    chat.drafts.set("t1", { text: "", file: null });
     vi.useFakeTimers();
   });
   afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
@@ -74,7 +74,7 @@ describe("composer attachments", () => {
     useProjectsStore().currentId = "p1";
     const chat = useChatStore();
     chat.ticketId = "t1";
-    chat.drafts.set("t1", { text: "Черновик", file: null, key: "previous-key" });
+    chat.drafts.set("t1", { text: "Черновик", file: null });
     vi.spyOn(useTicketsStore(), "sync").mockResolvedValue();
     vi.spyOn(useSessionStore(), "api").mockImplementation(async (path) => {
       if (path.endsWith("/sync")) return { items: [], order: [], removed: [], before: null, has_older: false };
@@ -92,49 +92,71 @@ describe("composer attachments", () => {
   }
   const pdf = (name = "report.pdf") => new File(["%PDF-test"], name, { type: "application/pdf" });
 
-  it("selects, replaces and removes without changing text; edits clear the idempotency key", async () => {
+  it("selects, replaces and removes without changing text or starting a send", async () => {
     const wrapper = renderComposer();
     const chat = useChatStore();
     await attach(wrapper, pdf());
     expect(wrapper.text()).toContain("report.pdf");
-    expect(chat.draft?.key).toBeNull();
+    expect(chat.attempt).toBeNull();
     const replacement = pdf("new.pdf");
     await attach(wrapper, replacement);
     expect(wrapper.text()).not.toContain("report.pdf");
     expect(toRaw(chat.draft?.file)).toBe(replacement);
     await wrapper.get('[aria-label="Убрать вложение"]').trigger("click");
     expect(wrapper.find(".attachment-preview").exists()).toBe(false);
-    expect(chat.draft).toEqual({ text: "Черновик", file: null, key: null });
+    expect(chat.draft).toEqual({ text: "Черновик", file: null });
   });
 
-  it("keeps the previous file and key when replacement exceeds 20 MiB", async () => {
+  it("keeps the previous file and an unresolved attempt when a replacement exceeds 20 MiB", async () => {
     const wrapper = renderComposer();
     const valid = pdf();
     Object.defineProperty(valid, "size", { value: MAX_FILE_BYTES });
     await attach(wrapper, valid);
     const chat = useChatStore();
-    chat.draft!.key = "retry-key";
+    const pending = { key: "retry-key", project: "p1", ticket: "t1", text: "Черновик", file: valid, state: "unknown" as const, reason: "Нет связи с сервером.", tries: 1 };
+    chat.attempts.set("p1/t1", pending);
     const large = pdf("too-large.pdf");
     Object.defineProperty(large, "size", { value: MAX_FILE_BYTES + 1 });
     await attach(wrapper, large);
     expect(toRaw(chat.draft?.file)).toBe(valid);
-    expect(chat.draft?.key).toBe("retry-key");
+    expect(chat.attempt).toEqual(pending);
     expect(wrapper.text()).toContain("report.pdf");
     expect(wrapper.text()).not.toContain("too-large.pdf");
+  });
+
+  it("gives focus back to the reply box when the history settles the attempt whose banner had it", async () => {
+    const wrapper = mount(TooltipProvider, { slots: { default: () => h(Composer) }, attachTo: document.body });
+    const chat = useChatStore();
+    chat.attempts.set("p1/t1", { key: "k", project: "p1", ticket: "t1", text: "Черновик", file: null, state: "unknown", reason: "Нет связи с сервером.", tries: 1 });
+    await flushPromises();
+    const retryButton = wrapper.get(".send-attempt .secondary").element as HTMLButtonElement;
+    retryButton.focus();
+    expect(document.activeElement).toBe(retryButton);
+    chat.attempts.delete("p1/t1");
+    await flushPromises();
+    expect(wrapper.find(".send-attempt").exists()).toBe(false);
+    expect(document.activeElement).toBe(wrapper.get("textarea").element);
+    wrapper.unmount();
   });
 
   it("restores the dialogue's attachment and drops previews on reset", async () => {
     const wrapper = renderComposer();
     const chat = useChatStore();
     await attach(wrapper, pdf("anna.pdf"));
-    chat.drafts.set("t2", { text: "Другой текст", file: pdf("boris.pdf"), key: "retry" });
+    const boris = pdf("boris.pdf");
+    chat.drafts.set("t2", { text: "Другой текст", file: boris });
+    chat.attempts.set("p1/t2", { key: "retry", project: "p1", ticket: "t2", text: "Другой текст", file: boris, state: "unknown", reason: "Нет связи с сервером.", tries: 1 });
     chat.ticketId = "t2";
     await flushPromises();
     expect(wrapper.text()).toContain("boris.pdf");
     expect(wrapper.text()).not.toContain("anna.pdf");
-    expect(chat.draft?.key).toBe("retry");
+    // The attempt belongs to its own dialogue only.
+    expect(chat.attempt?.key).toBe("retry");
+    expect(wrapper.find(".send-attempt").exists()).toBe(true);
     chat.ticketId = "t1";
     await flushPromises();
+    expect(chat.attempt).toBeNull();
+    expect(wrapper.find(".send-attempt").exists()).toBe(false);
     expect(wrapper.text()).toContain("anna.pdf");
     expect(wrapper.get("textarea").element.value).toBe("Черновик");
     chat.reset();
@@ -142,7 +164,7 @@ describe("composer attachments", () => {
     expect(wrapper.find(".attachment-preview").exists()).toBe(false);
   });
 
-  it("keeps attachment and key on failure, disables controls while sending, clears on success", async () => {
+  it("keeps the attempt (text, file and key) when its answer is lost, disables controls while sending, clears on success", async () => {
     const wrapper = renderComposer();
     const chat = useChatStore();
     const file = pdf();
@@ -155,22 +177,28 @@ describe("composer attachments", () => {
     await wrapper.get("textarea").trigger("keydown", { key: "Enter", shiftKey: true });
     expect(api).not.toHaveBeenCalled();
     await wrapper.get("textarea").trigger("keydown", { key: "Enter" });
-    const key = chat.draft!.key;
+    const key = chat.attempt!.key;
     expect(key).toBeTruthy();
+    expect(chat.attempt?.state).toBe("sending");
     expect(wrapper.get('[aria-label="Убрать вложение"]').attributes("disabled")).toBeDefined();
     expect(wrapper.get('[aria-label="Прикрепить файл"]').attributes("disabled")).toBeDefined();
     expect(wrapper.get("textarea").attributes("disabled")).toBeDefined();
     reject(new Error("Send failed"));
     await flushPromises();
-    expect(chat.draft).toEqual({ text: "Черновик", file, key });
+    expect(toRaw(chat.draft)).toEqual({ text: "Черновик", file });
+    expect(chat.attempt).toMatchObject({ key, state: "unknown", text: "Черновик", reason: "Send failed" });
+    expect(wrapper.get(".send-attempt").text()).toContain("Результат отправки неизвестен.");
     expect(wrapper.text()).toContain("report.pdf");
+    // The same text and file again: the same attempt under its key.
     await wrapper.get("form").trigger("submit");
     await flushPromises();
     const calls = api.mock.calls.filter(([path]) => path.endsWith("/send"));
     expect(calls.map(([, options]) => options?.key)).toEqual([key, key]);
     const sentFile = calls[1]![1]?.form?.get("file") as File;
     expect([sentFile.name, sentFile.type, await sentFile.text()]).toEqual([file.name, file.type, await file.text()]);
-    expect(chat.draft).toEqual({ text: "", file: null, key: null });
+    expect(chat.draft).toEqual({ text: "", file: null });
+    expect(chat.attempt).toBeNull();
     expect(wrapper.find(".attachment-preview").exists()).toBe(false);
+    expect(wrapper.find(".send-attempt").exists()).toBe(false);
   });
 });

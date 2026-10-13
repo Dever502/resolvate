@@ -9,9 +9,11 @@ import Icon from "../ui/Icon.vue";
 import IconButton from "../ui/IconButton.vue";
 import QuickReplies from "./QuickReplies.vue";
 import AttachmentPreview from "./AttachmentPreview.vue";
+import SendAttemptNotice from "./SendAttemptNotice.vue";
 
-// The reply box. Every dialogue keeps its own draft (text, file and the idempotency key of the
-// last attempt; any edit drops the key, a failed send keeps it). Enter sends, Shift+Enter starts a
+// The reply box. Every dialogue keeps its own draft (text and file). A send is an attempt of its
+// own (stores/chat.ts): one whose answer never came stays above the box until it is sent again under
+// its key or given up, and editing the draft never changes it. Enter sends, Shift+Enter starts a
 // new line, IME composition is left alone. "/" at the start searches the quick replies: arrows
 // move through them, Enter inserts one, Esc closes the list. Focus stays in the text field.
 const ACCEPT = "image/jpeg,image/png,image/webp,video/mp4,video/quicktime,application/pdf,audio/ogg,audio/opus,.ogg,.opus";
@@ -23,6 +25,7 @@ const projects = useProjectsStore();
 const workspace = useWorkspaceStore();
 const field = useTemplateRef<HTMLTextAreaElement>("field");
 const picker = useTemplateRef<HTMLInputElement>("picker");
+const attemptNotice = useTemplateRef<{ focusRetry: () => void }>("attempt-notice");
 const listId = useId();
 const repliesOpen = ref(false);
 const replies = ref<QuickReply[]>([]);
@@ -41,6 +44,8 @@ let sequence = 0;
 
 const text = computed(() => chat.draft?.text ?? "");
 const file = computed(() => chat.draft?.file ?? null);
+/** An attempt whose answer never came; it stays shown while it is being sent again. */
+const unresolved = computed(() => (chat.attempt && (chat.attempt.state === "unknown" || chat.attempt.reason) ? chat.attempt : null));
 
 /** Grows with the text up to 160 px (a CSSOM height, allowed by the console CSP). */
 function resize(): void {
@@ -173,11 +178,34 @@ function onKeyDown(event: KeyboardEvent): void {
 async function submit(): Promise<void> {
   if (chat.sending) return;
   closeReplies();
-  await chat.send();
+  const outcome = await chat.send();
   await nextTick();
   resize();
+  // A changed draft waits for the earlier attempt: its choice gets the focus.
+  if (outcome === "blocked") attemptNotice.value?.focusRetry();
+  else field.value?.focus();
+}
+
+async function retryAttempt(): Promise<void> {
+  await chat.retrySend();
+  await nextTick();
+  resize();
+  if (unresolved.value) attemptNotice.value?.focusRetry();
+  else field.value?.focus();
+}
+
+function forgetAttempt(): void {
+  chat.forgetAttempt();
   field.value?.focus();
 }
+
+// The history settled the attempt while its banner had focus: focus goes back to the reply box.
+watch(unresolved, async (value, old) => {
+  if (value || !old) return;
+  const active = document.activeElement;
+  await nextTick();
+  if (!active || active === document.body || !active.isConnected) field.value?.focus();
+});
 
 function onFile(event: Event): void {
   const input = event.target as HTMLInputElement;
@@ -203,6 +231,8 @@ onUnmounted(closeReplies);
       :group="group?.name ?? ''" :loading="loading" :more="hasMore" :query="query" :button-mode="buttonMode"
       @choose="choose" @hover="active = $event" @back="back" @close="closeReplies"
       @search="search" @more="search(query, true)" @keydown="onKeyDown" />
+    <SendAttemptNotice v-if="unresolved" ref="attempt-notice" :attempt="unresolved" :sending="chat.sending"
+      @retry="retryAttempt" @forget="forgetAttempt" />
     <AttachmentPreview v-if="file" :file="file" :disabled="chat.sending" @remove="chat.attach(null)" />
     <form class="composer" @submit.prevent="submit">
       <IconButton

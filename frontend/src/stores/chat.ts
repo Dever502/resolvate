@@ -5,9 +5,19 @@ import type { FolderAssignment, Message, MessagePage, TicketDetail, TicketHeadin
 import { useProjectsStore } from "./projects";
 import { useSessionStore } from "./session";
 import { known, useTicketsStore } from "./tickets";
-import { useWorkspaceStore } from "./workspace";
+import { FAILED, useWorkspaceStore } from "./workspace";
 
 export const UNCERTAIN = "Результат одной из отправок неизвестен. Проверьте Telegram перед повторной отправкой.";
+/** How long a send waits for the server's answer, plus the upload of a file at UPLOAD_RATE bytes a second. */
+export const SEND_TIMEOUT = 30_000;
+export const UPLOAD_RATE = 32 * 1024;
+/** The deadline of one send: a slow connection still gets its file through, a hung request ends. */
+export function sendDeadline(file: File | null): number {
+  return SEND_TIMEOUT + (file ? Math.ceil(file.size / UPLOAD_RATE) * 1000 : 0);
+}
+export const SEND_BLOCKED = "Сначала повторите предыдущую отправку или откажитесь от неё: её результат неизвестен.";
+export const SEND_FOUND = "Сообщение из отправки с неизвестным результатом есть в истории: сервер его принял.";
+export const SEND_REFRESH_FAILED = "Сообщение принято сервером, но историю не удалось обновить";
 export const FILE_TOO_LARGE = "Файл больше 20 МБ.";
 export const MAX_FILE_BYTES = 20 * 1024 * 1024;
 /** A dialogue opened again within this time shows its cached history at once, then refreshes it. */
@@ -15,11 +25,45 @@ export const CACHE_AGE = 120_000;
 export const CACHE_TICKETS = 20;
 export const CACHE_MESSAGES = 200;
 
-/** Text and file waiting to be sent. `key` makes a retried send idempotent; any edit drops it. */
+/** What the operator is writing in one dialogue: editable at any time. */
 export interface Draft {
   text: string;
   file: File | null;
-  key: string | null;
+}
+
+/**
+ * One press of "Отправить": a frozen copy of the text and the file with the idempotency key they went
+ * under. Kept while its outcome is unknown (no answer in time, a lost connection, a proxy error): a
+ * retry sends exactly this copy under this key, so the server returns the message it already saved or
+ * saves it once. Editing the draft never changes it; the server refuses the key with other content.
+ */
+export interface SendAttempt {
+  key: string;
+  project: string;
+  ticket: string;
+  text: string;
+  file: File | null;
+  state: "sending" | "unknown";
+  /** Why the outcome is unknown: the connection, the deadline or the server's answer. */
+  reason: string;
+  /** Requests sent for this attempt so far. */
+  tries: number;
+}
+
+/**
+ * How a send ended: the server took the message, refused it (nothing saved, the draft stays), or its
+ * answer never came. "blocked": an attempt with an unknown outcome waits for a retry or for being
+ * given up first; "skipped": nothing to send or another send runs.
+ */
+export type SendOutcome = "accepted" | "rejected" | "unknown" | "blocked" | "skipped";
+
+/**
+ * Only the application's own refusal (4xx) of an attempt's first request proves nothing was saved;
+ * anything else may have been. A retry refused (rate limit, a gone project, a file check that timed
+ * out) proves nothing about the request before it.
+ */
+function refused(error: unknown): boolean {
+  return error instanceof ApiError && error.status >= 400 && error.status < 500;
 }
 
 interface Snapshot {
@@ -59,8 +103,11 @@ export const useChatStore = defineStore("chat", () => {
   /** Address of the image shown in the viewer; closed with the dialogue. */
   const viewer = ref<string | null>(null);
   const drafts = reactive(new Map<string, Draft>());
+  /** Attempts with an unknown outcome (or still running), by project and dialogue; they outlive a project switch. */
+  const attempts = reactive(new Map<string, SendAttempt>());
   const cache = new Map<string, Snapshot>();
   let epoch = 0;
+  let signedIn = 0;
   let detailRequest = 0;
   let messageRequest = 0;
   let historyUpdatedAt = 0;
@@ -72,6 +119,12 @@ export const useChatStore = defineStore("chat", () => {
   const closed = computed(() => (detail.value ?? heading.value).status === "closed");
 
   const project = (): string | null => useProjectsStore().currentId;
+  const slot = (projectId: string, id: string): string => `${projectId}/${id}`;
+  /** The open dialogue's attempt that has not ended yet. */
+  const attempt = computed(() => {
+    const projectId = project();
+    return ticketId.value && projectId ? attempts.get(slot(projectId, ticketId.value)) ?? null : null;
+  });
   const workspace = () => useWorkspaceStore();
 
   function touched(kind: HistoryChange): void {
@@ -105,7 +158,7 @@ export const useChatStore = defineStore("chat", () => {
     folderMove.status = "";
     viewer.value = null;
     lastRead = "";
-    if (!drafts.has(id)) drafts.set(id, { text: "", file: null, key: null });
+    if (!drafts.has(id)) drafts.set(id, { text: "", file: null });
     const cached = cache.get(id);
     const snapshot = cached && Date.now() - cached.updatedAt < CACHE_AGE ? cached : null;
     messages.value = new Map(snapshot?.messages);
@@ -182,6 +235,12 @@ export const useChatStore = defineStore("chat", () => {
     historyUpdatedAt = Date.now();
     touched(older ? "older" : first ? "initial" : "update");
     if ([...next.values()].some((item) => item.uncertain)) workspace().show(UNCERTAIN);
+    // A message the console sent carries its key: an attempt whose answer was lost was taken after all.
+    const pending = attempt.value;
+    if (pending?.state === "unknown" && [...next.values()].some((item) => item.command === pending.key)) {
+      accepted(pending);
+      workspace().show(SEND_FOUND);
+    }
   }
 
   async function loadOlder(): Promise<void> {
@@ -218,39 +277,107 @@ export const useChatStore = defineStore("chat", () => {
       return false;
     }
     current.file = file;
-    current.key = null;
     return true;
   }
 
   function edit(text: string): void {
     const current = draft.value;
-    if (!current) return;
-    current.text = text;
-    current.key = null;
+    if (current) current.text = text;
   }
 
-  async function send(): Promise<void> {
+  /**
+   * Sends the open dialogue's draft as a new attempt. An attempt whose outcome is unknown comes first:
+   * the same text and file again send it once more under its key, anything else waits for it.
+   */
+  async function send(): Promise<SendOutcome> {
     const id = ticketId.value;
+    const projectId = project();
     const current = draft.value;
-    if (!id || !current || sending.value) return;
-    if (!current.text.trim() && !current.file) return;
-    current.key ||= crypto.randomUUID();
+    if (!id || !projectId || !current || sending.value) return "skipped";
+    const pending = attempts.get(slot(projectId, id));
+    if (pending) {
+      if (pending.text === current.text && pending.file === current.file) return deliver(pending);
+      workspace().show(SEND_BLOCKED);
+      return "blocked";
+    }
+    if (!current.text.trim() && !current.file) return "skipped";
+    attempts.set(slot(projectId, id), {
+      key: crypto.randomUUID(), project: projectId, ticket: id, text: current.text, file: current.file,
+      state: "sending", reason: "", tries: 0,
+    });
+    return deliver(attempts.get(slot(projectId, id))!);
+  }
+
+  /** Sends the open dialogue's attempt with an unknown outcome again: its own text, file and key. */
+  async function retrySend(): Promise<SendOutcome> {
+    const pending = attempt.value;
+    if (!pending || sending.value) return "skipped";
+    return deliver(pending);
+  }
+
+  /** The operator gives up an attempt with an unknown outcome (for example, seen in Telegram); the draft stays. */
+  function forgetAttempt(): void {
+    const pending = attempt.value;
+    if (pending?.state === "unknown") attempts.delete(slot(pending.project, pending.ticket));
+  }
+
+  /** One request of an attempt, bounded by its deadline; one at a time. */
+  async function deliver(pending: SendAttempt): Promise<SendOutcome> {
+    const session0 = signedIn;
     const form = new FormData();
-    form.set("text", current.text);
-    if (current.file) form.set("file", current.file);
+    form.set("text", pending.text);
+    if (pending.file) form.set("file", pending.file);
+    const timeout = sendDeadline(pending.file);
+    const controller = new AbortController();
+    const deadline = setTimeout(() => controller.abort(), timeout);
+    pending.state = "sending";
+    pending.tries++;
     sending.value = true;
+    workspace().show();
     try {
-      await session.api(`tickets/${id}/send`, { method: "POST", form, key: current.key }, project());
-      drafts.delete(id);
-      if (ticketId.value === id) drafts.set(id, { text: "", file: null, key: null });
-      workspace().show();
-      await syncMessages();
-      await useTicketsStore().sync();
-      await syncDetail();
+      await session.api(`tickets/${pending.ticket}/send`, {
+        method: "POST", form, key: pending.key, signal: controller.signal,
+      }, pending.project);
     } catch (error) {
-      workspace().fail(error);
+      if (session0 !== signedIn) return "skipped";
+      if (refused(error) && pending.tries === 1) {
+        // Nothing was saved: the attempt is over and the draft is there to be fixed.
+        attempts.delete(slot(pending.project, pending.ticket));
+        workspace().fail(error);
+        return "rejected";
+      }
+      pending.state = "unknown";
+      const seconds = Math.round(timeout / 1000);
+      pending.reason = controller.signal.aborted
+        ? `Сервер не ответил за ${seconds >= 120 ? `${Math.round(seconds / 60)} мин` : `${seconds} с`}.`
+        : error instanceof Error && error.message ? error.message : FAILED;
+      return "unknown";
     } finally {
-      sending.value = false;
+      clearTimeout(deadline);
+      if (session0 === signedIn) sending.value = false;
+    }
+    if (session0 !== signedIn) return "skipped";
+    accepted(pending);
+    // The message is saved: a history or list that fails to reload says so, never as a failed send.
+    try {
+      if (ticketId.value === pending.ticket && project() === pending.project) {
+        await syncMessages();
+        await useTicketsStore().sync();
+        await syncDetail();
+      }
+    } catch (error) {
+      if (session0 === signedIn) workspace().show(`${SEND_REFRESH_FAILED}: ${error instanceof Error && error.message ? error.message : FAILED}`);
+    }
+    return "accepted";
+  }
+
+  /** The server took the attempt: it ends, and so does a draft that still holds just what was sent. */
+  function accepted(pending: SendAttempt): void {
+    attempts.delete(slot(pending.project, pending.ticket));
+    if (project() !== pending.project) return;
+    const current = drafts.get(pending.ticket);
+    if (current && current.text === pending.text && current.file === pending.file) {
+      drafts.set(pending.ticket, { text: "", file: null });
     }
   }
 
@@ -336,12 +463,17 @@ export const useChatStore = defineStore("chat", () => {
     lastRead = "";
     touched("initial");
   }
-  session.onSessionEnd(reset);
+  // Attempts outlive a project switch (reset), not the session: another account may sign in.
+  session.onSessionEnd(() => {
+    signedIn++;
+    reset();
+    attempts.clear();
+  });
 
   return {
     ticketId, detail, heading, messages, ordered, before, hasOlder, loadingOlder, opening, sending,
-    lifecycleBusy, unavailable, folderMove, change, viewer, drafts, draft, closed,
-    open, syncDetail, syncMessages, loadOlder, markRead, attach, edit, send, retry, toggleClosed,
-    moveToFolder, reset,
+    lifecycleBusy, unavailable, folderMove, change, viewer, drafts, draft, attempts, attempt, closed,
+    open, syncDetail, syncMessages, loadOlder, markRead, attach, edit, send, retrySend, forgetAttempt, retry,
+    toggleClosed, moveToFolder, reset,
   };
 });

@@ -356,6 +356,9 @@
   .send { flex-shrink: 0; min-height: 40px; padding: .5rem .875rem; }
   .send .icon { width: 1rem; height: 1rem; }
   .composer-hint { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .75rem; margin: .625rem .25rem 0; color: var(--muted); font-size: .75rem; }
+  /* A send whose answer never came: above the reply box until it is sent again or given up. */
+  .send-attempt { display: grid; gap: .5rem; margin-bottom: .625rem; padding: .75rem .875rem; border: 1px solid var(--warning-border); border-radius: var(--radius-control); background: var(--warning-bg); color: var(--warning-text); font-size: .875rem; }
+  .send-attempt-copy { margin: 0; overflow: hidden; color: var(--text); text-overflow: ellipsis; white-space: nowrap; }
   .attachment-preview { display: flex; align-items: center; gap: .75rem; min-width: 0; margin-bottom: .625rem; padding: .5rem; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--canvas); font-size: .8125rem; }
   .attachment-preview-art { display: grid; place-items: center; flex: 0 0 80px; height: 56px; overflow: hidden; border-radius: 5px; color: var(--muted); }
   .attachment-preview-art canvas { display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; object-fit: contain; }
