@@ -56,7 +56,7 @@ watch(() => tickets.folderFilter, async () => {
       </TabsTrigger>
     </TabsList>
     <IconButton
-      class="quiet min-h-11 min-w-11 shrink-0 p-2"
+      class="quiet shrink-0 p-2"
       label="Управление общими папками"
       :disabled="!projects.currentId"
       @click="managing = true"

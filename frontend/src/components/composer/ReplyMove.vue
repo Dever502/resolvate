@@ -77,7 +77,8 @@ onBeforeUnmount(() => {
 <template>
   <form class="flex min-h-0 flex-1 flex-col" novalidate @submit.prevent="move">
     <div class="catalog-pane-head">
-      <button type="button" class="quiet min-w-11 narrow:-ml-2" :aria-disabled="busy || undefined"
+      <!-- A 44×44 hit area in the 44×36 room the head has for it. -->
+      <button type="button" class="quiet -my-1 min-h-11 min-w-11 narrow:-ml-2" :aria-disabled="busy || undefined"
         :aria-label="`Назад к /${from.name}`" @click="!busy && emit('cancel')"><Icon name="back" /></button>
       <h3 class="m-0 min-w-0 flex-1 truncate text-base">Перенос ответа из /{{ from.name }}</h3>
     </div>

@@ -31,7 +31,8 @@ function choose(id: string): void {
       <span>{{ initials(projects.current?.name || "R") }}</span>
       <img v-if="logo && !logoFailed" :src="logo" alt="" class="project-logo" @error="logoFailed = true" />
     </div>
-    <div class="min-w-0 flex-1">
+    <!-- The menu button reaches up over this caption (app.css, .project-picker): with it, a hit area of 44 px. -->
+    <div class="project-picker min-w-0 flex-1">
       <span class="mb-0.5 block text-xs text-chrome-muted" aria-hidden="true">Текущий проект</span>
       <MenuSelect
         tone="chrome"

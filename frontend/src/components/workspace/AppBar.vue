@@ -34,13 +34,14 @@ watch(() => projects.currentId, () => { catalogOpen.value = false; });
       <span class="brand-mark bg-white text-selection" aria-hidden="true"><Icon name="resolve" /></span>
       Resolvate
     </div>
-    <!-- On narrow screens this group dissolves into the grid: its items take the outer tracks. -->
+    <!-- On narrow screens this group dissolves into the grid: its items take the outer tracks. Both buttons are
+         44 px tall hit areas; their negative margins keep the bar's rows as they were. -->
     <div class="col-start-3 row-start-1 flex min-w-0 items-center justify-self-end gap-1 narrow:contents">
       <AdminMenu
         class="narrow:col-start-1 narrow:row-start-1 narrow:justify-self-start"
         :class="{ 'narrow:hidden': workspace.dialogueOpen }"
       />
-      <button type="button" class="quiet text-sm narrow:col-start-3 narrow:row-start-1 narrow:justify-self-end"
+      <button type="button" class="quiet -my-1 min-h-11 text-sm narrow:col-start-3 narrow:row-start-1 narrow:justify-self-end"
         :class="{ 'narrow:hidden': workspace.dialogueOpen }" aria-label="Управление готовыми ответами"
         :disabled="!projects.currentId" @click="catalogOpen = true"><span><span class="narrow:hidden">Готовые </span>ответы</span></button>
     </div>

@@ -272,7 +272,7 @@
   .sidebar-resizer[aria-disabled="true"] { cursor: default; }
 
   /* Choice menus (ui/MenuSelect.vue): the button and the Reka menu. */
-  .menu-select { display: flex; align-items: center; gap: .375rem; width: 100%; min-height: 36px; padding: .375rem .625rem; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); color: var(--text); font-size: .8125rem; }
+  .menu-select { display: flex; align-items: center; gap: .375rem; width: 100%; min-height: 44px; padding: .375rem .625rem; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); color: var(--text); font-size: .8125rem; }
   .menu-select:hover:not(:disabled) { background: var(--hover); }
   /* The app bar: the chevron follows the name at a fixed gap and turns up while Reka marks the button
      open; the button keeps the full width of its column as the hit area. */
@@ -306,6 +306,10 @@
   .account-logout[aria-disabled="true"] { opacity: .55; cursor: wait; }
   .account-error { margin: .5rem .625rem; font-size: .8125rem; overflow-wrap: anywhere; }
 
+  /* The current project's menu button (projects/ProjectPicker.vue) reaches up over its 1.125rem caption: the two
+     lines make one hit area of 44 px or more and the bar keeps its height. Positioned, the button stays above the
+     caption's text for the pointer. */
+  .project-picker .menu-select { position: relative; margin-top: -1.125rem; padding-top: 1.25rem; }
   /* Project emblem in the app bar: the logo over the project's initial. */
   .project-emblem { position: relative; display: grid; place-items: center; width: 2.375rem; height: 2.375rem; flex: 0 0 auto; overflow: hidden; border-radius: 10px; background: #3b4b69; color: #fff; font-size: 1.0625rem; font-weight: 600; }
   .project-logo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: var(--surface); }
@@ -315,7 +319,7 @@
   .search-field .icon { position: absolute; top: 50%; left: .6875rem; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
   .search-field input { width: 100%; min-height: 36px; padding: .5rem .625rem .5rem 2.25rem; border: 1px solid transparent; border-radius: var(--radius-control); background: var(--subtle); color: var(--text); font-size: .875rem; }
   .folder-tabs { display: flex; flex: 1; min-width: 0; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
-  .folder-tab { position: relative; flex: 0 0 auto; max-width: 11rem; min-height: 44px; padding: .625rem .75rem; overflow: hidden; border: 0; border-radius: 0; background: transparent; color: var(--muted); font-size: .9375rem; font-weight: 500; white-space: nowrap; text-overflow: ellipsis; }
+  .folder-tab { position: relative; flex: 0 0 auto; max-width: 11rem; min-width: 44px; min-height: 44px; padding: .625rem .75rem; overflow: hidden; border: 0; border-radius: 0; background: transparent; color: var(--muted); font-size: .9375rem; font-weight: 500; white-space: nowrap; text-overflow: ellipsis; }
   .folder-tab:hover:not(:disabled) { background: var(--subtle); }
   .folder-tab:not([data-state="active"]):hover:not(:disabled) { color: var(--text); }
   .folder-tab[data-state="active"] { color: var(--accent); font-weight: 600; }
@@ -361,15 +365,16 @@
   .sticker-preview img, .sticker-preview video, .sticker-preview canvas { display: block; width: 100%; height: 100%; margin: 0; border-radius: 0; object-fit: contain; }
   .customer-card { width: 290px; flex-shrink: 0; overflow: auto; padding: 1.5rem; border-left: 1px solid var(--border); background: var(--canvas); }
 
-  /* Composer. */
+  /* Composer. Its buttons are 44×44 hit areas in the room that 40 px buttons had: with 3 px padding, 5 px gaps
+     and the text field 2 px off the row's edges, the box keeps its height and the text field its width and place. */
   .composer-area { position: relative; padding: .875rem 1.75rem max(.875rem, env(safe-area-inset-bottom)); border-top: 1px solid var(--border); background: var(--surface); }
-  .composer { display: flex; align-items: flex-end; gap: .5rem; padding: 5px; border: 1px solid var(--field-border); border-radius: 14px; background: var(--surface); }
+  .composer { display: flex; align-items: flex-end; gap: .3125rem; padding: 3px; border: 1px solid var(--field-border); border-radius: 14px; background: var(--surface); }
   .composer:focus-within { border-color: var(--accent); outline: 2px solid var(--focus-halo); outline-offset: 1px; }
-  .composer textarea { flex: 1; min-width: 0; min-height: 40px; max-height: 160px; padding: .5rem .125rem; border: 0; background: none; color: inherit; font-size: 1rem; line-height: 1.5; resize: none; }
+  .composer textarea { flex: 1; min-width: 0; min-height: 40px; max-height: 160px; margin: 2px 0; padding: .5rem .125rem; border: 0; background: none; color: inherit; font-size: 1rem; line-height: 1.5; resize: none; }
   .composer textarea:focus-visible { outline: none; }
-  .icon-button { width: 40px; height: 40px; flex-shrink: 0; padding: .5rem; border: 0; background: transparent; color: var(--muted); }
+  .icon-button { width: 44px; height: 44px; flex-shrink: 0; padding: .5rem; border: 0; background: transparent; color: var(--muted); }
   .icon-button .icon { width: 22px; height: 22px; }
-  .send { flex-shrink: 0; min-height: 40px; padding: .5rem .875rem; }
+  .send { flex-shrink: 0; min-height: 44px; padding: .5rem .875rem; }
   .send .icon { width: 1rem; height: 1rem; }
   .composer-hint { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .75rem; margin: .625rem .25rem 0; color: var(--muted); font-size: .75rem; }
   /* Kept in the page while empty: a live region added with its text is not always announced. */
@@ -387,10 +392,13 @@
   .attachment-preview-info p { margin: 0; }
   .attachment-preview-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
   .attachment-preview-meta, .attachment-preview-hint { color: var(--muted); font-size: .75rem; }
-  .attachment-preview-remove { display: grid; place-items: center; flex: 0 0 40px; height: 40px; padding: .5rem; }
+  /* A 44×44 hit area in the room of a 40 px button: the file's name keeps its width. */
+  .attachment-preview-remove { display: grid; place-items: center; flex: 0 0 44px; height: 44px; margin: 0 -2px; padding: .5rem; }
   /* Header and search stay, the results scroll; on a wide chat the list keeps a readable width. */
   .reply-options { position: absolute; z-index: 3; left: 1.75rem; right: 1.75rem; bottom: calc(100% + .375rem); display: flex; flex-direction: column; max-width: 40rem; max-height: min(320px, 45dvh); border-radius: 12px; background: var(--surface); box-shadow: 0 6px 32px #1d1d1f26; }
-  .reply-options-head { display: flex; flex: none; align-items: center; gap: .5rem; padding: .375rem .375rem .375rem .75rem; border-bottom: 1px solid var(--border); }
+  /* Its 44 px buttons take the room of the padding (QuickReplies.vue); 3 px keep the close button's corner inside
+     the list's rounded one. */
+  .reply-options-head { display: flex; flex: none; align-items: center; gap: .5rem; padding: .1875rem 0 .1875rem .75rem; border-bottom: 1px solid var(--border); }
   .reply-search { flex: none; min-width: 0; margin: .625rem .625rem .125rem; padding: .5rem .75rem; border: 1px solid var(--field-border); border-radius: var(--radius-control); background: var(--surface); color: var(--text); }
   /* Room for the 3 px focus ring of the buttons inside the scrolling results. */
   .reply-options-body { flex: 1; min-height: 0; overflow: auto; padding: .5rem; }
@@ -445,8 +453,9 @@
   /* One clear button in every engine: the catalog has its own. */
   .catalog-search input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
   .catalog-search .icon { position: absolute; top: 50%; left: .75rem; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
-  .catalog-search input { width: 100%; min-height: 40px; padding: .5rem 2.5rem .5rem 2.375rem; border: 1px solid var(--field-border); border-radius: var(--radius-control); background: var(--surface); color: var(--text); }
-  .catalog-search-clear { position: absolute; top: 50%; right: .25rem; transform: translateY(-50%); min-height: 32px; min-width: 32px; padding: .25rem; }
+  /* The clear button is a 44×44 hit area: the field is as tall and keeps its end free of text for it. */
+  .catalog-search input { width: 100%; min-height: 44px; padding: .5rem 2.75rem .5rem 2.375rem; border: 1px solid var(--field-border); border-radius: var(--radius-control); background: var(--surface); color: var(--text); }
+  .catalog-search-clear { position: absolute; top: 50%; right: 0; transform: translateY(-50%); min-height: 44px; min-width: 44px; padding: .25rem; }
   .catalog-scope { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--border); border-radius: 10px; background: var(--footer); }
   .catalog-scope button { min-height: 32px; padding: .25rem .75rem; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-size: .8125rem; font-weight: 500; white-space: nowrap; }
   .catalog-scope button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px #00000014; }
@@ -464,7 +473,8 @@
   /* An opened reply shows all its lines in the flow of the list: no scrolling box of its own. */
   .catalog-reply-text[data-expanded] { display: block; overflow: visible; -webkit-line-clamp: none; }
   .catalog-reply-more { display: flex; justify-content: flex-end; margin-top: .375rem; }
-  .catalog-reply-toggle { gap: .25rem; min-height: 32px; padding: .25rem .5rem; color: var(--accent); font-size: .8125rem; font-weight: 500; }
+  /* A 44 px tall hit area in the room of a 32 px button: the card keeps its height. */
+  .catalog-reply-toggle { gap: .25rem; min-height: 44px; margin: -6px 0; padding: .25rem .5rem; color: var(--accent); font-size: .8125rem; font-weight: 500; }
   .catalog-reply-group { display: inline-block; max-width: 100%; margin-bottom: .25rem; padding: 0; border: 0; background: none; color: var(--accent); font-size: .8125rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
   .catalog-reply-group:hover { text-decoration: underline; }
   .catalog-textarea { display: block; width: 100%; min-height: 12rem; resize: vertical; padding: .75rem .875rem; border: 1px solid var(--field-border); border-radius: var(--radius-control); background: var(--surface); color: var(--text); font: inherit; line-height: 1.55; }
@@ -486,8 +496,8 @@
   .dialog-wide { width: 620px; }
   .dialog-catalog { display: flex; flex-direction: column; width: 960px; height: min(760px, calc(100dvh - 48px)); overflow: hidden; padding: 1.5rem 1.5rem 1.25rem; }
   .image-viewer { position: fixed; z-index: 50; top: 50%; left: 50%; width: 96vw; max-width: 1600px; height: 92dvh; overflow: hidden; border-radius: var(--radius-panel); background: #17191d; color: #fff; transform: translate(-50%, -50%); outline: none; }
-  .image-toolbar { display: flex; align-items: center; gap: .5rem; height: 56px; padding: .5rem .75rem; }
-  .image-toolbar button { display: grid; place-items: center; min-width: 40px; min-height: 40px; padding: .375rem .625rem; border: 1px solid #666; border-radius: var(--radius-control); background: #30343b; color: #fff; }
+  .image-toolbar { display: flex; align-items: center; gap: .5rem; height: 56px; padding: .375rem .75rem; }
+  .image-toolbar button { display: grid; place-items: center; min-width: 44px; min-height: 44px; padding: .375rem .625rem; border: 1px solid #666; border-radius: var(--radius-control); background: #30343b; color: #fff; }
   .image-toolbar button:hover { background: #424750; }
   .image-toolbar :focus-visible { outline-color: #a9beff; }
   .image-stage { display: flex; align-items: center; justify-content: center; height: calc(100% - 56px); overflow: hidden; touch-action: none; user-select: none; }
@@ -511,7 +521,7 @@
   .message { max-width: 92%; }
   .bubble { padding: .625rem .875rem; }
   .send-label { display: none; }
-  .send { width: 40px; padding: .5rem; }
+  .send { width: 44px; padding: .5rem; }
   .send .icon { width: 1.125rem; height: 1.125rem; }
   .composer-area { padding: .625rem .75rem max(.625rem, env(safe-area-inset-bottom)); }
   .composer-hint { display: none; }
@@ -522,8 +532,9 @@
   .settings-section { padding: .875rem .875rem 1rem; }
   /* The folders window takes the whole screen; a confirmation stays a small card. */
   .dialog-wide, .dialog-catalog { top: 0; left: 0; width: 100%; max-width: 100%; height: 100dvh; max-height: 100dvh; padding: max(.875rem, env(safe-area-inset-top)) 1rem max(1.5rem, env(safe-area-inset-bottom)); border-radius: 0; transform: none; animation: none; }
-  /* The catalog shows one level at a time: groups, then a group, then the editor. */
-  .catalog-body { grid-template-columns: minmax(0, 1fr); border: 0; border-radius: 0; }
+  /* The catalog shows one level at a time: groups, then a group, then the editor. The panes' ways back reach 8 px
+     past the content's edge (narrow:-ml-2): the body clips 8 px further out, so all of their 44 px takes the pointer. */
+  .catalog-body { grid-template-columns: minmax(0, 1fr); margin-inline: -.5rem; padding-inline: .5rem; border: 0; border-radius: 0; }
   /* The editor gets the room the search would take; the search waits until it closes. */
   .catalog-toolbar[data-editing] { display: none; }
   .catalog-toast-region { top: max(.75rem, env(safe-area-inset-top)); left: 1rem; right: 3.5rem; justify-content: center; max-width: none; }
@@ -532,10 +543,12 @@
   .catalog-pane-head { padding-left: 0; padding-right: 0; }
 }
 
+/* Icon-only, close, menu and app bar controls are 44×44 hit areas whatever the pointer (see their rules); a touch
+   screen also gets 44 px text buttons, fields and list items, and 48×48 for the frequent actions that have room. */
 @media (pointer: coarse) {
   .primary, .secondary, .quiet, .icon-button { min-height: 44px; }
-  .icon-button, .send, .image-toolbar button { min-width: 44px; }
-  .menu-select:not(.menu-select-chrome), .menu-item, .image-toolbar button, .picker-option, .disclosure > summary, .catalog-group, .catalog-scope button { min-height: 44px; }
+  .menu-item, .picker-option, .disclosure > summary, .catalog-group, .catalog-scope button { min-height: 44px; }
+  .image-toolbar button, .dialogue-back { min-width: 48px; min-height: 48px; }
   .toggle-field input { width: 1.375rem; height: 1.375rem; margin-top: .0625rem; }
   .image-toolbar { height: 64px; }
   .image-stage { height: calc(100% - 64px); }

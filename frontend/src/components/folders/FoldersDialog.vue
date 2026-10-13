@@ -80,12 +80,13 @@ async function confirmDelete(): Promise<void> {
   <ModalDialog v-model:open="open" wide title="Общие папки" description="Для всей команды текущего проекта." close-label="Закрыть папки">
     <p class="error" :class="{ success }" role="alert">{{ status }}</p>
     <div class="mt-4 mb-6">
-      <div v-for="folder in folders.folders" :key="folder.id" class="flex items-center gap-2 border-b border-border py-2.5">
+      <!-- 44 px tall actions; the row's padding gives back what they add. -->
+      <div v-for="folder in folders.folders" :key="folder.id" class="flex items-center gap-2 border-b border-border py-1.5">
         <strong class="min-w-0 flex-1 text-[.9375rem] [overflow-wrap:anywhere]">{{ folder.name }}</strong>
-        <button class="quiet shrink-0" type="button" :aria-label="`Переименовать папку ${folder.name}`" @click="rename(folder)">
+        <button class="quiet min-h-11 shrink-0" type="button" :aria-label="`Переименовать папку ${folder.name}`" @click="rename(folder)">
           Изменить
         </button>
-        <button class="quiet shrink-0" type="button" :aria-label="`Удалить папку ${folder.name}`" @click="askDelete(folder)">
+        <button class="quiet min-h-11 shrink-0" type="button" :aria-label="`Удалить папку ${folder.name}`" @click="askDelete(folder)">
           Удалить
         </button>
       </div>
