@@ -19,6 +19,8 @@ async function start(page: Page, context: BrowserContext, request: APIRequestCon
   await page.goto(CONSOLE);
   await list(page).getByRole("option", { name: /Анна Смирнова/ }).click();
   await expect(history(page).getByText("И ещё вопрос про оплату")).toBeVisible();
+  // The reply box takes input, and a file, once the dialogue's stored draft has been read.
+  await expect(composer(page)).toBeEditable();
 }
 
 /** The keys and texts of the send requests the stub received. */
@@ -141,6 +143,8 @@ test.describe("sending a reply", () => {
     await expect(page.getByRole("button", { name: "Отправить" })).toHaveAttribute("aria-disabled", "true");
     // A second press while it runs sends nothing.
     await page.getByRole("button", { name: "Отправить" }).click({ force: true });
+    // The deadline runs from the request, which leaves once the attempt is stored in the browser.
+    await expect.poll(() => seen.length).toBe(1);
     await page.clock.runFor(30_000);
     await expect(attempt(page)).toContainText("Сервер не ответил за 30 с.");
     await expect(composer(page)).toBeEnabled();
@@ -159,10 +163,13 @@ test.describe("sending a reply", () => {
     const late = new Promise<void>((resolve) => { release = resolve; });
     let reached!: () => void;
     const arrived = new Promise<void>((resolve) => { reached = resolve; });
+    let left!: () => void;
+    const out = new Promise<void>((resolve) => { left = resolve; });
     let first = true;
     await page.route(SEND, async (route) => {
       if (!first) return route.continue();
       first = false;
+      left();
       await late;
       // The browser gave up on it long ago; the request still reaches the server now.
       await route.fetch().catch(() => undefined);
@@ -171,6 +178,8 @@ test.describe("sending a reply", () => {
     });
     await composer(page).fill("Поздний запрос");
     await composer(page).press("Enter");
+    // The deadline runs from the request, which leaves once the attempt is stored in the browser.
+    await out;
     await page.clock.runFor(30_000);
     await expect(attempt(page)).toContainText("Сервер не ответил за 30 с.");
     await retry(page).click();

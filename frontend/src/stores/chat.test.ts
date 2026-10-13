@@ -283,6 +283,8 @@ describe("chat store", () => {
     session.signIn({ account: ACCOUNT, csrf: "c" });
     useProjectsStore().currentId = "p1";
     await chat.open("t1");
+    // The reply box takes input once the draft is read (after the writes the sign-out flushed).
+    await vi.waitFor(() => expect(chat.draft).not.toBeNull());
     chat.edit("Вторая сессия");
     const fresh = chat.send();
     await vi.waitFor(() => expect(pending).toHaveLength(2));

@@ -26,7 +26,8 @@ test.beforeEach(async ({ page, context, request, consoleErrors }) => {
   });
   await page.goto("/console/");
   await page.getByRole("option", { name: /Анна Смирнова/ }).click();
-  await expect(input(page)).toBeVisible();
+  // The reply box takes input once the dialogue's stored draft has been read.
+  await expect(input(page)).toBeEditable();
 });
 
 async function resources(page: Page): Promise<Resources> {

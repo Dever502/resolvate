@@ -113,7 +113,7 @@ describe("composer attachments", () => {
     Object.defineProperty(valid, "size", { value: MAX_FILE_BYTES });
     await attach(wrapper, valid);
     const chat = useChatStore();
-    const pending = { key: "retry-key", project: "p1", ticket: "t1", text: "Черновик", file: valid, state: "unknown" as const, reason: "Нет связи с сервером.", tries: 1 };
+    const pending = { key: "retry-key", project: "p1", ticket: "t1", text: "Черновик", file: valid, state: "unknown" as const, reason: "Нет связи с сервером.", tries: 1, createdAt: Date.now(), persisted: true };
     chat.attempts.set("p1/t1", pending);
     const large = pdf("too-large.pdf");
     Object.defineProperty(large, "size", { value: MAX_FILE_BYTES + 1 });
@@ -127,7 +127,7 @@ describe("composer attachments", () => {
   it("gives focus back to the reply box when the history settles the attempt whose banner had it", async () => {
     const wrapper = mount(TooltipProvider, { slots: { default: () => h(Composer) }, attachTo: document.body });
     const chat = useChatStore();
-    chat.attempts.set("p1/t1", { key: "k", project: "p1", ticket: "t1", text: "Черновик", file: null, state: "unknown", reason: "Нет связи с сервером.", tries: 1 });
+    chat.attempts.set("p1/t1", { key: "k", project: "p1", ticket: "t1", text: "Черновик", file: null, state: "unknown", reason: "Нет связи с сервером.", tries: 1, createdAt: Date.now(), persisted: true });
     await flushPromises();
     const retryButton = wrapper.get(".send-attempt .secondary").element as HTMLButtonElement;
     retryButton.focus();
@@ -145,7 +145,7 @@ describe("composer attachments", () => {
     await attach(wrapper, pdf("anna.pdf"));
     const boris = pdf("boris.pdf");
     chat.drafts.set("t2", { text: "Другой текст", file: boris });
-    chat.attempts.set("p1/t2", { key: "retry", project: "p1", ticket: "t2", text: "Другой текст", file: boris, state: "unknown", reason: "Нет связи с сервером.", tries: 1 });
+    chat.attempts.set("p1/t2", { key: "retry", project: "p1", ticket: "t2", text: "Другой текст", file: boris, state: "unknown", reason: "Нет связи с сервером.", tries: 1, createdAt: Date.now(), persisted: true });
     chat.ticketId = "t2";
     await flushPromises();
     expect(wrapper.text()).toContain("boris.pdf");

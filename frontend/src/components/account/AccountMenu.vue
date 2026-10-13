@@ -5,7 +5,11 @@ import {
 } from "reka-ui";
 import { computed, nextTick, ref, useTemplateRef } from "vue";
 import { initials } from "../../lib/initials";
+import { clearNavigation } from "../../lib/navigation";
+import { clearWork, countWork, patience } from "../../lib/workStore";
+import { useChatStore } from "../../stores/chat";
 import { useSessionStore } from "../../stores/session";
+import ConfirmDialog from "../ui/ConfirmDialog.vue";
 import Icon from "../ui/Icon.vue";
 import PasswordDialog from "./PasswordDialog.vue";
 import ThemeSelector from "./ThemeSelector.vue";
@@ -19,6 +23,10 @@ const role = computed(() => session.account?.role === "admin" ? "Админис�
 const trigger = useTemplateRef<{ $el: HTMLElement }>("trigger");
 const passwordOpen = ref(false);
 let passwordRequested = false;
+/** Unsent work this account keeps in the browser: an explicit sign-out asks before removing it. */
+const kept = ref({ drafts: 0, attempts: 0 });
+const leaveOpen = ref(false);
+let leaveRequested = false;
 
 function requestPassword(): void {
   passwordRequested = true;
@@ -27,24 +35,64 @@ function requestPassword(): void {
 // Reka returns focus to the trigger only after a timeout; a window opened earlier would remember the
 // vanishing menu item and lose focus when it closes. The trigger takes focus first, then the window opens.
 function afterClose(event: Event): void {
-  if (!passwordRequested) return;
+  if (!passwordRequested && !leaveRequested) return;
+  const password = passwordRequested;
   passwordRequested = false;
+  leaveRequested = false;
   event.preventDefault();
   trigger.value?.$el.focus();
-  void nextTick(() => { passwordOpen.value = true; });
+  void nextTick(() => {
+    if (password) passwordOpen.value = true;
+    else leaveOpen.value = true;
+  });
 }
 
+// An explicit sign-out leaves nothing of the account's unsent work on this device (the browser's storage
+// and the tab's own); with work kept it asks first. A session that ends by itself (expired, password
+// changed) keeps it for the next sign-in.
 async function logout(): Promise<void> {
   if (busy.value) return;
+  const account = session.account?.id;
+  let work: { drafts: number; attempts: number } | null = null;
+  busy.value = true;
+  try {
+    // Edits still waiting are written first: the count includes them. A storage that does not answer
+    // is not waited for.
+    await patience(useChatStore().flushDrafts()).catch(() => undefined);
+    work = account ? await patience(countWork(account)).catch(() => null) : null;
+  } finally {
+    busy.value = false;
+  }
+  if (work && (work.drafts || work.attempts)) {
+    kept.value = work;
+    leaveRequested = true;
+    open.value = false;
+    return;
+  }
+  await leave();
+}
+
+async function leave(): Promise<void> {
+  if (busy.value) return;
+  const account = session.account?.id;
   busy.value = true;
   error.value = "";
   try {
     await session.logout();
     open.value = false;
+    leaveOpen.value = false;
   } catch (caught) {
     error.value = caught instanceof Error ? caught.message : String(caught);
   } finally {
     busy.value = false;
+  }
+  // Signed out, by this request or by the server's 401 to it (the session had ended already): the
+  // account's work leaves this device all the same. Writes queued as the session ended land first,
+  // so nothing comes back after the removal.
+  if (account && session.account?.id !== account) {
+    clearNavigation();
+    await useChatStore().flushDrafts();
+    await clearWork(account).catch(() => undefined);
   }
 }
 </script>
@@ -91,4 +139,16 @@ async function logout(): Promise<void> {
   <!-- A failed request stays visible even after dismissing the menu, including on phones. -->
   <p v-if="error && !open" class="error account-error" role="alert">{{ error }}</p>
   <PasswordDialog v-model:open="passwordOpen" />
+  <ConfirmDialog
+    v-model:open="leaveOpen"
+    title="Выйти и удалить черновики?"
+    :description="`В этом браузере сохранены черновики (${kept.drafts}) и отправки с неизвестным результатом (${kept.attempts}). После выхода они будут удалены с этого устройства.`"
+    confirm-label="Выйти и удалить"
+    busy-label="Выходим…"
+    cancel-label="Остаться"
+    :busy="busy"
+    :error="error"
+    danger
+    @confirm="leave"
+  />
 </template>

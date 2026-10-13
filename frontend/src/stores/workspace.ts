@@ -1,5 +1,7 @@
 import { defineStore } from "pinia";
-import { ref } from "vue";
+import { effectScope, ref, watch } from "vue";
+import { ApiError } from "../api/client";
+import { readNavigation, writeNavigation } from "../lib/navigation";
 import { useChatStore } from "./chat";
 import { useProjectsStore } from "./projects";
 import { useSessionStore } from "./session";
@@ -8,6 +10,8 @@ import { useTicketsStore } from "./tickets";
 export const FAILED = "Не удалось выполнить действие.";
 export const NO_LINK_ACCESS = "Нет доступа к проекту из ссылки.";
 export const WINDOW_UNAVAILABLE = "Не удалось загрузить раздел. Обновите страницу.";
+export const PLACE_PROJECT_GONE = "Проект, открытый до обновления страницы, больше недоступен.";
+export const PLACE_DIALOGUE_GONE = "Диалог, открытый до обновления страницы, недоступен: он удалён или доступ к нему закрыт.";
 
 export type ProjectTab = "members" | "settings" | "logo";
 
@@ -38,32 +42,100 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     notice.value = error instanceof Error && error.message ? error.message : FAILED;
   }
 
-  /** First load after sign-in: projects, the first available one, and the ?project=&ticket= link. */
-  async function enter(): Promise<void> {
-    const projects = useProjectsStore();
-    startPending.value = true;
-    await projects.refresh(true);
-    startPending.value = false;
-    const link = new URLSearchParams(location.search);
-    const projectId = link.get("project");
-    const ticketId = link.get("ticket");
-    if (!projectId || !ticketId) return;
-    if (!projects.available.some((project) => project.id === projectId)) {
-      show(NO_LINK_ACCESS);
-      return;
-    }
-    if (!projects.select(projectId)) return;
-    await useTicketsStore().sync();
-    await useChatStore().open(ticketId);
+  /** Where the first load leads: the tab's place before a reload, or a ?project=&ticket= link. */
+  let target: { project: string | null; ticket: string | null; link: boolean } | null = null;
+  /** The tab's place is written only once it is known: a fresh sign-in must not erase the saved one. */
+  let placeKnown = false;
+  let following = false;
+  /** Lives as long as the store: the workspace that first entered is unmounted by a sign-out. */
+  const followScope = effectScope(true);
+
+  /** Writes the tab's project and dialogue as they change, for the next reload. */
+  function follow(): void {
+    if (following) return;
+    following = true;
+    followScope.run(() => {
+      watch([() => session.account?.id, () => useProjectsStore().currentId, () => useChatStore().ticketId], ([account, project, ticket]) => {
+        if (account && placeKnown) writeNavigation({ account, project, ticket });
+      });
+    });
   }
 
-  /** One live refresh: projects, the list, and the open dialogue. */
+  /** Opens the dialogue the tab had open; one that is gone or no longer allowed leaves the list as it is. */
+  async function reopen(id: string): Promise<void> {
+    const chat = useChatStore();
+    try {
+      await chat.open(id);
+    } catch (error) {
+      if (chat.ticketId !== id) return;
+      if (error instanceof ApiError && (error.status === 403 || error.status === 404)) {
+        chat.close();
+        show(PLACE_DIALOGUE_GONE);
+      } else {
+        // A passing failure: the dialogue and its draft stay, the live refresh tries again.
+        fail(error);
+      }
+    }
+  }
+
+  /** A link is followed once: the address drops ?project=&ticket=, so a reload restores the tab's own place. */
+  function forgetLink(): void {
+    const url = new URL(location.href);
+    url.searchParams.delete("project");
+    url.searchParams.delete("ticket");
+    history.replaceState(history.state, "", url);
+  }
+
+  /**
+   * The first project list: the target's project when it is available (no detour through the first
+   * one), its dialogue alongside the dialogue list, then the tab's place is followed.
+   */
+  async function begin(): Promise<void> {
+    const projects = useProjectsStore();
+    const chat = useChatStore();
+    await projects.refresh(true, { preferred: target?.project ?? null, sync: false });
+    startPending.value = false;
+    const wanted = target;
+    target = null;
+    if (wanted?.link) forgetLink();
+    const reached = wanted !== null && wanted.project !== null && projects.currentId === wanted.project;
+    if (wanted?.project && !reached) show(wanted.link ? NO_LINK_ACCESS : PLACE_PROJECT_GONE);
+    // A link's dialogue opens as any other; the tab's own dialogue that is gone just leaves the list.
+    const dialogue = reached && wanted.ticket ? (wanted.link ? chat.open(wanted.ticket) : reopen(wanted.ticket)) : null;
+    try {
+      await Promise.all([useTicketsStore().sync(), dialogue]);
+    } finally {
+      placeKnown = true;
+      const account = session.account?.id;
+      if (account) writeNavigation({ account, project: projects.currentId, ticket: chat.ticketId });
+    }
+  }
+
+  /**
+   * First load after sign-in: projects, then the dialogue of a ?project=&ticket= link, or else the
+   * tab's project and dialogue from before a reload (or the first available project).
+   */
+  async function enter(): Promise<void> {
+    const link = new URLSearchParams(location.search);
+    const project = link.get("project");
+    const ticket = link.get("ticket");
+    const account = session.account?.id;
+    const saved = account && !(project && ticket) ? readNavigation(account) : null;
+    target = project && ticket ? { project, ticket, link: true } : saved && { project: saved.project, ticket: saved.ticket, link: false };
+    follow();
+    startPending.value = true;
+    await begin();
+  }
+
+  /** One live refresh: projects, the list, and the open dialogue. A failed first load is repeated whole. */
   async function refresh(): Promise<void> {
     const projects = useProjectsStore();
     const chat = useChatStore();
-    const initial = startPending.value;
-    await projects.refresh(initial);
-    startPending.value = false;
+    if (startPending.value) {
+      await begin();
+      return;
+    }
+    await projects.refresh(false);
     await useTicketsStore().sync();
     if (chat.ticketId && !chat.opening && !chat.unavailable) {
       await Promise.all([chat.syncDetail(), chat.syncMessages()]);
@@ -89,6 +161,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     startPending.value = false;
     refreshing.value = false;
     admin.value = null;
+    target = null;
+    placeKnown = false;
   }
   session.onSessionEnd(reset);
 
