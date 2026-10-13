@@ -307,11 +307,18 @@ export async function handle(request, response, path, url, tools) {
     const key = request.headers["x-idempotency-key"] ?? "";
     if (!UUID.test(key)) return done(422, { detail: "Нужен ключ отправки." });
     if (!item) return done(404, { detail: "Диалог не найден." });
-    if (state.sent.has(key)) return done(200, { id: state.sent.get(key) });
     const { fields, files } = multipart(body, request.headers["content-type"]);
     const text = (fields.text ?? "").trim();
     const file = files[0];
     if (!text && !file) return done(422, { detail: "Введите сообщение или прикрепите файл." });
+    // console_service.send(): a key used again with the same dialogue, text and file answers with the
+    // message it saved; with anything else it is refused.
+    const fingerprint = JSON.stringify([item.id, text, file ? Buffer.from(file.content).toString("base64") : null]);
+    const previous = state.sent.get(key);
+    if (previous) {
+      if (previous.fingerprint !== fingerprint) return done(409, { detail: "Ключ отправки уже использован." });
+      return done(200, { id: previous.id });
+    }
     let mediaId = null;
     if (file) {
       mediaId = randomUUID();
@@ -319,10 +326,10 @@ export async function handle(request, response, path, url, tools) {
     }
     const sent = message({
       direction: "operator_to_user", channel: item.channel === "web" ? "web" : "telegram", author: OPERATOR, text,
-      media_id: mediaId, mime: file?.type ?? null, attachment: Boolean(file), time: new Date().toISOString(),
+      media_id: mediaId, mime: file?.type ?? null, attachment: Boolean(file), time: new Date().toISOString(), command: key,
     });
     state.messages.get(item.id).push(sent);
-    state.sent.set(key, sent.id);
+    state.sent.set(key, { id: sent.id, fingerprint });
     changed(projectId);
     return done(200, { id: sent.id });
   }
