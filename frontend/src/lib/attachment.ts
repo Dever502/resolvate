@@ -1,7 +1,7 @@
 // What the server takes in one reply (src/resolvate/console.py send, media_storage.py), checked in the
 // browser first: a reply that cannot go is said before it is sent. One place for the file picker, the
-// attachment preview, the send and, later, a dropped file. The server still checks the file's content:
-// an extension or a MIME type proves nothing about it.
+// attachment preview, the send and a dropped file. The server still checks the file's content: an
+// extension or a MIME type proves nothing about it.
 
 export const MAX_TEXT = 3900;
 export const MAX_TEXT_WITH_FILE = 800;
@@ -11,6 +11,8 @@ export const FILE_TOO_LARGE = "Файл больше 20 МБ.";
 export const FILE_EMPTY = "Файл пустой. Прикрепите другой файл.";
 export const FILE_UNSUPPORTED =
   "Этот формат не поддерживается. Можно прикрепить фото JPEG, PNG или WebP, видео MP4 или MOV, PDF или голосовое OGG/Opus.";
+/** The server takes one file per reply: several dropped together are refused, never cut down to the first. */
+export const FILES_MULTIPLE = "К ответу можно прикрепить только один файл: перетащите один.";
 
 export type AttachmentKind = "image" | "video" | "document" | "audio";
 

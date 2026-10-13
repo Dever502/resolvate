@@ -6,7 +6,7 @@ import { fileProblem, textLength, textProblem } from "../lib/attachment";
 import { keepUnsaved, takeUnsaved } from "../lib/navigation";
 import {
   StorageError, createAttempt, fileBytes, patience, readAttempt, readDraft, removeAttempt, removeDraft, restoreDraft,
-  updateAttempt, writeDraft, type FileChange, type StoredAttempt, type StoredDraft, type WorkScope,
+  sameFile, updateAttempt, writeDraft, type FileChange, type StoredAttempt, type StoredDraft, type WorkScope,
 } from "../lib/workStore";
 import { useProjectsStore } from "./projects";
 import { useSessionStore } from "./session";
@@ -48,12 +48,6 @@ export const CACHE_MESSAGES = 200;
 export interface Draft {
   text: string;
   file: File | null;
-}
-
-/** The same file: this very one, or its copy read back from the browser's storage after a reload. */
-export function sameFile(a: File | null, b: File | null): boolean {
-  return a === b || (a !== null && b !== null && a.name === b.name && a.type === b.type && a.size === b.size
-    && a.lastModified === b.lastModified);
 }
 
 /**
@@ -379,7 +373,7 @@ export const useChatStore = defineStore("chat", () => {
     }
     if (kept && !attempts.has(slot(projectId, id))) {
       attempts.set(slot(projectId, id), fromRecord(kept));
-      if (ticketId.value === id) settleFromHistory();
+      if (ticketId.value === id) await settleFromHistory();
     }
   }
 
@@ -494,7 +488,7 @@ export const useChatStore = defineStore("chat", () => {
     historyUpdatedAt = Date.now();
     touched(older ? "older" : first ? "initial" : "update");
     if ([...next.values()].some((item) => item.uncertain)) workspace().show(UNCERTAIN);
-    settleFromHistory();
+    await settleFromHistory();
   }
 
   /**
@@ -502,11 +496,12 @@ export const useChatStore = defineStore("chat", () => {
    * history shows was taken after all. Checked after every history load and after an attempt is read
    * back from the storage, whichever comes last.
    */
-  function settleFromHistory(): void {
+  async function settleFromHistory(): Promise<void> {
     const pending = attempt.value;
     if (pending?.state === "unknown" && [...messages.value.values()].some((item) => item.command === pending.key)) {
-      accepted(pending);
-      workspace().show(SEND_FOUND);
+      const generation = session.generation;
+      await accepted(pending);
+      if (generation === session.generation) workspace().show(SEND_FOUND);
     }
   }
 
@@ -591,13 +586,21 @@ export const useChatStore = defineStore("chat", () => {
    * the same text and file again send it once more under its key, anything else waits for it.
    */
   async function send(): Promise<SendOutcome> {
+    const generation = session.generation;
     const id = ticketId.value;
     const projectId = project();
     const current = draft.value;
     if (!id || !projectId || !current || sending.value) return "skipped";
     const pending = attempts.get(slot(projectId, id));
     if (pending) {
-      if (pending.text === current.text && sameFile(pending.file, current.file)) {
+      const text = current.text;
+      const file = current.file;
+      sending.value = true;
+      const matches = pending.text === text && await sameFile(pending.file, file);
+      if (generation !== session.generation) return "skipped";
+      sending.value = false;
+      if (attempts.get(slot(projectId, id)) !== pending || draft.value !== current || project() !== projectId) return "skipped";
+      if (matches && current.text === text && current.file === file) {
         workspace().show();
         return deliver(pending);
       }
@@ -624,6 +627,7 @@ export const useChatStore = defineStore("chat", () => {
     const storing = scope ? createAttempt(toRecord(scope, fresh)) : null;
     try {
       const { existing } = storing ? await patience(storing) : { existing: null };
+      if (generation !== session.generation) return "skipped";
       if (existing) {
         // Another tab's attempt waits in this dialogue: it is taken over here instead of a second one.
         attempts.set(slot(projectId, id), fromRecord(existing));
@@ -633,6 +637,7 @@ export const useChatStore = defineStore("chat", () => {
       }
       fresh.persisted = Boolean(scope);
     } catch (error) {
+      if (generation !== session.generation) return "skipped";
       // Sent anyway, safe to retry while this page lives; the banner says a reload would lose it, and
       // every such send says it again.
       workspace().show(error instanceof StorageError && error.problem !== "unavailable"
@@ -641,7 +646,7 @@ export const useChatStore = defineStore("chat", () => {
       // A storage that answers late keeps the attempt after all: from then on it follows the attempt,
       // or removes it, once the attempt is over.
       void storing?.then(({ existing }) => {
-        if (existing) return;
+        if (existing || generation !== session.generation) return;
         fresh.persisted = true;
         if (attempts.get(slot(projectId, id)) === fresh) storeAttempt(fresh);
         else dropAttempt(fresh);
@@ -668,7 +673,7 @@ export const useChatStore = defineStore("chat", () => {
 
   /** One request of an attempt, bounded by its deadline; one at a time. */
   async function deliver(pending: SendAttempt): Promise<SendOutcome> {
-    const session0 = signedIn;
+    const generation = session.generation;
     const form = new FormData();
     form.set("text", pending.text);
     if (pending.file) form.set("file", pending.file);
@@ -680,33 +685,36 @@ export const useChatStore = defineStore("chat", () => {
     sending.value = true;
     storeAttempt(pending);
     try {
-      await session.api(`tickets/${pending.ticket}/send`, {
-        method: "POST", form, key: pending.key, signal: controller.signal,
-      }, pending.project);
-    } catch (error) {
-      if (session0 !== signedIn) return "skipped";
-      if (refused(error) && pending.tries === 1) {
-        // Nothing was saved: the attempt is over and the draft is there to be fixed.
-        attempts.delete(slot(pending.project, pending.ticket));
-        dropAttempt(pending);
-        workspace().fail(error);
-        return "rejected";
+      try {
+        await session.api(`tickets/${pending.ticket}/send`, {
+          method: "POST", form, key: pending.key, signal: controller.signal,
+        }, pending.project);
+      } catch (error) {
+        if (generation !== session.generation) return "skipped";
+        if (refused(error) && pending.tries === 1) {
+          // Nothing was saved: the attempt is over and the draft is there to be fixed.
+          attempts.delete(slot(pending.project, pending.ticket));
+          dropAttempt(pending);
+          workspace().fail(error);
+          return "rejected";
+        }
+        pending.state = "unknown";
+        const seconds = Math.round(timeout / 1000);
+        pending.reason = controller.signal.aborted
+          ? `Сервер не ответил за ${seconds >= 120 ? `${Math.round(seconds / 60)} мин` : `${seconds} с`}.`
+          : error instanceof Error && error.message ? error.message : FAILED;
+        // A reload leaves the stored state as "sending" so it explains the interrupted request.
+        if (!leaving) storeAttempt(pending);
+        return "unknown";
       }
-      pending.state = "unknown";
-      const seconds = Math.round(timeout / 1000);
-      pending.reason = controller.signal.aborted
-        ? `Сервер не ответил за ${seconds >= 120 ? `${Math.round(seconds / 60)} мин` : `${seconds} с`}.`
-        : error instanceof Error && error.message ? error.message : FAILED;
-      // Cut off by the page being left: the stored "sending" stays, and after the reload the attempt
-      // says the page was reloaded, not that the connection failed.
-      if (!leaving) storeAttempt(pending);
-      return "unknown";
+      if (generation !== session.generation) return "skipped";
+      // Keep single-flight protection until the matching draft has been identified and cleared.
+      await accepted(pending);
     } finally {
       clearTimeout(deadline);
-      if (session0 === signedIn) sending.value = false;
+      if (generation === session.generation) sending.value = false;
     }
-    if (session0 !== signedIn) return "skipped";
-    accepted(pending);
+    if (generation !== session.generation) return "skipped";
     // The message is saved: a history or list that fails to reload says so, never as a failed send.
     try {
       if (ticketId.value === pending.ticket && project() === pending.project) {
@@ -715,21 +723,34 @@ export const useChatStore = defineStore("chat", () => {
         await syncDetail();
       }
     } catch (error) {
-      if (session0 === signedIn) workspace().show(`${SEND_REFRESH_FAILED}: ${error instanceof Error && error.message ? error.message : FAILED}`);
+      if (generation === session.generation) workspace().show(`${SEND_REFRESH_FAILED}: ${error instanceof Error && error.message ? error.message : FAILED}`);
     }
     return "accepted";
   }
 
   /** The server took the attempt: it ends, and so does a draft that still holds just what was sent. */
-  function accepted(pending: SendAttempt): void {
-    attempts.delete(slot(pending.project, pending.ticket));
-    dropAttempt(pending);
-    if (project() !== pending.project) return;
-    const current = drafts.get(pending.ticket);
-    if (current && current.text === pending.text && sameFile(current.file, pending.file)) {
-      drafts.set(pending.ticket, { text: "", file: null });
-      const scope = scopeOf(pending.project, pending.ticket);
-      if (scope) dropDraft(scope, { text: pending.text, file: pending.file });
+  async function accepted(pending: SendAttempt): Promise<void> {
+    const generation = session.generation;
+    const key = slot(pending.project, pending.ticket);
+    if (attempts.get(key) !== pending) return;
+    // History can settle an attempt too. No new send may start during the file comparison.
+    const wasSending = sending.value;
+    sending.value = true;
+    try {
+      const current = project() === pending.project ? drafts.get(pending.ticket) : undefined;
+      const file = current?.file ?? null;
+      const matches = current?.text === pending.text && await sameFile(file, pending.file);
+      if (generation !== session.generation || attempts.get(key) !== pending) return;
+      attempts.delete(key);
+      dropAttempt(pending);
+      if (matches && project() === pending.project && drafts.get(pending.ticket) === current
+        && current?.text === pending.text && current.file === file) {
+        drafts.set(pending.ticket, { text: "", file: null });
+        const scope = scopeOf(pending.project, pending.ticket);
+        if (scope) dropDraft(scope, { text: pending.text, file: pending.file });
+      }
+    } finally {
+      if (!wasSending && generation === session.generation) sending.value = false;
     }
   }
 

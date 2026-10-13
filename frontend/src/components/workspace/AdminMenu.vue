@@ -39,7 +39,8 @@ function afterClose(event: Event): void {
 <template>
   <div v-if="shown">
     <DropdownMenuRoot :modal="false">
-      <DropdownMenuTrigger ref="trigger" class="quiet admin-trigger">
+      <!-- At least 44×44 (on narrow screens it is the icon alone); the negative margins keep the bar's height. -->
+      <DropdownMenuTrigger ref="trigger" class="quiet admin-trigger -my-1 min-h-11 min-w-11">
         <Icon name="settings" />
         <span class="narrow:sr-only">Управление</span>
         <span class="admin-trigger-label" aria-hidden="true">Управление</span>

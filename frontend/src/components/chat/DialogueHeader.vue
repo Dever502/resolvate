@@ -18,7 +18,8 @@ const name = computed(() => shown.value.display_name || shown.value.username || 
 
 <template>
   <header class="flex min-h-[76px] shrink-0 items-center gap-4 border-b border-border bg-surface px-7 py-3.5 compact:px-4 narrow:min-h-[72px] narrow:gap-2 narrow:px-3 narrow:py-2.5">
-    <IconButton class="quiet -ml-1 hidden min-h-11 min-w-11 p-2 narrow:inline-flex" label="К списку диалогов" @click="workspace.dialogueOpen = false">
+    <!-- A frequent touch action with room in the header: 48×48 for a coarse pointer (app.css, .dialogue-back). -->
+    <IconButton class="quiet dialogue-back -ml-1 hidden p-2 narrow:inline-flex" label="К списку диалогов" @click="workspace.dialogueOpen = false">
       <Icon name="back" />
     </IconButton>
     <button

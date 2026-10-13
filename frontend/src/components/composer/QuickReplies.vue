@@ -23,10 +23,12 @@ watch(() => props.active, async (index) => {
 
 <template>
   <div class="reply-options" @keydown.esc.prevent.stop="emit('close')">
+    <!-- 44 px tall buttons. The close button's 44×44 takes the head's end padding and the gap before it, so the
+         title gives up less than 2 px of its room. -->
     <div class="reply-options-head">
-      <button v-if="group" class="quiet" type="button" @mousedown.prevent @click="emit('back')">← Группы</button>
+      <button v-if="group" class="quiet min-h-11" type="button" @mousedown.prevent @click="emit('back')">← Группы</button>
       <span class="min-w-0 flex-1 truncate">{{ group ? '/' + group : 'Группы ответов' }}</span>
-      <button class="quiet" type="button" aria-label="Закрыть готовые ответы" @click="emit('close')">×</button>
+      <button class="quiet -ml-2 min-h-11 min-w-11" type="button" aria-label="Закрыть готовые ответы" @click="emit('close')">×</button>
     </div>
     <input
       v-if="buttonMode"

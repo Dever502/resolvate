@@ -107,6 +107,25 @@ export async function fileBytes(file: File): Promise<ArrayBuffer> {
   }
 }
 
+function sameBytes(a: ArrayBuffer, b: ArrayBuffer): boolean {
+  if (a.byteLength !== b.byteLength) return false;
+  const other = new Uint8Array(b);
+  return new Uint8Array(a).every((byte, index) => byte === other[index]);
+}
+
+/** Metadata alone cannot identify content, including copies restored after a reload. */
+export async function sameFile(a: File | null, b: File | null): Promise<boolean> {
+  if (a === b) return true;
+  if (!a || !b || !sameInfo(info(a), info(b))) return false;
+  try {
+    const [left, right] = await patience(Promise.all([fileBytes(a), fileBytes(b)]));
+    return sameBytes(left, right);
+  } catch {
+    // Unreadable files are not proven equal: keep the draft instead of discarding it.
+    return false;
+  }
+}
+
 let opening: Promise<IDBDatabase> | null = null;
 
 /** The database, opened once; it rejects with StorageError when the browser keeps no storage. */
@@ -349,12 +368,19 @@ export async function restoreDraft(left: WorkScope & { text: string; at: number 
  * (`known`), with other content, stays: it is not what was sent. True when no draft is left.
  */
 export async function removeDraft(scope: WorkScope, known: string | null, sent: { text: string; file: File | null }): Promise<boolean> {
+  // Read outside the transaction: IndexedDB cannot stay alive waiting for File.arrayBuffer().
+  const bytes = sent.file ? await fileBytes(sent.file) : null;
   return transact([DRAFTS, FILES], "readwrite", async (transaction) => {
     const drafts = transaction.objectStore(DRAFTS);
     const current = await done(drafts.get(scopeKey(scope)));
     if (current === undefined) return true;
-    if (validDraft(current) && current.rev !== known
-      && !(current.text === sent.text && sameInfo(current.file, sent.file ? info(sent.file) : null))) return false;
+    if (validDraft(current) && current.rev !== known) {
+      if (current.text !== sent.text || !sameInfo(current.file, sent.file ? info(sent.file) : null)) return false;
+      if (bytes) {
+        const stored = await done(transaction.objectStore(FILES).get(scopeKey(scope)));
+        if (!validPacked(stored) || !sameBytes(stored.bytes, bytes)) return false;
+      }
+    }
     drafts.delete(scopeKey(scope));
     transaction.objectStore(FILES).delete(scopeKey(scope));
     return true;

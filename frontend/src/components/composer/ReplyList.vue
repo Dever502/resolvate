@@ -70,7 +70,8 @@ defineExpose({
 <template>
   <section class="flex min-h-0 min-w-0 flex-1 flex-col" :aria-label="`Группа /${group.name}`">
     <div class="catalog-pane-head">
-      <button type="button" class="quiet hidden min-w-11 narrow:-ml-2 narrow:inline-flex" aria-label="К списку групп" @click="emit('back')">
+      <!-- A 44×44 hit area in the 44×36 room the head has for it. -->
+      <button type="button" class="quiet -my-1 hidden min-h-11 min-w-11 narrow:-ml-2 narrow:inline-flex" aria-label="К списку групп" @click="emit('back')">
         <Icon name="back" />
       </button>
       <div v-if="renaming" class="min-w-0 flex-1 py-1">

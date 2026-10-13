@@ -5,6 +5,7 @@ import { useId } from "vue";
 // A button whose only content is an icon (the default slot). `label` is its accessible name and is
 // shown as a tooltip on hover and on keyboard focus; a native title shows on hover only.
 // An optional `description` (limits, formats) follows the label in the tooltip and describes the button.
+// The button is a hit area of at least 44×44 px whatever the pointer; the icon keeps its own size.
 defineOptions({ inheritAttrs: false });
 withDefaults(defineProps<{ label: string; description?: string }>(), { description: "" });
 const id = useId();
@@ -16,6 +17,7 @@ const id = useId();
       <!-- The label already names the button: the tooltip must not repeat it as a description. -->
       <button
         type="button"
+        class="min-h-11 min-w-11"
         v-bind="$attrs"
         :aria-label="label"
         :aria-describedby="description ? `${id}-description` : undefined"
