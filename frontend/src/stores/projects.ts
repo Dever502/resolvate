@@ -25,10 +25,11 @@ export const useProjectsStore = defineStore("projects", () => {
   const current = computed(() => available.value.find((project) => project.id === currentId.value) ?? null);
 
   /**
-   * Reloads the list. On the first load the first available project is chosen; later a project that
-   * became unavailable is just deselected, without a notice.
+   * Reloads the list. On the first load the project this tab worked in (`preferred`, if it is still
+   * available) is chosen, else the first available one; later a project that became unavailable is
+   * just deselected, without a notice. `sync: false` leaves the first list load to the caller.
    */
-  async function refresh(initial: boolean): Promise<void> {
+  async function refresh(initial: boolean, { preferred = null, sync = true }: { preferred?: string | null; sync?: boolean } = {}): Promise<void> {
     const generation = session.generation;
     let projects: Project[];
     try {
@@ -45,13 +46,17 @@ export const useProjectsStore = defineStore("projects", () => {
     const changed = JSON.stringify(projects) !== JSON.stringify(all.value);
     if (changed) all.value = projects;
     if (!changed && !initial) return;
-    if (!current.value) select(initial ? (available.value[0]?.id ?? null) : null);
-    if (initial) await useTicketsStore().sync();
+    if (!current.value) {
+      const back = preferred && available.value.some((project) => project.id === preferred) ? preferred : null;
+      select(initial ? (back ?? available.value[0]?.id ?? null) : null);
+    }
+    if (initial && sync) await useTicketsStore().sync();
   }
 
   /**
    * Switches the workspace to another project. Refused while a message is being sent; drops the
-   * list, the dialogue, drafts and caches, which never carry over to another project.
+   * list, the dialogue and caches, which never carry over to another project. Drafts and unfinished
+   * sends stay in the browser's storage and come back with their dialogues.
    */
   function select(id: string | null): boolean {
     if (useChatStore().sending) return false;

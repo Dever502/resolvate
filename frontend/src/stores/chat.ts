@@ -1,7 +1,12 @@
 import { defineStore } from "pinia";
-import { computed, reactive, ref, shallowRef } from "vue";
+import { computed, reactive, ref, shallowRef, watch } from "vue";
 import { ApiError } from "../api/client";
 import type { FolderAssignment, Message, MessagePage, TicketDetail, TicketHeading } from "../api/types";
+import { keepUnsaved, takeUnsaved } from "../lib/navigation";
+import {
+  StorageError, createAttempt, fileBytes, patience, readAttempt, readDraft, removeAttempt, removeDraft, restoreDraft,
+  updateAttempt, writeDraft, type FileChange, type StoredAttempt, type StoredDraft, type WorkScope,
+} from "../lib/workStore";
 import { useProjectsStore } from "./projects";
 import { useSessionStore } from "./session";
 import { known, useTicketsStore } from "./tickets";
@@ -19,6 +24,19 @@ export const SEND_BLOCKED = "Сначала повторите предыдущ�
 export const SEND_FOUND = "Сообщение из отправки с неизвестным результатом есть в истории: сервер его принял.";
 export const SEND_REFRESH_FAILED = "Сообщение принято сервером, но историю не удалось обновить";
 export const FILE_TOO_LARGE = "Файл больше 20 МБ.";
+/** Text edits wait this long before they are written to the browser's storage; a file goes at once. */
+export const DRAFT_SAVE_DELAY = 300;
+/** An attempt this old may have outlived the server's memory of its key (an archived dialogue's history is removed). */
+export const ATTEMPT_AGE_WARNING = 24 * 60 * 60 * 1000;
+/** A stored attempt read back: this page never got its answer (a reload, or a send still running in another tab). */
+export const ATTEMPT_RELOADED = "Ответ сервера не получен: страница обновилась во время отправки или отправка идёт в другой вкладке.";
+export const ATTEMPT_ELSEWHERE = "В другой вкладке есть отправка в этот диалог с неизвестным результатом: сначала повторите её или откажитесь от неё.";
+export const DRAFT_CONFLICT = "Черновик этого диалога меняли в другой вкладке: сохранён текст из этой вкладки.";
+export const STORAGE_OFF = "Браузер не сохраняет черновики и отправки: они пропадут после обновления страницы, черновики — и после смены проекта.";
+export const lostFile = (name: string): string =>
+  `Вложение «${name}» не удалось сохранить в браузере: после обновления страницы прикрепите его снова.`;
+/** Tells this tab's writes from another tab's. */
+const TAB = crypto.randomUUID();
 export const MAX_FILE_BYTES = 20 * 1024 * 1024;
 /** A dialogue opened again within this time shows its cached history at once, then refreshes it. */
 export const CACHE_AGE = 120_000;
@@ -29,6 +47,12 @@ export const CACHE_MESSAGES = 200;
 export interface Draft {
   text: string;
   file: File | null;
+}
+
+/** The same file: this very one, or its copy read back from the browser's storage after a reload. */
+export function sameFile(a: File | null, b: File | null): boolean {
+  return a === b || (a !== null && b !== null && a.name === b.name && a.type === b.type && a.size === b.size
+    && a.lastModified === b.lastModified);
 }
 
 /**
@@ -48,6 +72,9 @@ export interface SendAttempt {
   reason: string;
   /** Requests sent for this attempt so far. */
   tries: number;
+  createdAt: number;
+  /** Kept in the browser's storage: a reload restores it. False when the storage refused it. */
+  persisted: boolean;
 }
 
 /**
@@ -106,6 +133,27 @@ export const useChatStore = defineStore("chat", () => {
   /** Attempts with an unknown outcome (or still running), by project and dialogue; they outlive a project switch. */
   const attempts = reactive(new Map<string, SendAttempt>());
   const cache = new Map<string, Snapshot>();
+  /** The revision of each stored draft this tab last read or wrote, by `account/project/ticket`. */
+  const draftRevs = new Map<string, string>();
+  /** Text edits waiting to be written, by `account/project/ticket`. */
+  const pendingSaves = new Map<string, { timer: ReturnType<typeof setTimeout>; write: () => void }>();
+  /** Files the storage could not keep (no room, a browser that keeps no files): the text is kept, these are not. */
+  const fileless = new Map<string, File>();
+  /** The file each stored draft holds, as this tab wrote it: a text edit does not write it again. */
+  const storedFiles = new Map<string, File | null>();
+  /** Each draft's writes, one after another: a file's bytes take time to read, the order must hold. */
+  const writing = new Map<string, Promise<void>>();
+  /**
+   * Edits not yet confirmed by the storage, by `account/project/ticket`. A write started as the page is
+   * left may never finish (WebKit drops it): their texts stay in the tab for its next load.
+   */
+  const unsaved = new Map<string, { scope: WorkScope; draft: Draft; at: number; edit: number }>();
+  let edits = 0;
+  /** The texts the page was left with before a reload, merged into the storage once per sign-in. */
+  let leftovers: Promise<void> | null = null;
+  let storageWarned = false;
+  /** The page is being left (a reload, the tab closing): a request it cuts off keeps its stored state. */
+  let leaving = false;
   let epoch = 0;
   let signedIn = 0;
   let detailRequest = 0;
@@ -126,6 +174,203 @@ export const useChatStore = defineStore("chat", () => {
     return ticketId.value && projectId ? attempts.get(slot(projectId, ticketId.value)) ?? null : null;
   });
   const workspace = () => useWorkspaceStore();
+  const scopeOf = (projectId: string, id: string): WorkScope | null => {
+    const owner = session.account?.id;
+    return owner ? { account: owner, project: projectId, ticket: id } : null;
+  };
+  const scopeName = (scope: WorkScope): string => `${scope.account}/${scope.project}/${scope.ticket}`;
+
+  /** The storage refused: said once, the work stays in memory. Another tab's draft is never touched. */
+  function storageFailed(error: unknown): void {
+    if (storageWarned) return;
+    storageWarned = true;
+    workspace().show(error instanceof StorageError && error.problem !== "unavailable"
+      ? `${error.message} Черновики и отправки после обновления страницы могут пропасть.`
+      : STORAGE_OFF);
+  }
+
+  /** Runs a draft's storage job after the ones before it: a file's bytes take time to read, the order must hold. */
+  function enqueue(name: string, job: () => Promise<void>): Promise<void> {
+    const next = (writing.get(name) ?? Promise.resolve()).then(job);
+    writing.set(name, next);
+    const tidy = (): void => {
+      if (writing.get(name) === next) writing.delete(name);
+    };
+    void next.then(tidy, tidy);
+    return next;
+  }
+
+  /** Writes the draft as it is now. A file the storage cannot keep leaves its name, to be attached again. */
+  function storeDraft(scope: WorkScope, current: Draft): Promise<void> {
+    const name = scopeName(scope);
+    // A write that ends after a sign-out says nothing: its notices belong to the session gone.
+    const at = signedIn;
+    const notify = (text: string): void => {
+      if (at === signedIn) workspace().show(text);
+    };
+    const failed = (error: unknown): void => {
+      if (at === signedIn) storageFailed(error);
+    };
+    let tried: File | null = null;
+    // The draft is read when its turn comes: the write holds the latest text and file.
+    const write = async (): Promise<void> => {
+      const file = current.file;
+      const keepsFile = file !== null && file !== fileless.get(name);
+      const edit = unsaved.get(name)?.edit;
+      tried = keepsFile ? file : null;
+      const record: StoredDraft = {
+        v: 1, ...scope, text: current.text, file: keepsFile ? file : null, lostFile: file && !keepsFile ? file.name : null,
+        rev: crypto.randomUUID(), tab: TAB, updatedAt: Date.now(),
+      };
+      const change: FileChange = !keepsFile ? null : file === storedFiles.get(name) ? "same" : { bytes: await fileBytes(file) };
+      const { conflict, refile } = await writeDraft(record, draftRevs.get(name) ?? null, change);
+      draftRevs.set(name, record.rev);
+      if (edit !== undefined && unsaved.get(name)?.edit === edit) unsaved.delete(name);
+      storedFiles.set(name, keepsFile && !refile ? file : null);
+      if (conflict) notify(DRAFT_CONFLICT);
+      if (refile) void storeDraft(scope, current);
+    };
+    return enqueue(name, async () => {
+      try {
+        await write();
+      } catch (error) {
+        // The file this write tried, not one attached since.
+        const file = tried;
+        if (!file || (error instanceof StorageError && error.problem === "unavailable")) {
+          failed(error);
+          return;
+        }
+        // No room, or a browser that keeps no files (WebKit in a private window): the text is kept,
+        // the file is named, to be attached again after a reload.
+        fileless.set(name, file);
+        notify(lostFile(file.name));
+        await write().catch(failed);
+      }
+    });
+  }
+
+  /**
+   * Schedules the write of a dialogue's draft: text edits wait a little, anything else goes at once.
+   * Every write starts a new transaction, and the browser runs them in that order: an older text
+   * never lands over a newer one.
+   */
+  function queueDraft(id: string, delay: number): void {
+    const projectId = project();
+    const current = drafts.get(id);
+    const scope = projectId ? scopeOf(projectId, id) : null;
+    if (!scope || !current) return;
+    const name = scopeName(scope);
+    unsaved.set(name, { scope, draft: current, at: Date.now(), edit: ++edits });
+    const write = (): void => {
+      pendingSaves.delete(name);
+      void storeDraft(scope, current);
+    };
+    clearTimeout(pendingSaves.get(name)?.timer);
+    if (delay <= 0) write();
+    else pendingSaves.set(name, { timer: setTimeout(write, delay), write });
+  }
+
+  /**
+   * Writes every waiting edit now: before leaving a dialogue or project, and when the tab is hidden or
+   * closes. Resolves once every draft write this tab has started has landed (or failed).
+   */
+  function flushDrafts(): Promise<void> {
+    for (const pending of [...pendingSaves.values()]) {
+      clearTimeout(pending.timer);
+      pending.write();
+    }
+    return Promise.all([...writing.values()]).then(() => undefined);
+  }
+
+  /**
+   * A draft that has just been sent: a waiting write must not bring its text back. Another tab's draft
+   * written since, with other content, stays.
+   */
+  function dropDraft(scope: WorkScope, sent: Draft): void {
+    const name = scopeName(scope);
+    clearTimeout(pendingSaves.get(name)?.timer);
+    pendingSaves.delete(name);
+    fileless.delete(name);
+    unsaved.delete(name);
+    // After any write already on its way: the removal comes last.
+    void enqueue(name, async () => {
+      try {
+        if (await removeDraft(scope, draftRevs.get(name) ?? null, sent)) {
+          draftRevs.delete(name);
+          storedFiles.delete(name);
+        }
+      } catch (error) {
+        storageFailed(error);
+      }
+    });
+  }
+
+  const toRecord = (scope: WorkScope, pending: SendAttempt): StoredAttempt => ({
+    v: 1, ...scope, key: pending.key, text: pending.text, file: pending.file, state: pending.state,
+    reason: pending.reason, tries: pending.tries, createdAt: pending.createdAt,
+  });
+
+  /**
+   * A stored attempt back in memory: whatever it was doing, its outcome is unknown now. Its record is
+   * written before the first request, so that request may have gone out: a refusal of the next one
+   * proves nothing (at least one try is counted).
+   */
+  const fromRecord = (record: StoredAttempt): SendAttempt => ({
+    key: record.key, project: record.project, ticket: record.ticket, text: record.text, file: record.file,
+    state: "unknown", reason: record.state === "sending" ? ATTEMPT_RELOADED : record.reason, tries: Math.max(record.tries, 1),
+    createdAt: record.createdAt, persisted: true,
+  });
+
+  /** Follows the attempt's state in the storage; a lost update only leaves it "unknown" after a reload. */
+  function storeAttempt(pending: SendAttempt): void {
+    const scope = scopeOf(pending.project, pending.ticket);
+    if (scope && pending.persisted) void updateAttempt(toRecord(scope, pending)).catch(storageFailed);
+  }
+
+  function dropAttempt(pending: SendAttempt): void {
+    const scope = scopeOf(pending.project, pending.ticket);
+    if (scope && pending.persisted) void removeAttempt(scope, pending.key).catch(storageFailed);
+  }
+
+  /** A dialogue's stored draft and attempt, read when it is first opened in this project. */
+  async function loadWork(id: string, projectId: string): Promise<void> {
+    const at = signedIn;
+    const scope = scopeOf(projectId, id);
+    const read = async (): Promise<[StoredDraft | null, StoredAttempt | null]> => {
+      if (!scope) return [null, null];
+      // Texts left by the page before a reload, then this tab's own writes of the draft (one may have
+      // been flushed by a project switch) land first: the read sees the latest of them.
+      leftovers ??= Promise.all(takeUnsaved(scope.account).map((left) => restoreDraft(left, TAB).catch(() => undefined)))
+        .then(() => undefined);
+      await leftovers;
+      const name = scopeName(scope);
+      for (let pending = writing.get(name); pending; pending = writing.get(name)) await pending;
+      return Promise.all([
+        readDraft(scope).catch((error: unknown) => { storageFailed(error); return null; }),
+        readAttempt(scope).catch((error: unknown) => { storageFailed(error); return null; }),
+      ]);
+    };
+    // The reply box waits for the storage, not for ever: one that does not answer leaves it empty.
+    const [stored, kept] = await patience(read()).catch((error: unknown): [null, null] => {
+      storageFailed(error);
+      return [null, null];
+    });
+    if (at !== signedIn || project() !== projectId) return;
+    if (!drafts.has(id)) {
+      drafts.set(id, { text: stored?.text ?? "", file: stored?.file ?? null });
+      if (stored && scope) {
+        draftRevs.set(scopeName(scope), stored.rev);
+        storedFiles.set(scopeName(scope), stored.file);
+      }
+      if (stored?.lostFile && ticketId.value === id) {
+        workspace().show(`Вложение «${stored.lostFile}» не сохранилось в браузере: прикрепите его снова.`);
+      }
+    }
+    if (kept && !attempts.has(slot(projectId, id))) {
+      attempts.set(slot(projectId, id), fromRecord(kept));
+      if (ticketId.value === id) settleFromHistory();
+    }
+  }
 
   function touched(kind: HistoryChange): void {
     change.value = { kind, count: change.value.count + 1 };
@@ -146,6 +391,7 @@ export const useChatStore = defineStore("chat", () => {
 
   async function open(id: string): Promise<void> {
     if (sending.value) return;
+    void flushDrafts();
     remember();
     openController?.abort();
     const controller = new AbortController();
@@ -158,7 +404,9 @@ export const useChatStore = defineStore("chat", () => {
     folderMove.status = "";
     viewer.value = null;
     lastRead = "";
-    if (!drafts.has(id)) drafts.set(id, { text: "", file: null });
+    // Until the stored draft is read the reply box waits: it never shows empty and then fills.
+    const projectId = project();
+    if (!drafts.has(id) && projectId) void loadWork(id, projectId);
     const cached = cache.get(id);
     const snapshot = cached && Date.now() - cached.updatedAt < CACHE_AGE ? cached : null;
     messages.value = new Map(snapshot?.messages);
@@ -235,9 +483,17 @@ export const useChatStore = defineStore("chat", () => {
     historyUpdatedAt = Date.now();
     touched(older ? "older" : first ? "initial" : "update");
     if ([...next.values()].some((item) => item.uncertain)) workspace().show(UNCERTAIN);
-    // A message the console sent carries its key: an attempt whose answer was lost was taken after all.
+    settleFromHistory();
+  }
+
+  /**
+   * A message the console sent carries its key: an attempt with an unknown outcome whose message the
+   * history shows was taken after all. Checked after every history load and after an attempt is read
+   * back from the storage, whichever comes last.
+   */
+  function settleFromHistory(): void {
     const pending = attempt.value;
-    if (pending?.state === "unknown" && [...next.values()].some((item) => item.command === pending.key)) {
+    if (pending?.state === "unknown" && [...messages.value.values()].some((item) => item.command === pending.key)) {
       accepted(pending);
       workspace().show(SEND_FOUND);
     }
@@ -277,12 +533,15 @@ export const useChatStore = defineStore("chat", () => {
       return false;
     }
     current.file = file;
+    if (ticketId.value) queueDraft(ticketId.value, 0);
     return true;
   }
 
   function edit(text: string): void {
     const current = draft.value;
-    if (current) current.text = text;
+    if (!current || !ticketId.value) return;
+    current.text = text;
+    queueDraft(ticketId.value, DRAFT_SAVE_DELAY);
   }
 
   /**
@@ -296,29 +555,67 @@ export const useChatStore = defineStore("chat", () => {
     if (!id || !projectId || !current || sending.value) return "skipped";
     const pending = attempts.get(slot(projectId, id));
     if (pending) {
-      if (pending.text === current.text && pending.file === current.file) return deliver(pending);
+      if (pending.text === current.text && sameFile(pending.file, current.file)) {
+        workspace().show();
+        return deliver(pending);
+      }
       workspace().show(SEND_BLOCKED);
       return "blocked";
     }
     if (!current.text.trim() && !current.file) return "skipped";
     attempts.set(slot(projectId, id), {
       key: crypto.randomUUID(), project: projectId, ticket: id, text: current.text, file: current.file,
-      state: "sending", reason: "", tries: 0,
+      state: "sending", reason: "", tries: 0, createdAt: Date.now(), persisted: false,
     });
-    return deliver(attempts.get(slot(projectId, id))!);
+    const fresh = attempts.get(slot(projectId, id))!;
+    // The key is stored before the first request leaves: a reload in between keeps it. Nothing else
+    // starts meanwhile.
+    sending.value = true;
+    workspace().show();
+    const scope = scopeOf(projectId, id);
+    const storing = scope ? createAttempt(toRecord(scope, fresh)) : null;
+    try {
+      const { existing } = storing ? await patience(storing) : { existing: null };
+      if (existing) {
+        // Another tab's attempt waits in this dialogue: it is taken over here instead of a second one.
+        attempts.set(slot(projectId, id), fromRecord(existing));
+        sending.value = false;
+        workspace().show(ATTEMPT_ELSEWHERE);
+        return "blocked";
+      }
+      fresh.persisted = Boolean(scope);
+    } catch (error) {
+      // Sent anyway, safe to retry while this page lives; the banner says a reload would lose it, and
+      // every such send says it again.
+      workspace().show(error instanceof StorageError && error.problem !== "unavailable"
+        ? `${error.message} Эта отправка не переживёт обновление страницы.`
+        : STORAGE_OFF);
+      // A storage that answers late keeps the attempt after all: from then on it follows the attempt,
+      // or removes it, once the attempt is over.
+      void storing?.then(({ existing }) => {
+        if (existing) return;
+        fresh.persisted = true;
+        if (attempts.get(slot(projectId, id)) === fresh) storeAttempt(fresh);
+        else dropAttempt(fresh);
+      }, () => undefined);
+    }
+    return deliver(fresh);
   }
 
   /** Sends the open dialogue's attempt with an unknown outcome again: its own text, file and key. */
   async function retrySend(): Promise<SendOutcome> {
     const pending = attempt.value;
     if (!pending || sending.value) return "skipped";
+    workspace().show();
     return deliver(pending);
   }
 
   /** The operator gives up an attempt with an unknown outcome (for example, seen in Telegram); the draft stays. */
   function forgetAttempt(): void {
     const pending = attempt.value;
-    if (pending?.state === "unknown") attempts.delete(slot(pending.project, pending.ticket));
+    if (pending?.state !== "unknown") return;
+    attempts.delete(slot(pending.project, pending.ticket));
+    dropAttempt(pending);
   }
 
   /** One request of an attempt, bounded by its deadline; one at a time. */
@@ -333,7 +630,7 @@ export const useChatStore = defineStore("chat", () => {
     pending.state = "sending";
     pending.tries++;
     sending.value = true;
-    workspace().show();
+    storeAttempt(pending);
     try {
       await session.api(`tickets/${pending.ticket}/send`, {
         method: "POST", form, key: pending.key, signal: controller.signal,
@@ -343,6 +640,7 @@ export const useChatStore = defineStore("chat", () => {
       if (refused(error) && pending.tries === 1) {
         // Nothing was saved: the attempt is over and the draft is there to be fixed.
         attempts.delete(slot(pending.project, pending.ticket));
+        dropAttempt(pending);
         workspace().fail(error);
         return "rejected";
       }
@@ -351,6 +649,9 @@ export const useChatStore = defineStore("chat", () => {
       pending.reason = controller.signal.aborted
         ? `Сервер не ответил за ${seconds >= 120 ? `${Math.round(seconds / 60)} мин` : `${seconds} с`}.`
         : error instanceof Error && error.message ? error.message : FAILED;
+      // Cut off by the page being left: the stored "sending" stays, and after the reload the attempt
+      // says the page was reloaded, not that the connection failed.
+      if (!leaving) storeAttempt(pending);
       return "unknown";
     } finally {
       clearTimeout(deadline);
@@ -374,11 +675,34 @@ export const useChatStore = defineStore("chat", () => {
   /** The server took the attempt: it ends, and so does a draft that still holds just what was sent. */
   function accepted(pending: SendAttempt): void {
     attempts.delete(slot(pending.project, pending.ticket));
+    dropAttempt(pending);
     if (project() !== pending.project) return;
     const current = drafts.get(pending.ticket);
-    if (current && current.text === pending.text && current.file === pending.file) {
+    if (current && current.text === pending.text && sameFile(current.file, pending.file)) {
       drafts.set(pending.ticket, { text: "", file: null });
+      const scope = scopeOf(pending.project, pending.ticket);
+      if (scope) dropDraft(scope, { text: pending.text, file: pending.file });
     }
+  }
+
+  /**
+   * Leaves the open dialogue for the list; its draft stays (a dialogue restored after a reload that is
+   * gone or no longer allowed).
+   */
+  function close(): void {
+    void flushDrafts();
+    epoch++;
+    openController?.abort();
+    openController = null;
+    ticketId.value = null;
+    detail.value = null;
+    heading.value = {};
+    messages.value = new Map();
+    opening.value = false;
+    unavailable.value = false;
+    viewer.value = null;
+    touched("initial");
+    workspace().dialogueOpen = false;
   }
 
   async function retry(message: Message): Promise<void> {
@@ -438,8 +762,12 @@ export const useChatStore = defineStore("chat", () => {
     }
   }
 
-  /** For another project or after sign-out: nothing of the dialogue, its drafts or caches remains. */
+  /**
+   * For another project or after sign-out: nothing of the dialogue, its drafts or caches remains in
+   * memory. Waiting draft writes go to the storage first: the drafts come back with their dialogues.
+   */
   function reset(): void {
+    void flushDrafts();
     epoch++;
     openController?.abort();
     openController = null;
@@ -463,17 +791,55 @@ export const useChatStore = defineStore("chat", () => {
     lastRead = "";
     touched("initial");
   }
-  // Attempts outlive a project switch (reset), not the session: another account may sign in.
+  // Attempts outlive a project switch (reset), not the session: another account may sign in. Their
+  // stored copies stay with the account (an explicit sign-out removes them, see AccountMenu).
   session.onSessionEnd(() => {
+    void flushDrafts();
     signedIn++;
     reset();
     attempts.clear();
+    draftRevs.clear();
+    fileless.clear();
+    storedFiles.clear();
+    unsaved.clear();
+    leftovers = null;
+    storageWarned = false;
   });
+  // The browser may end the page at any time after it is hidden: waiting edits are written then.
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") void flushDrafts();
+    });
+    window.addEventListener("pagehide", () => {
+      leaving = true;
+      void flushDrafts();
+      keepUnsaved([...unsaved.values()].map(({ scope, draft, at }) => ({ ...scope, text: draft.text, at })));
+    });
+    window.addEventListener("pageshow", (event) => {
+      leaving = false;
+      // Back from the back/forward cache: the page goes on with its own state, the kept texts are stale.
+      if (event.persisted) keepUnsaved([]);
+    });
+    // Firefox and WebKit end the page's requests as soon as a reload starts, before "pagehide". While a
+    // send runs, "beforeunload" marks the page as being left; only then, as Firefox keeps no page with
+    // that listener in its back/forward cache. A page that stays (a download) is unmarked when the send ends.
+    const markLeaving = (): void => {
+      leaving = true;
+    };
+    watch(sending, (value) => {
+      if (value) {
+        window.addEventListener("beforeunload", markLeaving);
+      } else {
+        window.removeEventListener("beforeunload", markLeaving);
+        leaving = false;
+      }
+    });
+  }
 
   return {
     ticketId, detail, heading, messages, ordered, before, hasOlder, loadingOlder, opening, sending,
     lifecycleBusy, unavailable, folderMove, change, viewer, drafts, draft, attempts, attempt, closed,
-    open, syncDetail, syncMessages, loadOlder, markRead, attach, edit, send, retrySend, forgetAttempt, retry,
-    toggleClosed, moveToFolder, reset,
+    open, close, syncDetail, syncMessages, loadOlder, markRead, attach, edit, send, retrySend, forgetAttempt, retry,
+    toggleClosed, moveToFolder, flushDrafts, reset,
   };
 });

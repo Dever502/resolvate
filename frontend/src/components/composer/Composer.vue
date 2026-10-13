@@ -222,6 +222,13 @@ watch(() => [chat.ticketId, projects.currentId], async () => {
   field.value?.focus({ preventScroll: true });
 }, { immediate: true });
 
+// The draft read from the browser's storage arrives after the dialogue opens: the box takes its height.
+watch(() => chat.draft !== null, async (ready) => {
+  if (!ready) return;
+  await nextTick();
+  resize();
+});
+
 onUnmounted(closeReplies);
 </script>
 
@@ -239,13 +246,13 @@ onUnmounted(closeReplies);
         class="icon-button"
         label="Прикрепить файл"
         description="Фото, MP4/MOV, PDF или голосовое OGG/Opus до 20 МБ"
-        :disabled="chat.sending"
+        :disabled="chat.sending || !chat.draft"
         @click="picker?.click()"
       >
         <Icon name="attach" />
       </IconButton>
       <input ref="picker" type="file" :accept="ACCEPT" hidden @change="onFile" />
-      <IconButton class="icon-button" label="Готовые ответы" :disabled="chat.sending"
+      <IconButton class="icon-button" label="Готовые ответы" :disabled="chat.sending || !chat.draft"
         :aria-expanded="repliesOpen" @click="openByButton"><span aria-hidden="true">/</span></IconButton>
       <textarea
         ref="field"
@@ -258,6 +265,7 @@ onUnmounted(closeReplies);
         :aria-controls="repliesOpen ? listId : undefined"
         :aria-activedescendant="repliesOpen && options.length ? `${listId}-${active}` : undefined"
         :disabled="chat.sending"
+        :readonly="!chat.draft"
         @input="onInput"
         @keydown="onKeyDown"
       />
