@@ -64,7 +64,9 @@ function resize(): void {
   const element = field.value;
   if (!element) return;
   element.style.height = "auto";
-  if (element.getClientRects().length) element.style.height = `${Math.min(MAX_HEIGHT, element.scrollHeight)}px`;
+  // An empty textarea's scrollHeight includes its placeholder, which can wrap in wider system
+  // fonts on phones. Only the operator's text should grow the box; CSS keeps an empty row compact.
+  if (element.value && element.getClientRects().length) element.style.height = `${Math.min(MAX_HEIGHT, element.scrollHeight)}px`;
 }
 
 function closeReplies(): void {

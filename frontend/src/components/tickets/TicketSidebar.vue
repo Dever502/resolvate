@@ -65,7 +65,7 @@ function more(): void {
         {{ tickets.archived ? "Архив" : "Диалоги" }}
       </h1>
       <IconButton
-        class="quiet min-h-11 min-w-11 shrink-0 p-2"
+        class="quiet shrink-0 p-2"
         :label="tickets.archived ? 'К активным диалогам' : 'Открыть архив'"
         aria-controls="ticket-list"
         :disabled="!projects.currentId"

@@ -2,7 +2,7 @@ import { IDBFactory, IDBKeyRange as FakeKeyRange, IDBObjectStore as FakeObjectSt
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   RECORD_VERSION, StorageError, WORK_DB, clearWork, closeWork, countWork, createAttempt, fileBytes, readAttempt, readDraft,
-  removeAttempt, removeDraft, restoreDraft, updateAttempt, writeDraft, type StoredAttempt, type StoredDraft, type WorkScope,
+  removeAttempt, removeDraft, restoreDraft, sameFile, updateAttempt, writeDraft, type StoredAttempt, type StoredDraft, type WorkScope,
 } from "./workStore";
 
 // The storage layer against a spec-following IndexedDB (fake-indexeddb): happy-dom has none. The real
@@ -24,6 +24,27 @@ describe("work store", () => {
     await closeWork();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+  });
+
+  it("compares actual file content and keeps another tab's same-metadata replacement", async () => {
+    const file = (bytes: string) => new File([bytes], "same.png", { type: "image/png", lastModified: 1000 });
+    const original = file("AAAA");
+    const replacement = file("BBBB");
+    expect(await sameFile(original, file("AAAA"))).toBe(true);
+    expect(await sameFile(original, replacement)).toBe(false);
+    const first = draft("caption", { file: original });
+    await writeDraft(first, null, { bytes: await fileBytes(original) });
+    await writeDraft(draft("caption", { file: replacement, tab: "another-tab" }), first.rev, { bytes: await fileBytes(replacement) });
+    expect(await removeDraft(anna, first.rev, { text: "caption", file: original })).toBe(false);
+    expect(await (await readDraft(anna))?.file?.text()).toBe("BBBB");
+    expect(await removeDraft(anna, first.rev, { text: "caption", file: file("BBBB") })).toBe(true);
+  });
+
+  it("an unreadable file is never assumed equal", async () => {
+    const original = new File(["AAAA"], "same.png", { lastModified: 1000 });
+    const broken = new File(["AAAA"], "same.png", { lastModified: 1000 });
+    vi.spyOn(broken, "arrayBuffer").mockRejectedValue(new Error("unreadable"));
+    expect(await sameFile(original, broken)).toBe(false);
   });
 
   it("keeps a draft; an empty draft is removed", async () => {

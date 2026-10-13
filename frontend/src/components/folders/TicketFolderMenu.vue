@@ -33,7 +33,8 @@ async function move(value: string): Promise<void> {
 </script>
 
 <template>
-  <div class="flex flex-wrap items-center gap-2 border-b border-border px-5 py-2 compact:px-4 narrow:px-3">
+  <!-- The menu button is 44 px tall: the row's padding gives back what it adds. -->
+  <div class="flex flex-wrap items-center gap-2 border-b border-border px-5 py-1 compact:px-4 narrow:px-3">
     <span class="text-xs text-muted" aria-hidden="true">Папка</span>
     <MenuSelect
       class="max-w-[min(20rem,75%)]"

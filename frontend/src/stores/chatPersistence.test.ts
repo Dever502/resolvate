@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MessagePage, TicketDetail } from "../api/types";
 import { keepUnsaved } from "../lib/navigation";
+import * as workStore from "../lib/workStore";
 import { closeWork, createAttempt, readAttempt, readDraft, writeDraft, type WorkScope } from "../lib/workStore";
 import { ATTEMPT_ELSEWHERE, ATTEMPT_RELOADED, DRAFT_CONFLICT, STORAGE_OFF, useChatStore } from "./chat";
 import { useProjectsStore } from "./projects";
@@ -65,8 +66,118 @@ describe("persistent drafts and send attempts", () => {
     vi.clearAllTimers();
     vi.useRealTimers();
     await closeWork();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
     sessionStorage.clear();
+  });
+
+  it.each(["success", "existing", "failure", "timeout"])("a storage %s after an account switch never sends or changes the new session", async (outcome) => {
+    const sent = serve();
+    const chat = start();
+    await openReady(chat);
+    chat.edit("Private reply from the previous account");
+    let resolve!: (value: { existing: workStore.StoredAttempt | null }) => void;
+    let reject!: (error: Error) => void;
+    vi.spyOn(workStore, "createAttempt").mockImplementationOnce(() => new Promise((yes, no) => { resolve = yes; reject = no; }));
+    const sending = chat.send();
+    expect(chat.sending).toBe(true);
+    const session = useSessionStore();
+    session.signOut();
+    session.signIn({ account: operator("a2"), csrf: "new-csrf" });
+    useProjectsStore().currentId = "p1";
+    await openReady(chat);
+    chat.edit("New account's draft");
+    useWorkspaceStore().show("New session notice");
+    if (outcome === "failure") reject(new Error("storage failed"));
+    else if (outcome === "timeout") await vi.advanceTimersByTimeAsync(workStore.STORAGE_PATIENCE);
+    else resolve({ existing: outcome === "existing" ? {
+      v: 1, ...anna, key: "old-attempt", text: "Old reply", file: null,
+      state: "unknown", reason: "offline", tries: 1, createdAt: Date.now(),
+    } : null });
+    expect(await sending).toBe("skipped");
+    expect(sent).toEqual([]);
+    expect(chat.draft?.text).toBe("New account's draft");
+    expect(chat.attempt).toBeNull();
+    expect(chat.sending).toBe(false);
+    expect(useWorkspaceStore().notice).toBe("New session notice");
+    // A still later storage completion also cannot adopt anything into the new account.
+    if (outcome === "timeout") resolve({ existing: null });
+    await chat.flushDrafts();
+  });
+
+  it.each([false, true])("different file bytes with identical metadata stay a new draft (reload: %s)", async (reload) => {
+    let fail = true;
+    const sent = serve(() => {
+      if (fail) throw new TypeError("offline");
+      return new Response(JSON.stringify({ id: "m1" }));
+    });
+    let chat = start();
+    await openReady(chat);
+    chat.edit("Same caption");
+    chat.attach(new File(["AAAA"], "same.png", { type: "image/png", lastModified: 1000 }));
+    await chat.flushDrafts();
+    expect(await chat.send()).toBe("unknown");
+    chat.attach(new File(["BBBB"], "same.png", { type: "image/png", lastModified: 1000 }));
+    await chat.flushDrafts();
+    if (reload) {
+      chat = start();
+      await openReady(chat);
+    }
+    expect(await chat.send()).toBe("blocked");
+    expect(sent).toHaveLength(1);
+    fail = false;
+    expect(await chat.retrySend()).toBe("accepted");
+    expect(sent[1]?.key).toBe(sent[0]?.key);
+    expect(await chat.draft?.file?.text()).toBe("BBBB");
+    expect(await (await readDraft(anna))?.file?.text()).toBe("BBBB");
+  });
+
+  it.each([false, true])("file comparison stays single-flight and cannot clear a new session (switch: %s)", async (switchAccount) => {
+    const sent = serve();
+    const chat = start();
+    await openReady(chat);
+    chat.edit("Original reply");
+    let finish!: (equal: boolean) => void;
+    vi.spyOn(workStore, "sameFile").mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const sending = chat.send();
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    expect(chat.sending).toBe(true);
+    expect(await chat.send()).toBe("skipped");
+    expect(sent).toHaveLength(1);
+    if (switchAccount) {
+      const session = useSessionStore();
+      session.signOut();
+      session.signIn({ account: operator("a2"), csrf: "new-csrf" });
+      useProjectsStore().currentId = "p1";
+      await openReady(chat);
+      chat.edit("New account's draft");
+    }
+    finish(true);
+    expect(await sending).toBe(switchAccount ? "skipped" : "accepted");
+    expect(chat.draft?.text).toBe(switchAccount ? "New account's draft" : "");
+    await chat.flushDrafts();
+  });
+
+  it("a timed-out storage write finishing after sign-out never updates work under the new account", async () => {
+    serve(() => { throw new TypeError("offline"); });
+    const chat = start();
+    await openReady(chat);
+    chat.edit("Old reply");
+    let finish!: (value: { existing: null }) => void;
+    vi.spyOn(workStore, "createAttempt").mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const update = vi.spyOn(workStore, "updateAttempt");
+    const remove = vi.spyOn(workStore, "removeAttempt");
+    const sending = chat.send();
+    await vi.advanceTimersByTimeAsync(workStore.STORAGE_PATIENCE);
+    expect(await sending).toBe("unknown");
+    const session = useSessionStore();
+    session.signOut();
+    session.signIn({ account: operator("a2"), csrf: "new-csrf" });
+    finish({ existing: null });
+    await Promise.resolve();
+    expect(update).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+    await chat.flushDrafts();
   });
 
   it("a draft survives a reload; of fast edits the last one is kept", async () => {

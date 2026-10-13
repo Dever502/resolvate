@@ -36,7 +36,9 @@ defineExpose({ focus: () => trigger.value?.$el.focus() });
 <template>
   <div class="shrink-0">
     <DropdownMenuRoot :modal="false">
-      <DropdownMenuTrigger ref="trigger" class="quiet min-w-9 px-2" :aria-label="props.label" :disabled="disabled">
+      <!-- A 44×44 hit area in the 36×36 room of the icon's button: the group's name and the reply's text keep
+           their width, the card and the pane head their height. -->
+      <DropdownMenuTrigger ref="trigger" class="quiet -m-1 min-h-11 min-w-11" :aria-label="props.label" :disabled="disabled">
         <Icon name="more" />
       </DropdownMenuTrigger>
       <DropdownMenuPortal>

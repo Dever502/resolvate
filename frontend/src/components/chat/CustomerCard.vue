@@ -40,7 +40,8 @@ onUnmounted(() => document.removeEventListener("keydown", onKeyDown));
   <aside id="customer-card" class="customer-card" aria-labelledby="customer-card-title">
     <header class="flex items-start justify-between gap-4">
       <h2 id="customer-card-title" class="mt-1.5 text-[1.0625rem]">О клиенте</h2>
-      <IconButton class="quiet min-w-9 shrink-0" label="Закрыть карточку" @click="close">
+      <!-- The 44×44 hit area keeps the 38×36 room of the icon's button, as in ui/ModalDialog.vue. -->
+      <IconButton class="quiet -my-1 -mr-1.5 shrink-0" label="Закрыть карточку" @click="close">
         <Icon name="close" />
       </IconButton>
     </header>

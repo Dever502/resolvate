@@ -41,7 +41,9 @@ const blocked = computed(() => props.locked || requests.value > 0);
             <DialogTitle class="m-0 text-xl [overflow-wrap:anywhere]">{{ title }}</DialogTitle>
             <DialogDescription v-if="description" class="muted mt-2 mb-0 text-sm">{{ description }}</DialogDescription>
           </div>
-          <DialogClose class="quiet min-w-9 shrink-0" :aria-label="closeLabel" :disabled="blocked">
+          <!-- A 44×44 hit area that takes no more room than the 38×36 button of the icon: the negative margins
+               keep the title's width and the header's height, the extra reaches into the window's padding. -->
+          <DialogClose class="quiet -my-1 -mr-1.5 min-h-11 min-w-11 shrink-0" :aria-label="closeLabel" :disabled="blocked">
             <Icon name="close" />
           </DialogClose>
         </header>
