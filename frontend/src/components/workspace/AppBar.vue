@@ -19,7 +19,7 @@ watch(() => projects.currentId, () => { catalogOpen.value = false; });
 
 <template>
   <header
-    class="grid min-h-[76px] shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-6 bg-chrome px-6 py-3.5 text-white compact:gap-4 compact:px-4 narrow:gap-x-2 narrow:gap-y-4"
+    class="chrome grid min-h-[76px] shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-6 px-6 py-3.5 compact:gap-4 compact:px-4 narrow:gap-x-2 narrow:gap-y-4"
     :class="{ 'narrow:min-h-0 narrow:py-2': workspace.dialogueOpen }"
     aria-label="Проект и управление"
   >
@@ -40,7 +40,7 @@ watch(() => projects.currentId, () => { catalogOpen.value = false; });
         class="narrow:col-start-1 narrow:row-start-1 narrow:justify-self-start"
         :class="{ 'narrow:hidden': workspace.dialogueOpen }"
       />
-      <button type="button" class="quiet text-sm text-white narrow:col-start-3 narrow:row-start-1 narrow:justify-self-end"
+      <button type="button" class="quiet text-sm narrow:col-start-3 narrow:row-start-1 narrow:justify-self-end"
         :class="{ 'narrow:hidden': workspace.dialogueOpen }" aria-label="Управление готовыми ответами"
         :disabled="!projects.currentId" @click="catalogOpen = true"><span><span class="narrow:hidden">Готовые </span>ответы</span></button>
     </div>

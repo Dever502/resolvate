@@ -51,6 +51,8 @@
   --slate-text: #46617a;
   --sand-bg: #eee8d8;
   --sand-text: #736035;
+  /* Resolved on the root with the theme's accent; a color context (.chrome) sets its own. */
+  --focus-ring: var(--accent);
 }
 :root[data-theme="dark"] {
   --text: #e7e9ee;
@@ -159,7 +161,7 @@
   button:active:not(:disabled, [aria-disabled="true"]) { transition-duration: 0ms; }
   button:focus-visible, a:focus-visible, input:focus-visible,
   textarea:focus-visible, select:focus-visible, summary:focus-visible {
-    outline: 3px solid var(--accent);
+    outline: 3px solid var(--focus-ring);
     outline-offset: 3px;
   }
   h1, h2, h3, p { margin-top: 0; }
@@ -186,6 +188,21 @@
 }
 
 @layer components {
+  /* Interactive colors follow the surface they sit on, not the theme: the dark app bar stays dark in
+     the light theme too, so its controls take text, hover, pressed and focus colors from this context
+     (derived from --chrome), and the shared .quiet / .secondary / .icon-button rules need nothing else.
+     Menus and dialogs opened from it are portalled out of it and keep the page's colors. */
+  .chrome {
+    --text: #fff;
+    --muted: var(--chrome-muted);
+    --hover: color-mix(in oklab, var(--chrome), #fff 12%);
+    --pressed: color-mix(in oklab, var(--chrome), #fff 20%);
+    --focus-ring: #a9beff;
+    background: var(--chrome);
+    color: var(--text);
+  }
+  /* On the chrome a quiet action is as bright as its text. */
+  .chrome .quiet { color: var(--text); }
   .muted, .hint { color: var(--muted); }
   .small { font-size: .8125rem; }
   .hint { font-size: .8125rem; text-align: center; margin: 1.5rem 0 0; }
@@ -259,9 +276,8 @@
   .menu-select:hover:not(:disabled) { background: var(--hover); }
   /* The app bar: the chevron follows the name at a fixed gap and turns up while Reka marks the button
      open; the button keeps the full width of its column as the hit area. */
-  .menu-select-chrome { gap: .5rem; min-height: 0; padding: .125rem 0; border: 0; border-radius: 4px; background: transparent; color: #fff; font-size: .9375rem; font-weight: 600; }
-  .menu-select-chrome:hover:not(:disabled) { background: transparent; color: var(--chrome-muted); }
-  .menu-select-chrome:focus-visible { outline-color: #a9beff; }
+  .menu-select-chrome { gap: .5rem; min-height: 0; padding: .125rem 0; border: 0; border-radius: 4px; background: transparent; color: var(--text); font-size: .9375rem; font-weight: 600; }
+  .menu-select-chrome:hover:not(:disabled) { background: transparent; color: var(--muted); }
   .menu-select-chrome .menu-select-chevron { transition: transform 150ms ease-out; }
   .menu-select-chrome[data-state="open"] .menu-select-chevron { transform: rotate(180deg); }
   .menu { z-index: 60; min-width: max(var(--reka-dropdown-menu-trigger-width, 0px), 12rem); max-width: min(24rem, calc(100vw - 1rem)); max-height: min(var(--reka-dropdown-menu-content-available-height, 22rem), 22rem); overflow-y: auto; padding: .375rem; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); box-shadow: 0 6px 32px #1d1d1f26; }
@@ -384,8 +400,7 @@
 
   /* Administration: the app bar menu, rows of projects, members and accounts, forms and the
      employee search (staff/StaffPicker.vue, a Reka combobox). */
-  .admin-trigger { position: relative; color: #fff; font-size: .875rem; }
-  .admin-trigger:focus-visible { outline-color: #a9beff; }
+  .admin-trigger { position: relative; font-size: .875rem; }
   /* The narrow-screen label of the icon, styled as .tooltip (see workspace/AdminMenu.vue). */
   .admin-trigger-label { display: none; position: absolute; z-index: 50; top: calc(100% + 6px); left: 0; padding: .375rem .625rem; border: 1px solid transparent; border-radius: 6px; background: var(--chrome); color: #fff; font-size: .8125rem; font-weight: 400; line-height: 1.4; white-space: nowrap; box-shadow: 0 4px 16px rgb(0 0 0 / 18%); pointer-events: none; }
   :root[data-theme="dark"] .admin-trigger-label { border-color: var(--border); }
