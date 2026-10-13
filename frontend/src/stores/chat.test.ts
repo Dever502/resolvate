@@ -2,8 +2,8 @@ import { createPinia, setActivePinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Message, MessagePage, TicketDetail } from "../api/types";
 import {
-  CACHE_AGE, FILE_TOO_LARGE, MAX_FILE_BYTES, SEND_BLOCKED, SEND_FOUND, SEND_REFRESH_FAILED, SEND_TIMEOUT, UNCERTAIN,
-  UPLOAD_RATE, sendDeadline, useChatStore,
+  CACHE_AGE, FILE_TOO_LARGE, MAX_FILE_BYTES, READ_RETRY_DELAY, SEND_BLOCKED, SEND_FOUND, SEND_REFRESH_FAILED, SEND_TIMEOUT,
+  UNCERTAIN, UPLOAD_RATE, sendDeadline, useChatStore,
 } from "./chat";
 import { useProjectsStore } from "./projects";
 import { useSessionStore } from "./session";
@@ -429,5 +429,104 @@ describe("chat store", () => {
     chat.markRead("a");
     chat.markRead("a");
     await vi.waitFor(() => expect(calls.filter((call) => call.path === "tickets/t1/read/a")).toHaveLength(1));
+    // The confirmed receipt reloads the dialogue list (its unread counts).
+    await vi.waitFor(() => expect(calls.some((call) => call.path === "tickets/sync")).toBe(true));
+  });
+
+  describe("read receipts", () => {
+    /** The project API with a quiet dialogue list; `read` answers the receipts. */
+    function serve(read: (path: string) => unknown = () => ({ ok: true })): Call[] {
+      return api((path) => {
+        if (path.includes("/read/")) return read(path);
+        if (path === "folders") return [];
+        if (path === "tickets/sync") return { order: ["t1", "t2"], items: [] };
+        if (path.endsWith("/sync")) return page([message(`${path.split("/")[1]}-a`, 1), message(`${path.split("/")[1]}-b`, 2)]);
+        return detail(path.split("/")[1] ?? "t1");
+      });
+    }
+    const reads = (calls: Call[]) => calls.filter((call) => call.path.includes("/read/")).map((call) => call.path);
+    const lists = (calls: Call[]) => calls.filter((call) => call.path === "tickets/sync").length;
+
+    it("sends only a message newer than one confirmed or on its way; reopening sends nothing again", async () => {
+      const chat = useChatStore();
+      let confirm!: (value: unknown) => void;
+      const calls = serve((path) => (path.endsWith("/t1-b") ? new Promise((resolve) => { confirm = resolve; }) : { ok: true }));
+      await chat.open("t1");
+      chat.markRead("t1-b");
+      // Scroll events on the same message, and an older one: nothing more while it is on its way.
+      chat.markRead("t1-b");
+      chat.markRead("t1-a");
+      await vi.waitFor(() => expect(reads(calls)).toEqual(["tickets/t1/read/t1-b"]));
+      confirm(new Response(JSON.stringify({ ok: true })));
+      // Confirmed: the dialogue list is reloaded at once for its unread counts.
+      await vi.waitFor(() => expect(lists(calls)).toBe(1));
+      await chat.open("t2");
+      await chat.open("t1");
+      chat.markRead("t1-b");
+      chat.markRead("t1-a");
+      expect(reads(calls)).toEqual(["tickets/t1/read/t1-b"]);
+    });
+
+    it("a failed receipt is not repeated by every scroll event, and goes again after a while", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      const chat = useChatStore();
+      let fail = true;
+      const calls = serve(() => (fail ? new Response(JSON.stringify({ detail: "Сервис недоступен." }), { status: 503 }) : { ok: true }));
+      await chat.open("t1");
+      chat.markRead("t1-b");
+      await vi.waitFor(() => expect(useWorkspaceStore().notice).toBe("Сервис недоступен."));
+      chat.markRead("t1-b");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(reads(calls)).toHaveLength(1);
+      // The list keeps the server's count: nothing was confirmed.
+      expect(lists(calls)).toBe(0);
+      fail = false;
+      vi.setSystemTime(Date.now() + READ_RETRY_DELAY);
+      chat.markRead("t1-b");
+      await vi.waitFor(() => expect(lists(calls)).toBe(1));
+      expect(reads(calls)).toHaveLength(2);
+    });
+
+    it("an answer after another dialogue opened keeps to its own dialogue", async () => {
+      const chat = useChatStore();
+      let answer!: (value: unknown) => void;
+      const calls = serve(() => new Promise((resolve) => { answer = resolve; }));
+      await chat.open("t1");
+      chat.markRead("t1-b");
+      await vi.waitFor(() => expect(reads(calls)).toHaveLength(1));
+      await chat.open("t2");
+      answer(new Response(JSON.stringify({ detail: "Сервис недоступен." }), { status: 503 }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      // The failure belongs to Анна's dialogue: nothing is said in the one now open.
+      expect(useWorkspaceStore().notice).not.toBe("Сервис недоступен.");
+      expect(chat.ticketId).toBe("t2");
+    });
+
+    it("a receipt confirmed after a switch to another project does not reload that project's list", async () => {
+      const chat = useChatStore();
+      let confirm!: (value: unknown) => void;
+      const calls = serve(() => new Promise((resolve) => { confirm = resolve; }));
+      await chat.open("t1");
+      chat.markRead("t1-b");
+      await vi.waitFor(() => expect(reads(calls)).toHaveLength(1));
+      useProjectsStore().currentId = "p2";
+      confirm(new Response(JSON.stringify({ ok: true })));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(calls.filter((call) => call.path.endsWith("tickets/sync"))).toHaveLength(0);
+    });
+
+    it("\"to the latest\" is asked only for the open dialogue and dropped when another one opens", async () => {
+      const chat = useChatStore();
+      serve();
+      chat.jumpToLatest("t1");
+      expect(chat.jump).toBeNull();
+      void chat.open("t1");
+      chat.jumpToLatest("t2");
+      expect(chat.jump).toBeNull();
+      chat.jumpToLatest("t1");
+      expect(chat.jump).toEqual({ ticket: "t1" });
+      void chat.open("t2");
+      expect(chat.jump).toBeNull();
+    });
   });
 });

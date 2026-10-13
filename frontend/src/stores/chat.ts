@@ -40,6 +40,8 @@ const TAB = crypto.randomUUID();
 export const MAX_FILE_BYTES = 20 * 1024 * 1024;
 /** A dialogue opened again within this time shows its cached history at once, then refreshes it. */
 export const CACHE_AGE = 120_000;
+/** A read receipt that failed is sent again on a later look at the history, not on every scroll event. */
+export const READ_RETRY_DELAY = 5_000;
 export const CACHE_TICKETS = 20;
 export const CACHE_MESSAGES = 200;
 
@@ -160,7 +162,16 @@ export const useChatStore = defineStore("chat", () => {
   let messageRequest = 0;
   let historyUpdatedAt = 0;
   let openController: AbortController | null = null;
-  let lastRead = "";
+  /** Read receipts by `project/ticket`: confirmed by the server, on their way, and the last that failed. */
+  const readMarks = new Map<string, Message>();
+  const reading = new Map<string, Message>();
+  const readFailed = new Map<string, { id: string; at: number }>();
+  /**
+   * "To the latest message" asked for a dialogue (a double-click on its row, or its row on a phone
+   * where the list covered it). components/chat/MessageList.vue does it once that dialogue's current
+   * history is loaded and shown; opening another dialogue drops it.
+   */
+  const jump = ref<{ ticket: string } | null>(null);
 
   const ordered = computed(() => [...messages.value.values()].sort(byTime));
   const draft = computed(() => (ticketId.value ? drafts.get(ticketId.value) ?? null : null));
@@ -403,7 +414,7 @@ export const useChatStore = defineStore("chat", () => {
     folderMove.busy = false;
     folderMove.status = "";
     viewer.value = null;
-    lastRead = "";
+    if (jump.value?.ticket !== id) jump.value = null;
     // Until the stored draft is read the reply box waits: it never shows empty and then fills.
     const projectId = project();
     if (!drafts.has(id) && projectId) void loadWork(id, projectId);
@@ -512,17 +523,46 @@ export const useChatStore = defineStore("chat", () => {
     }
   }
 
-  /** Marks the history read up to `messageId`; sent once per message, without holding up anything. */
+  /**
+   * Tells the server the operator has seen the open dialogue up to `messageId`: its latest message,
+   * in view (components/chat/MessageList.vue decides that). Sent once per message and never for one
+   * that is not newer than a receipt confirmed or on its way: the server only moves the position
+   * forward. A failed receipt waits a little before it is tried again. Once the server confirms one,
+   * the dialogue list is synced at once: the unread counts come from the server, with whatever
+   * arrived meanwhile, instead of waiting for the next poll.
+   */
   function markRead(messageId: string): void {
     const id = ticketId.value;
-    if (!id || messageId === lastRead) return;
-    lastRead = messageId;
-    const at = epoch;
-    session.api(`tickets/${id}/read/${messageId}`, { method: "POST" }, project()).catch((error: unknown) => {
-      if (at !== epoch) return;
-      lastRead = "";
-      workspace().fail(error);
+    const projectId = project();
+    const message = messages.value.get(messageId);
+    if (!id || !projectId || !message) return;
+    const key = slot(projectId, id);
+    for (const known of [readMarks.get(key), reading.get(key)]) {
+      if (known && byTime(message, known) <= 0) return;
+    }
+    const failed = readFailed.get(key);
+    if (failed?.id === messageId && Date.now() - failed.at < READ_RETRY_DELAY) return;
+    reading.set(key, message);
+    const at = signedIn;
+    session.api(`tickets/${id}/read/${messageId}`, { method: "POST" }, projectId).then(() => {
+      if (at !== signedIn) return;
+      if (reading.get(key) === message) reading.delete(key);
+      if (readFailed.get(key)?.id === messageId) readFailed.delete(key);
+      const confirmed = readMarks.get(key);
+      if (!confirmed || byTime(message, confirmed) > 0) readMarks.set(key, message);
+      // A list that fails to reload now is reported by the next live refresh.
+      if (project() === projectId) useTicketsStore().sync().catch(() => undefined);
+    }, (error: unknown) => {
+      if (at !== signedIn) return;
+      if (reading.get(key) === message) reading.delete(key);
+      readFailed.set(key, { id: messageId, at: Date.now() });
+      if (ticketId.value === id && project() === projectId) workspace().fail(error);
     });
+  }
+
+  /** Asks for the latest message of the open (or opening) dialogue; another dialogue's request is ignored. */
+  function jumpToLatest(id: string): void {
+    if (ticketId.value === id) jump.value = { ticket: id };
   }
 
   function attach(file: File | null): boolean {
@@ -701,6 +741,7 @@ export const useChatStore = defineStore("chat", () => {
     opening.value = false;
     unavailable.value = false;
     viewer.value = null;
+    jump.value = null;
     touched("initial");
     workspace().dialogueOpen = false;
   }
@@ -788,7 +829,7 @@ export const useChatStore = defineStore("chat", () => {
     drafts.clear();
     cache.clear();
     historyUpdatedAt = 0;
-    lastRead = "";
+    jump.value = null;
     touched("initial");
   }
   // Attempts outlive a project switch (reset), not the session: another account may sign in. Their
@@ -804,6 +845,9 @@ export const useChatStore = defineStore("chat", () => {
     unsaved.clear();
     leftovers = null;
     storageWarned = false;
+    readMarks.clear();
+    reading.clear();
+    readFailed.clear();
   });
   // The browser may end the page at any time after it is hidden: waiting edits are written then.
   if (typeof document !== "undefined") {
@@ -838,8 +882,8 @@ export const useChatStore = defineStore("chat", () => {
 
   return {
     ticketId, detail, heading, messages, ordered, before, hasOlder, loadingOlder, opening, sending,
-    lifecycleBusy, unavailable, folderMove, change, viewer, drafts, draft, attempts, attempt, closed,
-    open, close, syncDetail, syncMessages, loadOlder, markRead, attach, edit, send, retrySend, forgetAttempt, retry,
-    toggleClosed, moveToFolder, flushDrafts, reset,
+    lifecycleBusy, unavailable, folderMove, change, viewer, drafts, draft, attempts, attempt, closed, jump,
+    open, close, syncDetail, syncMessages, loadOlder, markRead, jumpToLatest, attach, edit, send, retrySend, forgetAttempt,
+    retry, toggleClosed, moveToFolder, flushDrafts, reset,
   };
 });
