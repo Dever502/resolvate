@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, useTemplateRef, watch } from "vue";
+import { attachmentKind } from "../../lib/attachment";
 import Icon from "../ui/Icon.vue";
 import IconButton from "../ui/IconButton.vue";
 
@@ -8,22 +9,9 @@ defineEmits<{ remove: [] }>();
 const canvas = useTemplateRef<HTMLCanvasElement>("canvas");
 const ready = ref(false);
 const failed = ref(false);
-const kind = computed(() => {
-  const mime = props.file.type.toLowerCase();
-  if (["image/jpeg", "image/png", "image/webp"].includes(mime)) return "image";
-  if (["video/mp4", "video/quicktime"].includes(mime)) return "video";
-  if (mime === "application/pdf") return "document";
-  if (["audio/ogg", "audio/opus"].includes(mime)) return "audio";
-  // Some file pickers leave MIME empty (notably .opus). Never preview arbitrary image/*.
-  if (!mime || mime === "application/octet-stream") {
-    const extension = props.file.name.split(".").pop()?.toLowerCase();
-    if (["jpg", "jpeg", "png", "webp"].includes(extension ?? "")) return "image";
-    if (["mp4", "mov"].includes(extension ?? "")) return "video";
-    if (extension === "pdf") return "document";
-    if (["ogg", "opus"].includes(extension ?? "")) return "audio";
-  }
-  return "file";
-});
+// The same rules as the attach check (lib/attachment.ts). A file it refuses is never attached; a
+// draft restored from before still says so. Never preview arbitrary image/*.
+const kind = computed(() => attachmentKind(props.file) ?? "file");
 const label = computed(() => ({ image: "Изображение", video: "Видео", document: "PDF", audio: "Аудио", file: "Файл" })[kind.value]);
 const size = computed(() => {
   const bytes = props.file.size;

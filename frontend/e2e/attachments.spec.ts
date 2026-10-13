@@ -138,13 +138,17 @@ test("document/audio/video cards, invalid images and unsupported formats are saf
   for (const [name, mimeType, label] of [
     ["clip.mp4", "video/mp4", "Видео"], ["clip.mov", "video/quicktime", "Видео"],
     ["document.pdf", "application/pdf", "PDF"], ["voice.ogg", "audio/ogg", "Аудио"],
-    ["voice.opus", "audio/opus", "Аудио"], ["drawing.svg", "image/svg+xml", "Формат не поддерживается"],
+    ["voice.opus", "audio/opus", "Аудио"],
   ] as const) {
     await picker(page).setInputFiles({ name, mimeType, buffer: Buffer.from("not decoded") });
     await expect(preview(page)).toContainText(name);
     await expect(preview(page)).toContainText(label);
     await expect(preview(page).locator("canvas")).toBeHidden();
   }
+  // An unsupported format is refused before it reaches the preview; the attached file stays.
+  await picker(page).setInputFiles({ name: "drawing.svg", mimeType: "image/svg+xml", buffer: Buffer.from("<svg/>") });
+  await expect(page.getByRole("alert")).toContainText("Этот формат не поддерживается.");
+  await expect(preview(page)).toContainText("voice.opus");
   await picker(page).setInputFiles({ name: "broken.png", mimeType: "image/png", buffer: Buffer.from("invalid image") });
   await expect(preview(page)).toContainText("Предпросмотр недоступен");
   await page.getByRole("button", { name: "Убрать вложение" }).click();

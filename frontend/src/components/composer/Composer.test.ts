@@ -3,7 +3,8 @@ import { createPinia, setActivePinia } from "pinia";
 import { TooltipProvider } from "reka-ui";
 import { h, toRaw } from "vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MAX_FILE_BYTES, useChatStore } from "../../stores/chat";
+import { MAX_FILE_BYTES } from "../../lib/attachment";
+import { useChatStore } from "../../stores/chat";
 import { useProjectsStore } from "../../stores/projects";
 import { useSessionStore } from "../../stores/session";
 import { useTicketsStore } from "../../stores/tickets";
@@ -91,6 +92,45 @@ describe("composer attachments", () => {
     expect((picker.element as HTMLInputElement).value).toBe("");
   }
   const pdf = (name = "report.pdf") => new File(["%PDF-test"], name, { type: "application/pdf" });
+
+  it("a file attached to a long text keeps it and says the limit; Enter sends nothing; without the file it goes", async () => {
+    const wrapper = renderComposer();
+    const chat = useChatStore();
+    const api = vi.mocked(useSessionStore().api);
+    chat.edit("я".repeat(900));
+    await flushPromises();
+    const field = wrapper.get("textarea");
+    expect(field.attributes("maxlength")).toBeUndefined();
+    expect(field.attributes("aria-invalid")).toBeUndefined();
+    await attach(wrapper, pdf());
+    expect(chat.draft?.text).toBe("я".repeat(900));
+    expect(field.attributes("aria-invalid")).toBe("true");
+    const limit = wrapper.get(`#${field.attributes("aria-describedby")}`);
+    expect(limit.attributes("aria-live")).toBe("polite");
+    expect(limit.text()).toContain("С вложением можно отправить не больше 800 символов: сократите текст или уберите вложение.");
+    expect(limit.get('[aria-hidden="true"]').text()).toBe("900 / 800");
+    await field.trigger("keydown", { key: "Enter" });
+    await flushPromises();
+    expect(api.mock.calls.filter(([path]) => String(path).endsWith("/send"))).toEqual([]);
+    expect(chat.attempt).toBeNull();
+    await wrapper.get('[aria-label="Убрать вложение"]').trigger("click");
+    expect(field.attributes("aria-invalid")).toBeUndefined();
+    expect(limit.text()).toBe("");
+    await field.trigger("keydown", { key: "Enter" });
+    await flushPromises();
+    expect(api.mock.calls.filter(([path]) => String(path).endsWith("/send"))).toHaveLength(1);
+  });
+
+  it("an unsupported format is refused before the preview, and the attached file stays", async () => {
+    const wrapper = renderComposer();
+    const chat = useChatStore();
+    const valid = pdf();
+    await attach(wrapper, valid);
+    await attach(wrapper, new File(["<svg/>"], "drawing.svg", { type: "image/svg+xml" }));
+    expect(toRaw(chat.draft?.file)).toBe(valid);
+    expect(wrapper.text()).toContain("report.pdf");
+    expect(wrapper.text()).not.toContain("drawing.svg");
+  });
 
   it("selects, replaces and removes without changing text or starting a send", async () => {
     const wrapper = renderComposer();
