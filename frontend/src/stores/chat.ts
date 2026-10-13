@@ -2,6 +2,7 @@ import { defineStore } from "pinia";
 import { computed, reactive, ref, shallowRef, watch } from "vue";
 import { ApiError } from "../api/client";
 import type { FolderAssignment, Message, MessagePage, TicketDetail, TicketHeading } from "../api/types";
+import { fileProblem, textLength, textProblem } from "../lib/attachment";
 import { keepUnsaved, takeUnsaved } from "../lib/navigation";
 import {
   StorageError, createAttempt, fileBytes, patience, readAttempt, readDraft, removeAttempt, removeDraft, restoreDraft,
@@ -23,7 +24,6 @@ export function sendDeadline(file: File | null): number {
 export const SEND_BLOCKED = "Сначала повторите предыдущую отправку или откажитесь от неё: её результат неизвестен.";
 export const SEND_FOUND = "Сообщение из отправки с неизвестным результатом есть в истории: сервер его принял.";
 export const SEND_REFRESH_FAILED = "Сообщение принято сервером, но историю не удалось обновить";
-export const FILE_TOO_LARGE = "Файл больше 20 МБ.";
 /** Text edits wait this long before they are written to the browser's storage; a file goes at once. */
 export const DRAFT_SAVE_DELAY = 300;
 /** An attempt this old may have outlived the server's memory of its key (an archived dialogue's history is removed). */
@@ -37,7 +37,6 @@ export const lostFile = (name: string): string =>
   `Вложение «${name}» не удалось сохранить в браузере: после обновления страницы прикрепите его снова.`;
 /** Tells this tab's writes from another tab's. */
 const TAB = crypto.randomUUID();
-export const MAX_FILE_BYTES = 20 * 1024 * 1024;
 /** A dialogue opened again within this time shows its cached history at once, then refreshes it. */
 export const CACHE_AGE = 120_000;
 /** A read receipt that failed is sent again on a later look at the history, not on every scroll event. */
@@ -82,9 +81,10 @@ export interface SendAttempt {
 /**
  * How a send ended: the server took the message, refused it (nothing saved, the draft stays), or its
  * answer never came. "blocked": an attempt with an unknown outcome waits for a retry or for being
- * given up first; "skipped": nothing to send or another send runs.
+ * given up first; "invalid": the draft breaks a limit the server would refuse (said, nothing sent);
+ * "skipped": nothing to send or another send runs.
  */
-export type SendOutcome = "accepted" | "rejected" | "unknown" | "blocked" | "skipped";
+export type SendOutcome = "accepted" | "rejected" | "unknown" | "blocked" | "invalid" | "skipped";
 
 /**
  * Only the application's own refusal (4xx) of an attempt's first request proves nothing was saved;
@@ -565,11 +565,13 @@ export const useChatStore = defineStore("chat", () => {
     if (ticketId.value === id) jump.value = { ticket: id };
   }
 
+  /** Attaches a file, or removes it (null). A file the server would refuse leaves the draft as it was. */
   function attach(file: File | null): boolean {
     const current = draft.value;
     if (!current) return false;
-    if (file && file.size > MAX_FILE_BYTES) {
-      workspace().show(FILE_TOO_LARGE);
+    const problem = file && fileProblem(file);
+    if (problem) {
+      workspace().show(problem);
       return false;
     }
     current.file = file;
@@ -602,7 +604,13 @@ export const useChatStore = defineStore("chat", () => {
       workspace().show(SEND_BLOCKED);
       return "blocked";
     }
-    if (!current.text.trim() && !current.file) return "skipped";
+    if (!textLength(current.text) && !current.file) return "skipped";
+    // Said before anything is sent: the draft stays as it is, to be fixed.
+    const problem = (current.file && fileProblem(current.file)) || textProblem(current.text, current.file);
+    if (problem) {
+      workspace().show(problem);
+      return "invalid";
+    }
     attempts.set(slot(projectId, id), {
       key: crypto.randomUUID(), project: projectId, ticket: id, text: current.text, file: current.file,
       state: "sending", reason: "", tries: 0, createdAt: Date.now(), persisted: false,

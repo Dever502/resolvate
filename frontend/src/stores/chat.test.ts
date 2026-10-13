@@ -1,8 +1,10 @@
 import { createPinia, setActivePinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { toRaw } from "vue";
 import type { Message, MessagePage, TicketDetail } from "../api/types";
+import { FILE_EMPTY, FILE_TOO_LARGE, FILE_UNSUPPORTED, MAX_FILE_BYTES } from "../lib/attachment";
 import {
-  CACHE_AGE, FILE_TOO_LARGE, MAX_FILE_BYTES, READ_RETRY_DELAY, SEND_BLOCKED, SEND_FOUND, SEND_REFRESH_FAILED, SEND_TIMEOUT,
+  CACHE_AGE, READ_RETRY_DELAY, SEND_BLOCKED, SEND_FOUND, SEND_REFRESH_FAILED, SEND_TIMEOUT,
   UNCERTAIN, UPLOAD_RATE, sendDeadline, useChatStore,
 } from "./chat";
 import { useProjectsStore } from "./projects";
@@ -410,9 +412,53 @@ describe("chat store", () => {
     api(quiet);
     await chat.open("t1");
     chat.edit("Текст");
-    expect(chat.attach(new File([new Uint8Array(MAX_FILE_BYTES + 1)], "big.bin"))).toBe(false);
+    expect(chat.attach(new File([new Uint8Array(MAX_FILE_BYTES + 1)], "big.pdf", { type: "application/pdf" }))).toBe(false);
     expect(useWorkspaceStore().notice).toBe(FILE_TOO_LARGE);
     expect(chat.draft).toEqual({ text: "Текст", file: null });
+  });
+
+  it("an unsupported or empty file never replaces the attached one, nor touches the text or an attempt", async () => {
+    const chat = useChatStore();
+    api(quiet);
+    await chat.open("t1");
+    await vi.waitFor(() => expect(chat.draft).not.toBeNull());
+    chat.edit("Текст");
+    const pdf = new File(["%PDF-1"], "ok.pdf", { type: "application/pdf" });
+    expect(chat.attach(pdf)).toBe(true);
+    const pending = {
+      key: "k", project: "p1", ticket: "t1", text: "Текст", file: pdf, state: "unknown" as const, reason: "Нет связи с сервером.",
+      tries: 1, createdAt: Date.now(), persisted: false,
+    };
+    chat.attempts.set("p1/t1", pending);
+    expect(chat.attach(new File(["x"], "notes.txt", { type: "text/plain" }))).toBe(false);
+    expect(useWorkspaceStore().notice).toBe(FILE_UNSUPPORTED);
+    expect(chat.attach(new File([], "empty.pdf", { type: "application/pdf" }))).toBe(false);
+    expect(useWorkspaceStore().notice).toBe(FILE_EMPTY);
+    expect(chat.draft?.text).toBe("Текст");
+    expect(toRaw(chat.draft?.file)).toBe(pdf);
+    expect(chat.attempt).toEqual(pending);
+  });
+
+  it("a draft over the limit is said and not sent; it stays as typed, and without the file 3900 go again", async () => {
+    const chat = useChatStore();
+    const calls = api(quiet);
+    await chat.open("t1");
+    await vi.waitFor(() => expect(chat.draft).not.toBeNull());
+    const long = "я".repeat(801);
+    chat.edit(long);
+    chat.attach(new File(["%PDF-1"], "ok.pdf", { type: "application/pdf" }));
+    expect(await chat.send()).toBe("invalid");
+    expect(useWorkspaceStore().notice).toBe("С вложением можно отправить не больше 800 символов: сократите текст или уберите вложение. Сейчас 801.");
+    expect(sends(calls)).toEqual([]);
+    expect(chat.attempt).toBeNull();
+    expect(chat.draft?.text).toBe(long);
+    chat.edit("я".repeat(3901));
+    chat.attach(null);
+    expect(await chat.send()).toBe("invalid");
+    expect(sends(calls)).toEqual([]);
+    chat.edit("я".repeat(3900));
+    expect(await chat.send()).toBe("accepted");
+    expect(sends(calls)).toHaveLength(1);
   });
 
   it("warns when a send's outcome is unknown", async () => {

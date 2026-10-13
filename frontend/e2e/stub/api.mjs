@@ -311,6 +311,9 @@ export async function handle(request, response, path, url, tools) {
     const text = (fields.text ?? "").trim();
     const file = files[0];
     if (!text && !file) return done(422, { detail: "Введите сообщение или прикрепите файл." });
+    // console.py send(): the length in code points, 800 with a file; an empty file is refused by the media check.
+    if ([...text].length > (file ? 800 : 3900)) return done(422, { detail: "Максимум 3900 символов, с вложением — 800." });
+    if (file && !file.content.length) return done(422, { detail: "⚠️ Файл пустой. Отправьте другой файл." });
     // console_service.send(): a key used again with the same dialogue, text and file answers with the
     // message it saved; with anything else it is refused.
     const fingerprint = JSON.stringify([item.id, text, file ? Buffer.from(file.content).toString("base64") : null]);

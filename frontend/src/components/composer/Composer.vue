@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, useId, useTemplateRef, watch } from "vue";
 import type { QuickReply, QuickReplyGroup } from "../../api/types";
+import { textLength, textLimit, tooLong } from "../../lib/attachment";
 import { useChatStore } from "../../stores/chat";
 import { useProjectsStore } from "../../stores/projects";
 import { useSessionStore } from "../../stores/session";
@@ -27,6 +28,7 @@ const field = useTemplateRef<HTMLTextAreaElement>("field");
 const picker = useTemplateRef<HTMLInputElement>("picker");
 const attemptNotice = useTemplateRef<{ focusRetry: () => void }>("attempt-notice");
 const listId = useId();
+const limitId = useId();
 const repliesOpen = ref(false);
 const replies = ref<QuickReply[]>([]);
 const groups = ref<QuickReplyGroup[]>([]);
@@ -44,6 +46,11 @@ let sequence = 0;
 
 const text = computed(() => chat.draft?.text ?? "");
 const file = computed(() => chat.draft?.file ?? null);
+// The text as the server counts it, against its limit with or without the file (lib/attachment.ts).
+// Over the limit the text stays editable and as typed; the send says why it does not go.
+const length = computed(() => textLength(text.value));
+const limit = computed(() => textLimit(file.value));
+const overLimit = computed(() => length.value > limit.value);
 /** An attempt whose answer never came; it stays shown while it is being sent again. */
 const unresolved = computed(() => (chat.attempt && (chat.attempt.state === "unknown" || chat.attempt.reason) ? chat.attempt : null));
 
@@ -140,7 +147,7 @@ async function choose(index: number): Promise<void> {
   const reply = replies.value[index];
   if (!reply) return;
   const next = buttonMode.value ? text.value.slice(0, insertAt) + reply.text + text.value.slice(insertEnd) : reply.text;
-  if (next.length > 3900) { workspace.show("Ответ вместе с черновиком превышает 3900 символов."); return; }
+  if (textLength(next) > limit.value) { workspace.show(`Ответ вместе с черновиком превышает ${limit.value} символов.`); return; }
   chat.edit(next);
   closeReplies();
   await nextTick();
@@ -260,12 +267,13 @@ onUnmounted(closeReplies);
         rows="1"
         placeholder="Написать ответ…"
         aria-label="Текст ответа"
-        maxlength="3900"
         aria-autocomplete="list"
         :aria-controls="repliesOpen ? listId : undefined"
         :aria-activedescendant="repliesOpen && options.length ? `${listId}-${active}` : undefined"
         :disabled="chat.sending"
         :readonly="!chat.draft"
+        :aria-invalid="overLimit || undefined"
+        :aria-describedby="overLimit ? limitId : undefined"
         @input="onInput"
         @keydown="onKeyDown"
       />
@@ -274,6 +282,12 @@ onUnmounted(closeReplies);
         <span class="send-label">Отправить</span><Icon name="send" />
       </button>
     </form>
+    <!-- Announced when the text crosses the limit or the file changes it, not on every keystroke. -->
+    <p :id="limitId" class="composer-limit" aria-live="polite">
+      <template v-if="overLimit">
+        {{ tooLong(file) }} <span class="composer-limit-count" aria-hidden="true">{{ length }} / {{ limit }}</span>
+      </template>
+    </p>
     <div class="composer-hint">
       <span><kbd>/</kbd> Готовые ответы</span>
       <span class="compact:hidden"><kbd>Enter</kbd> отправить · <kbd>Shift Enter</kbd> новая строка</span>
