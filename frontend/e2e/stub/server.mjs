@@ -77,7 +77,7 @@ async function me(request, response, entry) {
   return failure(response, answer.status, answer.detail);
 }
 
-http.createServer(async (request, response) => {
+async function handle(request, response) {
   const url = new URL(request.url, "http://stub");
   const path = url.pathname;
   const entry = { method: request.method, path, at: Date.now() };
@@ -135,4 +135,12 @@ http.createServer(async (request, response) => {
   }
   if (await api.handle(request, response, path, url, { json, send, readBody, hasSession, headers: HEADERS })) return;
   return json(response, 404, { detail: "Not Found" });
+}
+
+// A client that drops its request half-way (a page left, a request aborted) must not take the stub
+// down with it: an unhandled rejection ends the Node process, and every later test then fails to connect.
+http.createServer((request, response) => {
+  handle(request, response).catch(() => {
+    if (!response.writableEnded) response.destroy();
+  });
 }).listen(PORT, "127.0.0.1");
