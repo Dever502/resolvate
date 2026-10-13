@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, ref, useTemplateRef, watch } from "vue";
+import { useFileDrop } from "../../composables/useFileDrop";
+import { FILES_MULTIPLE } from "../../lib/attachment";
 import { useChatStore } from "../../stores/chat";
 import { useProjectsStore } from "../../stores/projects";
 import { useWorkspaceStore } from "../../stores/workspace";
@@ -20,12 +22,59 @@ const cardOpen = ref(false);
 watch(() => chat.ticketId, () => {
   cardOpen.value = false;
 });
+
+// A file dragged onto this panel goes into the open dialogue's draft through the picker's own check
+// (chat.attach, lib/attachment.ts). The ticket list, the app bar and the windows take no files.
+const DROP_HINT = "Перетащите файл для прикрепления";
+// Why a file is not taken now: shown over the panel while it is dragged, said if it is dropped anyway.
+// The attach button is off in two of these states (the draft not read yet, a send running); in the
+// others the file would land in no dialogue, in one that is gone (403/404) or behind a window.
+const DROP_NO_DIALOGUE = "Откройте диалог, чтобы прикрепить файл.";
+const DROP_IN_WINDOW = "Закройте окно, чтобы прикрепить файл.";
+const DROP_UNAVAILABLE = "Диалог недоступен: прикрепить файл нельзя.";
+const DROP_LOADING = "Черновик диалога ещё загружается: перетащите файл чуть позже.";
+const DROP_SENDING = "Идёт отправка: перетащите файл, когда она закончится.";
+const DROP_SWITCHED = "Диалог сменился во время перетаскивания: перетащите файл снова.";
+const panel = useTemplateRef<HTMLElement>("panel");
+
+/** A modal window over the workspace (Reka Dialog or AlertDialog): a file dropped now would land out of sight. */
+function windowOpen(): boolean {
+  return document.querySelector('[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]') !== null;
+}
+
+function dropRefusal(count: number | null): string | null {
+  if (!chat.ticketId) return DROP_NO_DIALOGUE;
+  if (windowOpen()) return DROP_IN_WINDOW;
+  if (chat.unavailable) return DROP_UNAVAILABLE;
+  if (!chat.draft) return DROP_LOADING;
+  if (chat.sending) return DROP_SENDING;
+  return count !== null && count > 1 ? FILES_MULTIPLE : null;
+}
+
+const files = useFileDrop(panel, {
+  refusal: dropRefusal,
+  // One file, as from the picker: a refused one is said and leaves the attached file and the text as they were.
+  accept: ([file]) => chat.attach(file!),
+  refuse: (reason) => workspace.show(reason),
+});
+const dragging = files.over;
+const dropReason = computed(() => (dragging.value ? dropRefusal(files.count.value) : null));
+// Another dialogue (or none) under the drag: the highlight goes, and its drop does not land there unseen.
+watch(() => [chat.ticketId, projects.currentId], () => files.interrupt(DROP_SWITCHED));
 </script>
 
 <template>
   <div class="relative flex min-h-0 min-w-0 flex-1">
     <div class="flex min-h-0 min-w-0 flex-1 flex-col p-4 compact:p-3 narrow:p-0">
-      <main class="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-panel border border-border bg-surface narrow:rounded-none narrow:border-0">
+      <main
+        ref="panel"
+        class="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-panel border border-border bg-surface narrow:rounded-none narrow:border-0"
+        @dragenter="files.onDragEnter"
+        @dragover="files.onDragOver"
+        @dragleave="files.onDragLeave"
+        @drop="files.onDrop"
+        @dragend="files.onDragEnd"
+      >
         <!-- A project list that failed to load is explained by the empty state instead. -->
         <p v-if="workspace.notice && (projects.loaded || !projects.error)" class="notice" role="alert">{{ workspace.notice }}</p>
         <section v-if="chat.ticketId" class="flex min-h-0 flex-1 flex-col" aria-label="Диалог">
@@ -40,6 +89,10 @@ watch(() => chat.ticketId, () => {
           <p class="m-0 text-[.9375rem]">Здесь появится история обращения.</p>
         </div>
         <ProjectsEmptyState v-else />
+        <!-- Shown only while files are dragged over the panel; decoration that never takes the pointer. -->
+        <div v-if="dragging" class="drop-zone" :data-refused="dropReason ? '' : undefined" aria-hidden="true">
+          <p class="drop-zone-label">{{ dropReason ?? DROP_HINT }}</p>
+        </div>
       </main>
     </div>
     <CustomerCard v-if="chat.ticketId && cardOpen" v-model:open="cardOpen" />

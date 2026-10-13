@@ -364,6 +364,13 @@
   .sticker-preview { display: grid; place-items: center; width: 100%; aspect-ratio: 1; padding: 0; border: 0; border-radius: .75rem; background: transparent; cursor: pointer; }
   .sticker-preview img, .sticker-preview video, .sticker-preview canvas { display: block; width: 100%; height: 100%; margin: 0; border-radius: 0; object-fit: contain; }
   .customer-card { width: 290px; flex-shrink: 0; overflow: auto; padding: 1.5rem; border-left: 1px solid var(--border); background: var(--canvas); }
+  /* Files dragged over the conversation (chat/ConversationPanel.vue): a frame over the panel saying what
+     a drop does. Decoration only: the dialogue stays seen through it and the pointer goes past it. */
+  .drop-zone { position: absolute; z-index: 4; inset: .75rem; display: grid; place-items: center; padding: 1rem; border: 2px dashed var(--accent); border-radius: 12px; background: color-mix(in srgb, var(--accent-soft) 50%, transparent); pointer-events: none; }
+  .drop-zone-label { max-width: 26rem; margin: 0; padding: .625rem 1rem; border-radius: var(--radius-control); background: var(--surface); color: var(--accent); font-weight: 600; text-align: center; box-shadow: 0 6px 32px #1d1d1f26; overflow-wrap: anywhere; }
+  /* A drop refused now: the reason, as a warning. */
+  .drop-zone[data-refused] { border-color: var(--warning-border); background: color-mix(in srgb, var(--warning-bg) 50%, transparent); }
+  .drop-zone[data-refused] .drop-zone-label { background: var(--warning-bg); color: var(--warning-text); }
 
   /* Composer. Its buttons are 44×44 hit areas in the room that 40 px buttons had: with 3 px padding, 5 px gaps
      and the text field 2 px off the row's edges, the box keeps its height and the text field its width and place. */
@@ -568,6 +575,7 @@
   .tooltip, .admin-trigger-label { border-color: CanvasText; }
   .ticket[data-state="checked"], .folder-tab[data-state="active"] { outline: 2px solid Highlight; outline-offset: -2px; }
   .composer, .reply-options, .menu, .dialog, .picker-options { border: 1px solid ButtonText; }
+  .drop-zone { border-color: Highlight; }
   .catalog-group[data-state="checked"], .catalog-scope button[aria-pressed="true"] { outline: 2px solid Highlight; outline-offset: -2px; }
   .section-tab[data-state="active"], .picker-option[data-highlighted] { outline: 2px solid Highlight; outline-offset: -2px; }
   .account-theme-option[data-state="checked"] { outline: 2px solid Highlight; outline-offset: -3px; }
