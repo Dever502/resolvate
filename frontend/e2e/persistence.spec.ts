@@ -30,15 +30,6 @@ async function openAnna(page: Page): Promise<void> {
   await expect(composer(page)).toBeEditable();
 }
 
-// WebKit reports the requests a reload cuts off as page errors ("… due to access control checks"):
-// they belong to the page being left, not to the console.
-test.afterEach(({ consoleErrors, browserName }) => {
-  if (browserName !== "webkit") return;
-  for (let index = consoleErrors.length - 1; index >= 0; index--) {
-    if (/ due to access control checks\.$/.test(consoleErrors[index]!)) consoleErrors.splice(index, 1);
-  }
-});
-
 async function chooseProject(page: Page, name: string): Promise<void> {
   await project(page).click();
   await page.getByRole("menuitemradio", { name }).click();

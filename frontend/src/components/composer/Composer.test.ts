@@ -67,6 +67,76 @@ describe("grouped quick replies", () => {
     expect(chat.draft?.text).toBe("Существующий черновик");
     wrapper.unmount();
   });
+
+  const groupsOf = (...names: string[]) => names.map((name, index) => ({ id: `g${index}`, name, revision: 0 }));
+
+  it("a failed lookup says so with a retry, apart from \"nothing found\"", async () => {
+    const api = vi.spyOn(useSessionStore(), "api").mockRejectedValueOnce(new Error("Сервис недоступен."))
+      .mockResolvedValue(groupsOf("общее"));
+    const wrapper = renderComposer();
+    await flushPromises();
+    await wrapper.get('[aria-label="Готовые ответы"]').trigger("click");
+    await vi.advanceTimersByTimeAsync(200);
+    await flushPromises();
+    const failure = wrapper.get('.reply-options [role="alert"]');
+    expect(failure.text()).toContain("Не удалось загрузить готовые ответы.");
+    expect(wrapper.text()).not.toContain("Ничего не найдено");
+    await failure.get("button").trigger("click");
+    await vi.advanceTimersByTimeAsync(200);
+    await flushPromises();
+    expect(api).toHaveBeenCalledTimes(2);
+    expect(wrapper.find('.reply-options [role="alert"]').exists()).toBe(false);
+    expect(wrapper.findAll('[role="option"]').map((option) => option.text())).toEqual(["/общее"]);
+    wrapper.unmount();
+  });
+
+  it("opened by the button, its search field points at the options and the reply box does not", async () => {
+    vi.spyOn(useSessionStore(), "api").mockResolvedValue(groupsOf("общее", "оплата"));
+    const wrapper = renderComposer();
+    await flushPromises();
+    await wrapper.get('[aria-label="Готовые ответы"]').trigger("click");
+    await vi.advanceTimersByTimeAsync(200);
+    await flushPromises();
+    const search = wrapper.get('[aria-label="Поиск готовых ответов"]');
+    const list = wrapper.get('[role="listbox"]');
+    expect(search.attributes()).toMatchObject({ role: "combobox", "aria-expanded": "true", "aria-autocomplete": "list" });
+    expect(search.attributes("aria-controls")).toBe(list.attributes("id"));
+    expect(search.attributes("aria-activedescendant")).toBe(wrapper.findAll('[role="option"]')[0]!.attributes("id"));
+    await search.trigger("keydown", { key: "ArrowDown" });
+    expect(search.attributes("aria-activedescendant")).toBe(wrapper.findAll('[role="option"]')[1]!.attributes("id"));
+    const field = wrapper.get("textarea");
+    expect(field.attributes("aria-activedescendant")).toBeUndefined();
+    expect(field.attributes("aria-controls")).toBeUndefined();
+    expect(wrapper.get('[aria-label="Готовые ответы"]').attributes("aria-controls")).toBe(list.attributes("id"));
+    wrapper.unmount();
+  });
+
+  it("Enter that ends an IME composition chooses nothing", async () => {
+    vi.spyOn(useSessionStore(), "api").mockResolvedValue(groupsOf("общее"));
+    const chat = useChatStore();
+    const wrapper = renderComposer();
+    await flushPromises();
+    await wrapper.get("textarea").setValue("/");
+    await vi.advanceTimersByTimeAsync(200);
+    await flushPromises();
+    await wrapper.get("textarea").trigger("keydown", { key: "Enter", isComposing: true });
+    await wrapper.get("textarea").trigger("keydown", { key: "Enter", keyCode: 229 });
+    expect(chat.draft?.text).toBe("/");
+    expect(wrapper.find('[role="listbox"]').attributes("aria-label")).toBe("Группы ответов");
+    wrapper.unmount();
+  });
+
+  it("Esc closes the list from a button inside it", async () => {
+    vi.spyOn(useSessionStore(), "api").mockResolvedValue(groupsOf("общее"));
+    const wrapper = renderComposer();
+    await flushPromises();
+    await wrapper.get('[aria-label="Готовые ответы"]').trigger("click");
+    await vi.advanceTimersByTimeAsync(200);
+    await flushPromises();
+    await wrapper.get('[aria-label="Закрыть готовые ответы"]').trigger("keydown", { key: "Escape" });
+    expect(wrapper.find(".reply-options").exists()).toBe(false);
+    wrapper.unmount();
+  });
 });
 
 describe("composer attachments", () => {

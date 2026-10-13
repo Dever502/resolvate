@@ -64,7 +64,7 @@ export const test = base.extend<{
       await testInfo.attach(name, { body: await page.screenshot(), contentType: "image/png" });
     });
   },
-  consoleErrors: async ({ page }, use) => {
+  consoleErrors: async ({ page, browserName }, use) => {
     const errors: string[] = [];
     page.on("console", (message) => {
       const text = message.text();
@@ -73,7 +73,12 @@ export const test = base.extend<{
       if (/Refused to|Content[- ]Security[- ]Policy/i.test(text)) errors.push(text);
       else if (["error", "warning"].includes(message.type()) && !/Failed to load resource/.test(text)) errors.push(text);
     });
-    page.on("pageerror", (error) => errors.push(`uncaught: ${error.message}`));
+    page.on("pageerror", (error) => {
+      // WebKit reports the requests a navigation or reload cuts off as errors of the page being left
+      // ("… due to access control checks"): they are not the console's. All its requests are same-origin.
+      if (browserName === "webkit" && / due to access control checks\.$/.test(error.message)) return;
+      errors.push(`uncaught: ${error.message}`);
+    });
     await page.addInitScript(installProbe);
     await use(errors);
     // No scenario may trip the console CSP or leave an error in the console, in any engine.

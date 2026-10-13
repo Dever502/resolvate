@@ -167,7 +167,7 @@ test.describe("operator flow", () => {
 
     await composer(page).fill("");
     await composer(page).pressSequentially("/нет такого");
-    await expect(groups.getByText("Ничего не найдено")).toBeVisible();
+    await expect(page.getByText("Ничего не найдено")).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(replies).toBeHidden();
     await expect(composer(page)).toHaveValue("/нет такого");
@@ -180,7 +180,7 @@ test.describe("operator flow", () => {
     await composer(page).fill("Здравствуйте. ");
     await composer(page).press("End");
     await page.locator(".composer").getByRole("button", { name: "Готовые ответы" }).click();
-    await page.getByRole("textbox", { name: "Поиск готовых ответов" }).fill("опл");
+    await page.getByRole("combobox", { name: "Поиск готовых ответов" }).fill("опл");
     const groups = page.getByRole("listbox", { name: "Группы ответов" });
     await expect(groups.getByRole("option")).toHaveText(["/оплата"]);
     await groups.getByRole("option").click();

@@ -16,7 +16,9 @@ import SendAttemptNotice from "./SendAttemptNotice.vue";
 // own (stores/chat.ts): one whose answer never came stays above the box until it is sent again under
 // its key or given up, and editing the draft never changes it. Enter sends, Shift+Enter starts a
 // new line, IME composition is left alone. "/" at the start searches the quick replies: arrows
-// move through them, Enter inserts one, Esc closes the list. Focus stays in the text field.
+// move through them, Enter inserts one, Esc closes the list. Focus stays in the text field. The "/"
+// button opens the same list with a search field of its own, which then holds the focus; Esc gives
+// it back to the button, and a reply goes where the cursor (or the selection) was.
 const ACCEPT = "image/jpeg,image/png,image/webp,video/mp4,video/quicktime,application/pdf,audio/ogg,audio/opus,.ogg,.opus";
 const MAX_HEIGHT = 160;
 const REPLY_DELAY = 180;
@@ -28,6 +30,7 @@ const field = useTemplateRef<HTMLTextAreaElement>("field");
 const picker = useTemplateRef<HTMLInputElement>("picker");
 const attemptNotice = useTemplateRef<{ focusRetry: () => void }>("attempt-notice");
 const listId = useId();
+const repliesButtonId = useId();
 const limitId = useId();
 const repliesOpen = ref(false);
 const replies = ref<QuickReply[]>([]);
@@ -36,6 +39,8 @@ const group = ref<QuickReplyGroup | null>(null);
 const query = ref("");
 const buttonMode = ref(false);
 const loading = ref(false);
+/** The last lookup failed: said in the list, with a retry, apart from "nothing found". */
+const failed = ref(false);
 const hasMore = ref(false);
 const options = computed(() => group.value ? replies.value : groups.value.map(g => ({ id: g.id, text: '/' + g.name })));
 let insertAt = 0;
@@ -70,6 +75,16 @@ function closeReplies(): void {
   groups.value = [];
   group.value = null;
   loading.value = false;
+  failed.value = false;
+}
+
+/** Closes the list: focus goes back where it was opened from, the "/" button or the text field. */
+async function dismiss(): Promise<void> {
+  const fromButton = buttonMode.value;
+  closeReplies();
+  await nextTick();
+  if (fromButton) document.getElementById(repliesButtonId)?.focus();
+  else field.value?.focus();
 }
 
 function search(value: string, more = false): void {
@@ -81,6 +96,7 @@ function search(value: string, more = false): void {
   if (!more) { replies.value = []; groups.value = []; active.value = 0; }
   const offset = more ? options.value.length : 0;
   loading.value = true;
+  failed.value = false;
   hasMore.value = false;
   replyTimer = setTimeout(async () => {
     try {
@@ -97,8 +113,8 @@ function search(value: string, more = false): void {
         groups.value = more ? [...groups.value, ...found] : found;
         hasMore.value = found.length === 50;
       }
-    } catch (error) {
-      if (sent === sequence) workspace.fail(error);
+    } catch {
+      if (sent === sequence) failed.value = true;
     } finally {
       if (sent === sequence) loading.value = false;
     }
@@ -146,23 +162,27 @@ async function choose(index: number): Promise<void> {
   }
   const reply = replies.value[index];
   if (!reply) return;
-  const next = buttonMode.value ? text.value.slice(0, insertAt) + reply.text + text.value.slice(insertEnd) : reply.text;
+  const inserted = buttonMode.value;
+  const next = inserted ? text.value.slice(0, insertAt) + reply.text + text.value.slice(insertEnd) : reply.text;
   if (textLength(next) > limit.value) { workspace.show(`Ответ вместе с черновиком превышает ${limit.value} символов.`); return; }
   chat.edit(next);
   closeReplies();
   await nextTick();
   resize();
   field.value?.focus();
+  // The cursor goes right after the reply, where the operator goes on writing.
+  if (inserted) field.value?.setSelectionRange(insertAt + reply.text.length, insertAt + reply.text.length);
 }
 
 function onKeyDown(event: KeyboardEvent): void {
-  if (event.isComposing) return;
+  // Safari ends a composition with a keydown that is no longer "composing" but still has keyCode 229.
+  if (event.isComposing || event.keyCode === 229) return;
   const list = options.value;
   if (repliesOpen.value) {
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation(); // Closes the list, not the customer card too.
-      closeReplies();
+      void dismiss();
       return;
     }
     if ((event.key === "ArrowDown" || event.key === "ArrowUp") && list.length) {
@@ -242,8 +262,8 @@ onUnmounted(closeReplies);
 <template>
   <div class="composer-area">
     <QuickReplies v-if="repliesOpen" :id="listId" :replies="options" :active="active"
-      :group="group?.name ?? ''" :loading="loading" :more="hasMore" :query="query" :button-mode="buttonMode"
-      @choose="choose" @hover="active = $event" @back="back" @close="closeReplies"
+      :group="group?.name ?? ''" :loading="loading" :failed="failed" :more="hasMore" :query="query" :button-mode="buttonMode"
+      @choose="choose" @hover="active = $event" @back="back" @close="dismiss" @retry="search(query)"
       @search="search" @more="search(query, true)" @keydown="onKeyDown" />
     <SendAttemptNotice v-if="unresolved" ref="attempt-notice" :attempt="unresolved" :sending="chat.sending"
       @retry="retryAttempt" @forget="forgetAttempt" />
@@ -259,8 +279,8 @@ onUnmounted(closeReplies);
         <Icon name="attach" />
       </IconButton>
       <input ref="picker" type="file" :accept="ACCEPT" hidden @change="onFile" />
-      <IconButton class="icon-button" label="Готовые ответы" :disabled="chat.sending || !chat.draft"
-        :aria-expanded="repliesOpen" @click="openByButton"><span aria-hidden="true">/</span></IconButton>
+      <IconButton :id="repliesButtonId" class="icon-button" label="Готовые ответы" :disabled="chat.sending || !chat.draft"
+        :aria-expanded="repliesOpen" :aria-controls="repliesOpen ? listId : undefined" @click="openByButton"><span aria-hidden="true">/</span></IconButton>
       <textarea
         ref="field"
         :value="text"
@@ -268,8 +288,8 @@ onUnmounted(closeReplies);
         placeholder="Написать ответ…"
         aria-label="Текст ответа"
         aria-autocomplete="list"
-        :aria-controls="repliesOpen ? listId : undefined"
-        :aria-activedescendant="repliesOpen && options.length ? `${listId}-${active}` : undefined"
+        :aria-controls="repliesOpen && !buttonMode ? listId : undefined"
+        :aria-activedescendant="repliesOpen && !buttonMode && options.length ? `${listId}-${active}` : undefined"
         :disabled="chat.sending"
         :readonly="!chat.draft"
         :aria-invalid="overLimit || undefined"
