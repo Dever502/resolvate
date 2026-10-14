@@ -56,7 +56,8 @@ def test_publication_check_detects_high_confidence_secrets_and_private_infrastru
 def test_publication_check_accepts_documented_placeholders(tmp_path: Path) -> None:
     root = _repository(
         tmp_path,
-        "security@example.com https://gitlab.com/group/project /opt/resolvate/.env",
+        "security@example.com https://gitlab.com/group/project /opt/resolvate/.env "
+        "12345+example@users.noreply.github.com noreply@github.com",
     )
 
     result = subprocess.run(

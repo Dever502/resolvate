@@ -69,7 +69,7 @@ class DurableTelegramIngressMiddleware(BaseMiddleware):
             return await handler(event, data)
         if not isinstance(event, Update):
             raise TypeError("durable ingress expects an aiogram Update")
-        message = event.message
+        message = event.message or event.edited_message
         if (
             isinstance(message, Message)
             and message.chat.type == ChatType.PRIVATE

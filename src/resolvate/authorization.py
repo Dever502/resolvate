@@ -17,6 +17,25 @@ class AuthorizationService:
     def is_admin(self, telegram_user_id: int) -> bool:
         return telegram_user_id in self.settings.admin_telegram_ids
 
+    async def can_administer(self, telegram_user_id: int) -> bool:
+        if self.database is None or self.database.project_id is None:
+            return self.is_admin(telegram_user_id)
+        async with self.database.session() as session:
+            return (
+                await session.scalar(
+                    select(ConsoleAccount.id)
+                    .join(Project, Project.id == self.database.project_id)
+                    .where(
+                        ConsoleAccount.telegram_id == telegram_user_id,
+                        ConsoleAccount.active.is_(True),
+                        Project.active.is_(True),
+                        or_(Project.admin_id == ConsoleAccount.id, ConsoleAccount.role == "admin"),
+                    )
+                    .limit(1)
+                )
+                is not None
+            )
+
     async def can_operate(self, telegram_user_id: int) -> bool:
         if self.database is None or self.database.project_id is None:
             return self.is_admin(telegram_user_id)

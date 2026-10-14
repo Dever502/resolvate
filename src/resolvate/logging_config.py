@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 SENSITIVE_TEXT_PATTERNS = (
+    (re.compile(r"(?<![0-9])[0-9]{1,20}:[A-Za-z0-9_-]{20,}"), "***"),
     (re.compile(r"(\b[a-z][a-z0-9+.-]*://)([^/@\s]+)@", re.IGNORECASE), r"\1***@"),
     (re.compile(r"\b(Bearer)\s+[^\s,;]+", re.IGNORECASE), r"\1 ***"),
     (

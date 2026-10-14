@@ -8,6 +8,25 @@ import socket
 
 import httpx
 
+NAT64_NETWORK = ipaddress.IPv6Network("64:ff9b::/96")
+LOCAL_NAT64_NETWORK = ipaddress.IPv6Network("64:ff9b:1::/48")
+
+
+def is_public_integration_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    if not address.is_global or address.is_multicast:
+        return False
+    if isinstance(address, ipaddress.IPv6Address):
+        if address.is_site_local or address.scope_id or address in LOCAL_NAT64_NETWORK:
+            return False
+        # Reject transition tunnels; their embedded destination need not be public.
+        if address.sixtofour is not None or address.teredo is not None:
+            return False
+        if address.ipv4_mapped is not None:
+            return is_public_integration_address(address.ipv4_mapped)
+        if address in NAT64_NETWORK:
+            return is_public_integration_address(ipaddress.IPv4Address(int(address) & 0xFFFFFFFF))
+    return True
+
 
 class IntegrationTransport(httpx.AsyncBaseTransport):
     def __init__(self) -> None:
@@ -27,9 +46,7 @@ class IntegrationTransport(httpx.AsyncBaseTransport):
             raise httpx.ConnectError(
                 "Integration destination cannot be resolved", request=request
             ) from None
-        if not resolved or any(
-            not address.is_global or address.is_multicast for address in resolved
-        ):
+        if not resolved or any(not is_public_integration_address(address) for address in resolved):
             raise httpx.ConnectError(
                 "Private integration destinations are not allowed", request=request
             )

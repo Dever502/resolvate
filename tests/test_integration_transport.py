@@ -9,7 +9,20 @@ from resolvate.integration_transport import IntegrationTransport
 
 
 @pytest.mark.parametrize(
-    "address", ["127.0.0.1", "10.0.0.1", "169.254.169.254", "::1", "224.0.0.1"]
+    "address",
+    [
+        "127.0.0.1",
+        "10.0.0.1",
+        "169.254.169.254",
+        "::1",
+        "224.0.0.1",
+        "64:ff9b::a00:1",
+        "64:ff9b::a9fe:a9fe",
+        "64:ff9b:1::1",
+        "fec0::1",
+        "2002:a00:1::1",
+        "::ffff:10.0.0.1",
+    ],
 )
 async def test_private_addresses_are_blocked(address: str, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
@@ -17,21 +30,25 @@ async def test_private_addresses_are_blocked(address: str, monkeypatch: pytest.M
         "getaddrinfo",
         AsyncMock(return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, 443))]),
     )
-    async with httpx.AsyncClient(transport=IntegrationTransport()) as client:
+    transport = IntegrationTransport()
+    handler = AsyncMock(return_value=httpx.Response(200))
+    transport.transports[("integration.example", 443)] = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
         with pytest.raises(httpx.ConnectError, match="Private"):
             await client.get("https://integration.example/api")
+    handler.assert_not_awaited()
 
 
+@pytest.mark.parametrize("address", ["1.1.1.1", "2606:4700:4700::1111", "64:ff9b::101:101"])
 async def test_public_address_is_pinned_with_original_tls_identity(
     monkeypatch: pytest.MonkeyPatch,
+    address: str,
 ) -> None:
-    resolver = AsyncMock(
-        return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("1.1.1.1", 443))]
-    )
+    resolver = AsyncMock(return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, 443))])
     monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", resolver)
 
     async def handle(request: httpx.Request) -> httpx.Response:
-        assert request.url.host == "1.1.1.1"
+        assert request.url.host == address
         assert request.headers["host"] == "integration.example"
         assert request.extensions["sni_hostname"] == "integration.example"
         return httpx.Response(200, json={"ok": True})

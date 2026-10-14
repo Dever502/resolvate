@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from resolvate.config import Settings
 from resolvate.console_auth import ACCOUNT_LOCK, digest
 from resolvate.database import Database
+from resolvate.integration_transport import is_public_integration_address
 from resolvate.models import (
     AccessAudit,
     ConsoleAccount,
@@ -204,9 +205,9 @@ class ProjectService:
 
     async def members(self, actor: ConsoleAccount, project_id: str) -> list[dict[str, Any]]:
         async with self.database.session() as session:
-            await self._actor(session, actor)
+            current = await self._actor(session, actor)
             project = await session.get(Project, project_id)
-            if project is None or (actor.role != "admin" and project.admin_id != actor.id):
+            if project is None or (current.role != "admin" and project.admin_id != current.id):
                 raise HTTPException(403, "Недостаточно прав.")
             rows = (
                 await session.scalars(
@@ -355,7 +356,7 @@ class ProjectService:
                 except ValueError:
                     pass  # Hostnames are resolved, checked and pinned on every outbound request.
                 else:
-                    if not address.is_global or address.is_multicast:
+                    if not is_public_integration_address(address):
                         raise HTTPException(422, "Локальные адреса интеграций запрещены.")
             if not -(2**52 - 1) <= validated.support_group_id <= 0:
                 raise HTTPException(422, "Укажите отрицательный ID группы Telegram.")

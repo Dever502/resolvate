@@ -236,6 +236,9 @@ class TelegramOperatorHandlers(
             await message.reply(internal_notes_text(notes))
             return
         if command == "/resolvepanel":
+            if not await self.authorization.can_administer(message.from_user.id):
+                await message.reply("⛔ Требуются права администратора проекта.")
+                return
             if self.panel_service is None:
                 await message.reply("⚠️ Интеграция с Remnawave не подключена.")
                 return

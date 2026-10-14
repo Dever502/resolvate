@@ -14,10 +14,14 @@ rollback_file=${ROLLBACK_STATE_FILE:-${deploy_dir}/rollback.env}
 temporary_state=
 secondary_state=
 lock_dir=
+rendered=
 
 cleanup() {
     status=$?
     trap - EXIT HUP INT TERM
+    if [ -n "$rendered" ]; then
+        rm -f "$rendered"
+    fi
     if [ -n "$temporary_state" ]; then
         rm -f "$temporary_state"
     fi
@@ -92,6 +96,7 @@ preflight() {
         return 1
     fi
     rm -f "$rendered"
+    rendered=
 }
 
 activate() {

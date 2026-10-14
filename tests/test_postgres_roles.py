@@ -52,7 +52,10 @@ def test_postgres_provisioning_rejects_non_url_safe_runtime_password() -> None:
 
 
 @pytest.mark.postgres
-async def test_postgres_migration_and_runtime_roles_have_least_privilege() -> None:
+@pytest.mark.parametrize("existing_schema", [False, True])
+async def test_postgres_migration_and_runtime_roles_have_least_privilege(
+    existing_schema: bool,
+) -> None:
     admin_url = make_url(configured_postgres_admin_url())
     suffix = uuid.uuid4().hex[:12]
     database_name = f"sbroles_{suffix}"
@@ -70,7 +73,8 @@ async def test_postgres_migration_and_runtime_roles_have_least_privilege() -> No
         database_created = True
 
         child_admin_url = admin_url.set(database=database_name)
-        await upgrade_database(child_admin_url.render_as_string(hide_password=False))
+        if existing_schema:
+            await upgrade_database(child_admin_url.render_as_string(hide_password=False))
 
         settings = PostgresProvisioningSettings(
             host=str(admin_url.host),
@@ -155,6 +159,24 @@ async def test_postgres_migration_and_runtime_roles_have_least_privilege() -> No
                 assert current_user == runtime_role
                 assert can_create is False
                 assert role_flags == (False, False, False, False, False)
+                for table, forbidden in (
+                    ("alembic_version", "INSERT,UPDATE,DELETE,TRUNCATE"),
+                    ("access_audit", "UPDATE,DELETE,TRUNCATE"),
+                ):
+                    assert not await connection.scalar(
+                        text("SELECT has_table_privilege(current_user, :table, :privileges)"),
+                        {"table": table, "privileges": forbidden},
+                    )
+                assert await connection.scalar(
+                    text("SELECT has_table_privilege(current_user, 'access_audit', 'INSERT')")
+                )
+                assert not await connection.scalar(
+                    text(
+                        "SELECT bool_or(has_sequence_privilege(current_user, oid, 'UPDATE')) "
+                        "FROM pg_class WHERE relkind = 'S' "
+                        "AND relnamespace = 'public'::regnamespace"
+                    )
+                )
                 with pytest.raises(ProgrammingError):
                     await connection.execute(text("CREATE TABLE forbidden_runtime_ddl (id int)"))
         finally:

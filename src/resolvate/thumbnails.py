@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import subprocess
 import sys
 from collections import OrderedDict
@@ -11,6 +10,8 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
+from resolvate.media_process import run_media_process
+from resolvate.media_storage import _file_operation
 from resolvate.thumbnail_inspect import MAX_THUMBNAIL_BYTES
 
 CACHE_BYTES = 4 * 1024 * 1024
@@ -32,15 +33,7 @@ class Thumbnails:
             if key in self.cache:
                 self.cache.move_to_end(key)
                 return self.cache[key]
-            task = asyncio.create_task(asyncio.to_thread(self._generate, path))
-            try:
-                content = await asyncio.shield(task)
-            except asyncio.CancelledError:
-                # A disconnected client must not release the slot while its decoder still runs.
-                try:
-                    await task
-                finally:
-                    raise
+            content = await _file_operation(lambda: self._generate(path))
             self.cache[key] = content
             self.size += len(content)
             while self.size > CACHE_BYTES or len(self.cache) > CACHE_ITEMS:
@@ -51,20 +44,10 @@ class Thumbnails:
     @staticmethod
     def _generate(path: Path) -> bytes:
         try:
-            result = subprocess.run(
+            content = run_media_process(
                 [sys.executable, "-m", "resolvate.thumbnail_inspect", str(path)],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
                 timeout=12,
-                check=True,
-                env={
-                    "PATH": os.defpath,
-                    "PYTHONPATH": str(Path(__file__).parent.parent),
-                    "PYTHONDONTWRITEBYTECODE": "1",
-                },
             )
-            content = result.stdout
             if (
                 not 12 <= len(content) <= MAX_THUMBNAIL_BYTES
                 or content[:4] != b"RIFF"

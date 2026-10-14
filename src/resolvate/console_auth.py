@@ -9,6 +9,7 @@ from datetime import timedelta
 from fastapi import HTTPException, Request
 from sqlalchemy import delete, select, text
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from resolvate.api_security import InMemoryRateLimiter
 from resolvate.database import Database
@@ -187,6 +188,7 @@ class ConsoleAuth:
         role: str,
         bootstrap: bool = False,
         telegram_id: int | None = None,
+        admin_token: str | None = None,
     ) -> ConsoleAccount:
         login = login.strip().casefold()
         if not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{2,63}", login):
@@ -204,6 +206,8 @@ class ConsoleAuth:
             raise HTTPException(422, str(error)) from error
         async with self.database.session() as session:
             await session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": ACCOUNT_LOCK})
+            if admin_token is not None:
+                await self._require_live_admin(session, admin_token)
             if bootstrap and await session.scalar(
                 select(ConsoleAccount.id).where(ConsoleAccount.role == "admin").limit(1)
             ):
@@ -282,9 +286,27 @@ class ConsoleAuth:
             )
             await session.commit()
 
-    async def set_active(self, account_id: str, active: bool) -> None:
+    async def _require_live_admin(self, session: AsyncSession, token: str) -> None:
+        # Called inside the mutation transaction, after ACCOUNT_LOCK. HTTP admission
+        # is not sufficient: hashing/lock waits can outlive a role or session revocation.
+        current = await session.scalar(
+            select(ConsoleAccount)
+            .join(ConsoleSession, ConsoleSession.account_id == ConsoleAccount.id)
+            .where(ConsoleSession.token_hash == digest(token), ConsoleSession.expires_at > utcnow())
+            .with_for_update()
+        )
+        if current is None or not current.active:
+            raise HTTPException(401, "Сессия завершена. Войдите снова.")
+        if current.role != "admin":
+            raise HTTPException(403, "Требуются права администратора.")
+
+    async def set_active(
+        self, account_id: str, active: bool, *, admin_token: str | None = None
+    ) -> None:
         async with self.database.session() as session:
             await session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": ACCOUNT_LOCK})
+            if admin_token is not None:
+                await self._require_live_admin(session, admin_token)
             accounts = list((await session.scalars(select(ConsoleAccount).with_for_update())).all())
             account = next((item for item in accounts if item.id == account_id), None)
             if account is None:

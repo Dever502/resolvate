@@ -9,6 +9,8 @@ from typing import Self
 import psycopg
 from psycopg import sql
 
+from resolvate.database_privileges import RESTRICT_METADATA_WRITES
+
 ROLE_NAME_PATTERN = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
 URL_SAFE_PASSWORD_PATTERN = re.compile(r"^[A-Za-z0-9._~-]+$")
 MIN_POSTGRES_PASSWORD_LENGTH = 16
@@ -217,9 +219,9 @@ async def provision_postgres_roles(settings: PostgresProvisioningSettings) -> No
                 ).format(sql.Identifier(settings.runtime_role))
             )
             await cursor.execute(
-                sql.SQL(
-                    "GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO {}"
-                ).format(sql.Identifier(settings.runtime_role))
+                sql.SQL("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {}").format(
+                    sql.Identifier(settings.runtime_role)
+                )
             )
             await cursor.execute(
                 sql.SQL(
@@ -233,12 +235,26 @@ async def provision_postgres_roles(settings: PostgresProvisioningSettings) -> No
             await cursor.execute(
                 sql.SQL(
                     "ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA public "
-                    "GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO {}"
+                    "GRANT USAGE, SELECT ON SEQUENCES TO {}"
                 ).format(
                     sql.Identifier(settings.migration_role),
                     sql.Identifier(settings.runtime_role),
                 )
             )
+            await cursor.execute(
+                sql.SQL("REVOKE UPDATE ON ALL SEQUENCES IN SCHEMA public FROM {}").format(
+                    sql.Identifier(settings.runtime_role)
+                )
+            )
+            await cursor.execute(
+                sql.SQL(
+                    "ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA public "
+                    "REVOKE UPDATE ON SEQUENCES FROM {}"
+                ).format(
+                    sql.Identifier(settings.migration_role), sql.Identifier(settings.runtime_role)
+                )
+            )
+            await cursor.execute(RESTRICT_METADATA_WRITES)
     finally:
         await connection.close()
 

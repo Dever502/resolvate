@@ -498,18 +498,48 @@ async def test_explicit_memberships_roles_and_revocation(installation: Any) -> N
     await service.change_member(alice, first.id, "bob")
     await membership(database.for_project(first.id), bob)
     assert await AuthorizationService(settings, database.for_project(first.id)).can_operate(222)
+    assert not await AuthorizationService(settings, database.for_project(first.id)).can_administer(
+        222
+    )
+    assert await AuthorizationService(settings, database.for_project(first.id)).can_administer(111)
     await service.change_member(alice, first.id, "bob", remove=True)
     assert not await AuthorizationService(settings, database.for_project(first.id)).can_operate(222)
     await membership(database.for_project(second.id), bob)
     with pytest.raises(HTTPException):
         await service.transfer(alice, "bob", first.id)
     await service.transfer(owner, "bob", first.id)
+    assert await AuthorizationService(settings, database.for_project(first.id)).can_administer(222)
+    assert not await AuthorizationService(settings, database.for_project(first.id)).can_administer(
+        111
+    )
     with pytest.raises(HTTPException):
         await membership(database.for_project(first.id), alice)
     with pytest.raises(HTTPException):
         await auth.set_active(bob.id, False)
     with pytest.raises(HTTPException):
         await auth.create_account(login="another", name="Another", password=PASSWORD, role="admin")
+
+
+async def test_project_members_do_not_trust_stale_admin_role(installation: Any) -> None:
+    database, _, _, owner, _, _, first, _, service = installation
+    async with database.session() as session:
+        current = await session.get(ConsoleAccount, owner.id)
+        assert current is not None
+        current.role = "operator"
+        await session.commit()
+    with pytest.raises(HTTPException) as error:
+        await service.members(owner, first.id)
+    assert error.value.status_code == 403
+
+
+@pytest.mark.parametrize("url", ["https://[64:ff9b::a00:1]", "https://[fec0::1]"])
+async def test_project_configuration_rejects_private_embedded_ips(
+    installation: Any, url: str
+) -> None:
+    _, _, _, _, alice, _, first, _, service = installation
+    with pytest.raises(HTTPException) as error:
+        await service.configure(alice, first.id, {"notification_webhook_url": url})
+    assert error.value.status_code == 422
 
 
 async def test_member_candidates_are_minimal_authorized_and_filtered(installation: Any) -> None:

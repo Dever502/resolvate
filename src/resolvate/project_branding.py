@@ -17,6 +17,8 @@ from fastapi import HTTPException
 from starlette.datastructures import UploadFile
 
 from resolvate.archive_media_storage import ArchiveStorageFull
+from resolvate.media_process import run_media_process
+from resolvate.media_storage import _file_operation
 from resolvate.models import ConsoleAccount
 from resolvate.projects import ProjectService, membership
 
@@ -47,7 +49,7 @@ class ProjectBranding:
             if not content or len(content) > MAX_LOGO_BYTES:
                 raise HTTPException(422, "Логотип пустой или больше 2 МБ.")
             async with self.slots:
-                png = await asyncio.to_thread(self._normalize, content)
+                png = await _file_operation(lambda: self._normalize(content))
             sha256 = hashlib.sha256(png).hexdigest()
             await self._replace(actor, project_id, sha256, png)
             return sha256
@@ -60,25 +62,13 @@ class ProjectBranding:
             with tempfile.TemporaryDirectory(prefix="resolvate-logo-") as directory:
                 path = Path(directory) / "input"
                 path.write_bytes(content)
-                result = subprocess.run(
+                png = run_media_process(
                     [sys.executable, "-m", "resolvate.logo_inspect", str(path)],
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
                     timeout=15,
-                    check=True,
-                    env={
-                        "PATH": os.defpath,
-                        "PYTHONPATH": str(Path(__file__).parent.parent),
-                        "PYTHONDONTWRITEBYTECODE": "1",
-                    },
                 )
-            if (
-                not result.stdout.startswith(b"\x89PNG\r\n\x1a\n")
-                or len(result.stdout) > MAX_LOGO_BYTES
-            ):
+            if not png.startswith(b"\x89PNG\r\n\x1a\n") or len(png) > MAX_LOGO_BYTES:
                 raise ValueError("invalid normalized logo")
-            return result.stdout
+            return png
         except (subprocess.SubprocessError, ValueError, OSError):
             raise HTTPException(
                 422, "Изображение не прошло проверку. Используйте PNG, JPEG или WebP."

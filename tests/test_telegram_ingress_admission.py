@@ -16,6 +16,35 @@ from resolvate.telegram_poll_progress import TelegramPollProgress
 from resolvate.user_message_limits import UserMessageRateLimitDecision
 
 
+async def test_private_edits_share_the_inbound_budget() -> None:
+    repository, limiter = AsyncMock(), AsyncMock()
+    limiter.consume.return_value = UserMessageRateLimitDecision(allowed=False)
+    bot = Bot("123456:TEST_TOKEN")
+    middleware = DurableTelegramIngressMiddleware(
+        repository,
+        Mock(),
+        bot=bot,
+        inbound_limiter=limiter,
+        outbound_limiter=TelegramRateLimiter(0.001),
+    )
+    update = Update.model_validate(
+        {
+            "update_id": 102,
+            "edited_message": {
+                "message_id": 1,
+                "date": 0,
+                "chat": {"id": 42, "type": "private"},
+                "from": {"id": 42, "is_bot": False, "first_name": "Customer"},
+                "text": "edited",
+            },
+        }
+    )
+    await middleware(AsyncMock(), update, {})
+    limiter.consume.assert_awaited_once_with("telegram:42")
+    repository.enqueue_inbound_update.assert_not_awaited()
+    await bot.session.close()
+
+
 @pytest.mark.parametrize("rate_limited", [False, True])
 @pytest.mark.parametrize("cancel_during_outage", [False, True])
 @pytest.mark.parametrize("failures", [1, 6])
