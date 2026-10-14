@@ -20,6 +20,7 @@ from PIL import Image, UnidentifiedImageError
 from starlette.datastructures import UploadFile
 
 from resolvate.archive_media_storage import ArchiveMediaStorage
+from resolvate.media_process import run_media_process
 
 MAX_WEB_PHOTO_BYTES = 20 * 1024 * 1024
 UPLOAD_CHUNK_BYTES = 64 * 1024
@@ -227,21 +228,12 @@ class LocalMediaStorage:
             temp_path.unlink(missing_ok=True)
             raise MediaValidationError("⚠️ Файл больше 20 МБ. Отправьте файл меньшего размера.")
         try:
-            result = subprocess.run(
+            output = run_media_process(
                 [sys.executable, "-m", "resolvate.media_inspect", str(temp_path)]
                 + ([sticker_kind] if sticker_kind else []),
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
                 timeout=20,
-                check=True,
-                env={
-                    "PATH": os.defpath,
-                    "PYTHONPATH": str(Path(__file__).parent.parent),
-                    "PYTHONDONTWRITEBYTECODE": "1",
-                },
             )
-            detected_mime = result.stdout.decode().strip()
+            detected_mime = output.decode().strip()
             if detected_mime not in MIME_EXTENSIONS:
                 raise ValueError("unsupported media")
         except (subprocess.SubprocessError, ValueError, OSError) as error:
@@ -368,10 +360,9 @@ class LocalMediaStorage:
             await upload.close()
 
     async def save_telegram_photo(self, bot: TelegramDownloader, *, file_id: str) -> StoredMedia:
-        if self.capacity is not None:
-            async with self.capacity.reserve(MAX_WEB_PHOTO_BYTES):
-                return await self._save_telegram_photo(bot, file_id=file_id)
-        return await self._save_telegram_photo(bot, file_id=file_id)
+        return await self.save_telegram_file(
+            bot, file_id=file_id, declared_mime="image/jpeg", filename=None
+        )
 
     async def save_telegram_file(
         self,
@@ -414,22 +405,6 @@ class LocalMediaStorage:
             )
         finally:
             await asyncio.to_thread(temp_path.unlink, missing_ok=True)
-
-    async def _save_telegram_photo(self, bot: TelegramDownloader, *, file_id: str) -> StoredMedia:
-        await asyncio.to_thread(self._prepare)
-        media_id = str(uuid.uuid4())
-        temp_path = self.temp_root / f"{media_id}.telegram"
-        try:
-            await bot.download(file_id, destination=temp_path)
-            return await self._finalize(
-                temp_path=temp_path,
-                media_id=media_id,
-                declared_mime="image/jpeg",
-                original_filename=None,
-            )
-        except BaseException:
-            await asyncio.to_thread(temp_path.unlink, missing_ok=True)
-            raise
 
     def resolve(self, storage_path: str) -> Path:
         candidate = (self.data_dir / storage_path).resolve()

@@ -32,6 +32,7 @@ def deploy_environment(
         'if [ "$1" = image ] && [ "$2" = inspect ]; then '
         "printf '%s\\n' \"$FAKE_RESOLVED_IMAGE\"; exit 0; fi\n"
         'case "$*" in\n'
+        '  *\' pull\'*) if [ "${FAKE_INTERRUPT:-}" = yes ]; then kill -TERM "$PPID"; fi ;;\n'
         "  *' config --format json'*) printf '{\"services\":{}}\\n'; exit 0 ;;\n"
         "  *' up --detach --wait'*) "
         'if [ "${FAKE_UP_FAIL:-}" = yes ]; then exit 42; fi ;;\n'
@@ -50,6 +51,47 @@ def deploy_environment(
         **({"FAKE_UP_FAIL": "yes"} if fail_up else {}),
     }
     return environment, deploy_dir
+
+
+def test_interrupted_preflight_removes_rendered_secrets(tmp_path: Path) -> None:
+    environment, _ = deploy_environment(tmp_path)
+    environment.update(TMPDIR=str(tmp_path), FAKE_INTERRUPT="yes")
+    result = run_deploy(Path(__file__).resolve().parents[1], environment)
+    assert result.returncode != 0
+    assert not list(tmp_path.glob("resolvate-compose.*.json"))
+
+
+def test_backup_does_not_follow_predictable_temporary_symlink(tmp_path: Path) -> None:
+    binary_dir = tmp_path / "bin"
+    binary_dir.mkdir()
+    docker = binary_dir / "docker"
+    docker.write_text(
+        '#!/bin/sh\ncase "$*" in *pg_dump*) echo backup ;; *) cat >/dev/null ;; esac\n'
+    )
+    docker.chmod(0o755)
+    victim = tmp_path / "protected"
+    victim.write_text("must remain intact")
+    output = tmp_path / "backup.dump"
+    result = subprocess.run(
+        [
+            "sh",
+            "-c",
+            'ln -s "$2" "$1.tmp.$$"; exec sh scripts/backup.sh "$1"',
+            "test",
+            str(output),
+            str(victim),
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        env={**os.environ, "PATH": f"{binary_dir}:{os.environ['PATH']}"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert victim.read_text() == "must remain intact"
+    assert output.read_text() == "backup\n"
+    assert not output.is_symlink()
+    assert output.stat().st_mode & 0o777 == 0o600
 
 
 def run_deploy(project_root: Path, environment: dict[str, str]) -> subprocess.CompletedProcess[str]:

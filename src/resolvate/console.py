@@ -270,13 +270,14 @@ def create_console(
         return [account_view(row) for row in rows]
 
     @app.post("/accounts")
-    async def add_account(payload: NewAccount, actor: Admin) -> dict[str, object]:
+    async def add_account(payload: NewAccount, request: Request, actor: Admin) -> dict[str, object]:
         created = await auth.create_account(
             login=payload.login,
             name=payload.name,
             password=payload.password.get_secret_value(),
             role=payload.role,
             telegram_id=payload.telegram_id,
+            admin_token=request.cookies[COOKIE],
         )
         return account_view(created)
 
@@ -310,9 +311,11 @@ def create_console(
 
     @app.post("/accounts/{account_id}/{action}")
     async def change_account(
-        account_id: uuid.UUID, action: Literal["enable", "disable"], actor: Admin
+        account_id: uuid.UUID, action: Literal["enable", "disable"], request: Request, actor: Admin
     ) -> dict[str, bool]:
-        await auth.set_active(str(account_id), action == "enable")
+        await auth.set_active(
+            str(account_id), action == "enable", admin_token=request.cookies[COOKIE]
+        )
         return {"ok": True}
 
     @app.post("/tickets/sync")

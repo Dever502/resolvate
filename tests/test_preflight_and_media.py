@@ -1150,7 +1150,8 @@ async def test_only_bot_quick_response_pin_service_message_is_deleted(
         assert bot.delete_calls == [{"chat_id": -100123, "message_id": 51}]
 
 
-async def test_admin_can_resolve_inconclusive_panel_action() -> None:
+@pytest.mark.parametrize("admin", [True, False])
+async def test_only_admin_can_resolve_inconclusive_panel_action(admin: bool) -> None:
     calls: list[dict[str, object]] = []
 
     class FakeTicketService:
@@ -1186,10 +1187,15 @@ async def test_admin_can_resolve_inconclusive_panel_action() -> None:
     )
     adapter.ticket_service = FakeTicketService()  # type: ignore[assignment]
     adapter.panel_service = FakePanelService()  # type: ignore[assignment]
+    adapter.authorization.can_administer = AsyncMock(return_value=admin)  # type: ignore[method-assign]
     message = FakeMessage()
 
     await adapter.handle_group_message(message)  # type: ignore[arg-type]
 
+    if not admin:
+        assert calls == []
+        assert message.replies == ["⛔ Требуются права администратора проекта."]
+        return
     assert calls == [
         {
             "ticket_id": "ticket-1",
@@ -1200,6 +1206,35 @@ async def test_admin_can_resolve_inconclusive_panel_action() -> None:
         }
     ]
     assert message.replies == ["✅ Результат Remnawave зафиксирован; новые команды разблокированы."]
+
+
+@pytest.mark.parametrize("edited", [False, True])
+async def test_blocked_customer_does_not_start_attachment_work(
+    monkeypatch: pytest.MonkeyPatch, edited: bool
+) -> None:
+    adapter = object.__new__(TelegramSupportAdapter)
+    adapter.ticket_service = AsyncMock()
+    adapter.ticket_service.is_blocked.return_value = True
+    adapter._ticket_locks = TicketLockPool()
+    message = Message.model_validate(
+        {
+            "message_id": 1,
+            "date": 0,
+            "chat": {"id": 123, "type": "private"},
+            "from": {"id": 123, "is_bot": False, "first_name": "Blocked"},
+            "document": {"file_id": "file", "file_unique_id": "unique", "file_size": 20_000_000},
+        }
+    )
+    save, edit = AsyncMock(), AsyncMock()
+    monkeypatch.setattr("resolvate.telegram_user_handlers.save_attachment", save)
+    monkeypatch.setattr("resolvate.telegram_user_handlers.record_edit", edit)
+    if edited:
+        await adapter.handle_edited_private_message(message)
+    else:
+        await adapter.handle_private_message(message)
+    adapter.ticket_service.is_blocked.assert_awaited_once_with(123)
+    save.assert_not_awaited()
+    edit.assert_not_awaited()
 
 
 def test_migration_url_conversion_supports_async_postgres() -> None:

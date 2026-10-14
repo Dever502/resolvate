@@ -16,7 +16,7 @@ from fastapi import HTTPException
 from PIL import Image
 from project_support import ProjectDatabase as Database
 from pypdf import PdfWriter
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from starlette.datastructures import Headers, UploadFile
 
 from resolvate.api import create_app
@@ -24,6 +24,7 @@ from resolvate.config import Settings
 from resolvate.console_auth import ConsoleAuth, digest, password_hash, verify_password
 from resolvate.media_storage import LocalMediaStorage, MediaValidationError
 from resolvate.models import (
+    ConsoleAccount,
     ConsoleSend,
     ConsoleSession,
     DeliveryOutbox,
@@ -39,6 +40,66 @@ from resolvate.web_models import MediaAsset
 
 PASSWORD = "console-test-password-only"
 ORIGIN = "http://localhost:8080"
+
+
+@pytest.mark.parametrize("operation", ["create_account", "set_active"])
+@pytest.mark.parametrize("revoke", ["role", "session"])
+async def test_account_mutation_rechecks_admin_at_write(
+    console: Any, monkeypatch: pytest.MonkeyPatch, operation: str, revoke: str
+) -> None:
+    client, database, _, auth, admin, _ = console
+    target = await auth.create_account(
+        login="existing", name="Existing", password=PASSWORD, role="operator"
+    )
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = getattr(ConsoleAuth, operation)
+
+    async def paused(self: ConsoleAuth, *args: Any, **kwargs: Any) -> Any:
+        entered.set()
+        await release.wait()
+        return await original(self, *args, **kwargs)
+
+    monkeypatch.setattr(ConsoleAuth, operation, paused)
+    if operation == "create_account":
+        request = client.post(
+            "/console/accounts",
+            json={
+                "login": "new-person",
+                "name": "New",
+                "password": PASSWORD,
+                "role": "operator",
+            },
+        )
+    else:
+        request = client.post(f"/console/accounts/{target.id}/disable")
+    task = asyncio.create_task(request)
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        async with database.session() as session:
+            current = await session.get(ConsoleAccount, admin.id)
+            assert current is not None
+            if revoke == "role":
+                current.role = "operator"
+            else:
+                await session.execute(
+                    delete(ConsoleSession).where(ConsoleSession.account_id == admin.id)
+                )
+            await session.commit()
+        release.set()
+        response = await task
+        assert response.status_code == (403 if revoke == "role" else 401), response.text
+        async with database.session() as session:
+            assert (
+                await session.scalar(
+                    select(ConsoleAccount.id).where(ConsoleAccount.login == "new-person")
+                )
+                is None
+            )
+            current_target = await session.get(ConsoleAccount, target.id)
+            assert current_target is not None and current_target.active
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 @pytest.fixture

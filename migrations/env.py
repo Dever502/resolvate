@@ -6,6 +6,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 import resolvate.web_models  # noqa: F401
+from resolvate.database_privileges import RESTRICT_METADATA_WRITES
 from resolvate.migrations import resolve_migration_database_url
 from resolvate.models import Base
 
@@ -29,6 +30,7 @@ def run_migrations_offline() -> None:
     )
     with context.begin_transaction():
         context.run_migrations()
+        context.execute(RESTRICT_METADATA_WRITES)
 
 
 def run_migrations_online() -> None:
@@ -48,6 +50,7 @@ def run_migrations_online() -> None:
         )
         with context.begin_transaction():
             context.run_migrations()
+            context.execute(RESTRICT_METADATA_WRITES)
 
 
 if context.is_offline_mode():

@@ -30,6 +30,30 @@ def test_redact_text_removes_common_secret_shapes() -> None:
     assert "Bearer ***" in redacted
 
 
+def test_telegram_tokens_are_redacted_in_messages_and_exceptions() -> None:
+    token = "123456789:" + "A" * 35
+    url = f"https://api.telegram.org/file/bot{token}/documents/file.pdf"
+    try:
+        raise RuntimeError(url)
+    except RuntimeError:
+        exc_info = sys.exc_info()
+    record = logging.getLogger("test").makeRecord(
+        "test",
+        logging.ERROR,
+        __file__,
+        1,
+        "Download failed: %s",
+        (url,),
+        exc_info,
+        extra={"error_message": {"destination": url}},
+    )
+    encoded = json.dumps(formatted(record))
+    assert token not in encoded
+    assert "documents/file.pdf" in encoded
+    minimum_token = "1:" + "B" * 20
+    assert minimum_token not in redact_text(f"https://api.telegram.org/bot{minimum_token}/getMe")
+
+
 def test_json_formatter_redacts_message_extra_and_exception() -> None:
     try:
         raise RuntimeError("postgresql://user:secret-db-password@db.example/support")

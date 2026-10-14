@@ -36,6 +36,8 @@ class TelegramUserHandlers(TelegramTopicManager):
     async def handle_edited_private_message(self, message: Message) -> None:
         if message.from_user is None or message.from_user.is_bot:
             return
+        if await self.ticket_service.is_blocked(message.from_user.id):
+            return
         try:
             await record_edit(message, self.bot, self.media_storage, self.ticket_service.database)
         except MediaValidationError as error:
@@ -138,6 +140,12 @@ class TelegramUserHandlers(TelegramTopicManager):
             },
         )
         async with self._ticket_locks.hold(message.from_user.id):
+            # Admission still rechecks the block transactionally. Avoid downloading
+            # and decoding an attachment for an already blocked sender first.
+            if message.content_type != "text" and await self.ticket_service.is_blocked(
+                message.from_user.id
+            ):
+                return
             try:
                 async with self.media_storage.transaction(message.content_type != "text"):
                     stored_media = await save_attachment(message, self.bot, self.media_storage)

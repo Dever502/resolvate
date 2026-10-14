@@ -72,7 +72,12 @@ def scan_text(
                     or domain.endswith(tuple(f".{item}" for item in PUBLIC_EMAIL_DOMAINS))
                     or domain.endswith((".example", ".invalid"))
                 )
-                if not is_placeholder and not domain.endswith(".users.noreply.github.com"):
+                is_github_noreply = (
+                    domain == "users.noreply.github.com"
+                    or domain.endswith(".users.noreply.github.com")
+                    or match.group(1).casefold() == "noreply@github.com"
+                )
+                if not is_placeholder and not is_github_noreply:
                     findings.append(Finding(source, line_number, "personal email / PII"))
     return findings
 

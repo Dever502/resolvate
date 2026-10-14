@@ -5,12 +5,14 @@ import io
 import threading
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from PIL import Image
 from starlette.datastructures import Headers, UploadFile
 
 from resolvate.media_storage import LocalMediaStorage, StoredMedia
+from resolvate.project_branding import ProjectBranding
 
 
 def photo() -> UploadFile:
@@ -154,4 +156,38 @@ async def test_repeated_cancellation_does_not_release_publication_lock_early(
         assert not list(storage.temp_root.iterdir())
     finally:
         proceed.set()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_cancelled_logo_upload_keeps_decoder_slot(monkeypatch: pytest.MonkeyPatch) -> None:
+    branding = ProjectBranding(None)  # type: ignore[arg-type]
+    branding.slots = asyncio.Semaphore(1)
+    monkeypatch.setattr(branding, "authorize", AsyncMock())
+    replace = AsyncMock()
+    monkeypatch.setattr(branding, "_replace", replace)
+    started, release = threading.Event(), threading.Event()
+
+    def normalize(content: bytes) -> bytes:
+        started.set()
+        assert release.wait(10)
+        return b"normalized"
+
+    monkeypatch.setattr(branding, "_normalize", normalize)
+    upload = photo()
+    task = asyncio.create_task(branding.upload(None, "test", upload))  # type: ignore[arg-type]
+    try:
+        assert await asyncio.to_thread(started.wait, 10)
+        for _ in range(2):
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done()
+            assert branding.slots.locked()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert not branding.slots.locked()
+        assert upload.file.closed
+        replace.assert_not_called()
+    finally:
+        release.set()
         await asyncio.gather(task, return_exceptions=True)

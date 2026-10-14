@@ -92,9 +92,11 @@ async def test_cancelled_request_keeps_decoder_slot(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(cache, "_generate", generate)
     task = asyncio.create_task(cache.get("key", Path("unused")))
     assert await asyncio.to_thread(started.wait, 5)
-    task.cancel()
-    await asyncio.sleep(0)
-    assert cache.slot.locked()
+    for _ in range(2):
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()
+        assert cache.slot.locked()
     release.set()
     with pytest.raises(asyncio.CancelledError):
         await task

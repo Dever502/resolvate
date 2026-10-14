@@ -25,16 +25,15 @@ if [ -n "$media_output" ]; then
     mkdir -p "$(dirname "$media_output")"
 fi
 umask 077
-temporary="${output}.tmp.$$"
+temporary=
 media_temporary=
 application_stopped=false
-if [ -n "$media_output" ]; then
-    media_temporary="${media_output}.tmp.$$"
-fi
 cleanup() {
     status=$?
     trap - EXIT HUP INT TERM
-    rm -f "$temporary"
+    if [ -n "$temporary" ]; then
+        rm -f "$temporary"
+    fi
     if [ -n "$media_temporary" ]; then
         rm -f "$media_temporary"
     fi
@@ -47,6 +46,11 @@ trap cleanup EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+temporary=$(mktemp "${output}.tmp.XXXXXX")
+if [ -n "$media_output" ]; then
+    media_temporary=$(mktemp "${media_output}.tmp.XXXXXX")
+fi
 
 if [ -n "$media_output" ]; then
     compose stop resolvate
@@ -70,8 +74,10 @@ fi
     exit 1
 }
 mv "$temporary" "$output"
+temporary=
 if [ -n "$media_output" ]; then
     mv "$media_temporary" "$media_output"
+    media_temporary=
     compose up --detach --wait resolvate
     application_stopped=false
 fi

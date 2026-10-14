@@ -31,6 +31,7 @@ def normalize(path: Path) -> bytes:
 
 
 def main() -> None:
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     resource.setrlimit(resource.RLIMIT_AS, (512 * 1024 * 1024,) * 2)
     resource.setrlimit(resource.RLIMIT_CPU, (10, 10))
     resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
