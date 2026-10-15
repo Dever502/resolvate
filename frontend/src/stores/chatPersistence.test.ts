@@ -395,6 +395,139 @@ describe("persistent drafts and send attempts", () => {
 
   const png = (name: string) => new File([`${name} bytes`], `${name}.png`, { type: "image/png", lastModified: 1000 });
 
+  it.each([false, true])("a failed accepted-file checkpoint stops the queue and retains its key (reload: %s)", async (reload) => {
+    const sent = serve();
+    let chat = start();
+    await openReady(chat);
+    chat.edit("Caption");
+    chat.attach(["a", "b"].map(png));
+    await chat.flushDrafts();
+    vi.spyOn(workStore, "writeDraft").mockRejectedValueOnce(new workStore.StorageError("failed", "Disk error"));
+
+    expect(await chat.send()).toBe("unknown");
+    expect(chat.sending).toBe(false);
+    expect(sent.map(item => item.file)).toEqual(["a.png"]);
+    expect(chat.progress).toMatchObject({ state: "stopped", accepted: 1 });
+    expect(chat.attempt).toMatchObject({ key: sent[0]!.key, state: "unknown" });
+    expect(chat.attempt?.reason).toContain("Сервер принял сообщение");
+    expect((await readDraft(anna))?.files.map(item => item.file.name)).toEqual(["a.png", "b.png"]);
+    expect((await readAttempt(anna))?.key).toBe(sent[0]!.key);
+
+    if (reload) {
+      chat = start();
+      await openReady(chat);
+      expect(await chat.send()).toBe("accepted");
+    } else {
+      // The accepted file has left memory; Retry fixes its checkpoint before the rest can go.
+      expect(await chat.retrySend()).toBe("accepted");
+      expect(chat.progress?.accepted).toBe(1);
+      expect(await chat.send()).toBe("accepted");
+    }
+    expect(sent.map(item => item.file)).toEqual(["a.png", "a.png", "b.png"]);
+    expect(sent[1]!.key).toBe(sent[0]!.key);
+    expect(new Set(sent.map(item => item.key)).size).toBe(2);
+    expect(await readDraft(anna)).toBeNull();
+    expect(await readAttempt(anna)).toBeNull();
+  });
+
+  it("failed removal of the final draft keeps the key across a reload", async () => {
+    const sent = serve();
+    let chat = start();
+    await openReady(chat);
+    chat.attach([png("last")]);
+    await chat.flushDrafts();
+    vi.spyOn(workStore, "removeDraft").mockRejectedValueOnce(new workStore.StorageError("failed", "Disk error"));
+    expect(await chat.send()).toBe("unknown");
+    expect((await readAttempt(anna))?.key).toBe(sent[0]!.key);
+    chat = start();
+    await openReady(chat);
+    expect(await chat.send()).toBe("accepted");
+    expect(sent[1]!.key).toBe(sent[0]!.key);
+    expect(await readDraft(anna)).toBeNull();
+    expect(await readAttempt(anna)).toBeNull();
+  });
+
+  it("a checkpoint timeout cannot replace the recovery key or send the next file", async () => {
+    const sent = serve();
+    const chat = start();
+    await openReady(chat);
+    chat.attach(["a", "b"].map(png));
+    await chat.flushDrafts();
+    const write = workStore.writeDraft;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const checkpoint = vi.spyOn(workStore, "writeDraft").mockImplementationOnce(async (...args) => {
+      await gate;
+      return write(...args);
+    });
+    const sending = chat.send();
+    await vi.waitFor(() => expect(checkpoint).toHaveBeenCalled());
+    await vi.advanceTimersByTimeAsync(workStore.STORAGE_PATIENCE);
+    expect(await sending).toBe("unknown");
+    expect(chat.sending).toBe(false);
+    expect(sent).toHaveLength(1);
+    expect((await readAttempt(anna))?.key).toBe(sent[0]!.key);
+    release();
+    await chat.flushDrafts();
+    expect((await readAttempt(anna))?.key).toBe(sent[0]!.key);
+    expect(await chat.retrySend()).toBe("accepted");
+    expect(await chat.send()).toBe("accepted");
+    expect(sent.map(item => item.file)).toEqual(["a.png", "a.png", "b.png"]);
+    expect(sent[1]!.key).toBe(sent[0]!.key);
+  });
+
+  it.each([false, true])("checkpoint recovery preserves a second identical file (reload: %s)", async (reload) => {
+    const sent = serve();
+    let chat = start();
+    await openReady(chat);
+    chat.attach([png("same"), png("same")]);
+    await chat.flushDrafts();
+    vi.spyOn(workStore, "writeDraft").mockRejectedValueOnce(new workStore.StorageError("failed", "Disk error"));
+    expect(await chat.send()).toBe("unknown");
+    // A later ordinary draft save completes the cleanup, but the recovery key remains.
+    chat.edit("");
+    await chat.flushDrafts();
+    if (reload) {
+      chat = start();
+      await openReady(chat);
+    }
+    expect(chat.draft?.files).toHaveLength(1);
+    expect(await chat.retrySend()).toBe("accepted");
+    expect(chat.draft?.files).toHaveLength(1);
+    expect(await chat.send()).toBe("accepted");
+    expect(sent).toHaveLength(3);
+    expect(sent[1]!.key).toBe(sent[0]!.key);
+    expect(sent[2]!.key).not.toBe(sent[0]!.key);
+  });
+
+  it("a checkpoint finishing after an account switch cannot change the new session", async () => {
+    const sent = serve();
+    const chat = start();
+    await openReady(chat);
+    chat.attach([png("a"), png("b")]);
+    await chat.flushDrafts();
+    const write = workStore.writeDraft;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const checkpoint = vi.spyOn(workStore, "writeDraft").mockImplementationOnce(async (...args) => {
+      await gate;
+      return write(...args);
+    });
+    const sending = chat.send();
+    await vi.waitFor(() => expect(checkpoint).toHaveBeenCalled());
+    const session = useSessionStore();
+    session.signOut();
+    session.signIn({ account: operator("a2"), csrf: "new" });
+    useProjectsStore().currentId = "p1";
+    await openReady(chat);
+    chat.edit("New account draft");
+    release();
+    expect(await sending).toBe("skipped");
+    expect(sent).toHaveLength(1);
+    expect(chat.draft?.text).toBe("New account draft");
+    expect(chat.attempt).toBeNull();
+  });
+
   it("several files survive a reload in their order, with their bytes; a removed one does not come back", async () => {
     serve();
     let chat = start();
