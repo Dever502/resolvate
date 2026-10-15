@@ -1,24 +1,42 @@
 <script setup lang="ts">
-import { nextTick, watch } from "vue";
+import { nextTick, ref, useTemplateRef, watch } from "vue";
 
-// The list of quick replies above the text field. The field that has the focus points at the active
-// option (aria-activedescendant): the reply box when "/" was typed in it, the list's own search field
-// when the "/" button opened it. A click does not take the focus. Esc closes the list from anywhere in
-// it; a failed lookup is said with a retry, not as "nothing found". The header and the search stay,
-// the results scroll.
+// The quick replies picker above the text field, the same however it was opened ("/" typed into an
+// empty reply box, or the button): its own search field holds the focus and points at the active
+// option (aria-activedescendant); a click on an option does not take the focus. Esc closes the list
+// from anywhere in it; a failed lookup is said with a retry, not as "nothing found". The header and
+// the search stay, the results scroll: once they are scrolled, their top edge fades out instead of
+// running up to the search field.
 const props = defineProps<{
   id: string; replies: { id: string; text: string }[]; active: number;
-  group: string; loading: boolean; failed: boolean; more: boolean; query: string; buttonMode: boolean;
+  group: string; loading: boolean; failed: boolean; more: boolean; query: string;
 }>();
 const emit = defineEmits<{
   choose: [index: number]; hover: [index: number]; back: []; more: []; close: []; retry: [];
   search: [value: string]; keydown: [event: KeyboardEvent];
 }>();
+const field = useTemplateRef<HTMLInputElement>("field");
+const body = useTemplateRef<HTMLElement>("body");
+/** The results are scrolled away from their start: the fade at their top edge is shown. */
+const scrolled = ref(false);
 
+function onScroll(): void {
+  scrolled.value = (body.value?.scrollTop ?? 0) > 0;
+}
+
+// New results (another search or group) start at the top; the browser may not report that as a scroll.
+watch(() => props.replies, async () => {
+  await nextTick();
+  onScroll();
+});
+
+// The active option comes fully into view: the body's scroll padding keeps it clear of the fade.
 watch(() => props.active, async (index) => {
   await nextTick();
   document.getElementById(`${props.id}-${index}`)?.scrollIntoView({ block: "nearest" });
 });
+
+defineExpose({ focusSearch: () => field.value?.focus() });
 </script>
 
 <template>
@@ -31,7 +49,7 @@ watch(() => props.active, async (index) => {
       <button class="quiet -ml-2 min-h-11 min-w-11" type="button" aria-label="Закрыть готовые ответы" @click="emit('close')">×</button>
     </div>
     <input
-      v-if="buttonMode"
+      ref="field"
       :value="query"
       class="reply-search"
       role="combobox"
@@ -40,12 +58,12 @@ watch(() => props.active, async (index) => {
       aria-expanded="true"
       :aria-controls="id"
       :aria-activedescendant="replies.length ? `${id}-${active}` : undefined"
-      placeholder="Найти…"
+      :placeholder="group ? 'Найти ответ…' : 'Найти группу…'"
       maxlength="100"
       @input="emit('search', ($event.target as HTMLInputElement).value)"
       @keydown="emit('keydown', $event)"
     />
-    <div class="reply-options-body">
+    <div ref="body" class="reply-options-body" :data-scrolled="scrolled || undefined" @scroll.passive="onScroll">
       <p v-if="loading" class="muted p-2" role="status">Загрузка…</p>
       <div :id="id" role="listbox" :aria-label="group ? 'Готовые ответы' : 'Группы ответов'" :aria-busy="loading">
         <div

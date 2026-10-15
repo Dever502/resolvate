@@ -14,7 +14,7 @@ import Composer from "./Composer.vue";
 const renderComposer = () => mount(TooltipProvider, { slots: { default: () => h(Composer) } });
 enableAutoUnmount(afterEach);
 
-describe("grouped quick replies", () => {
+describe("quick replies picker", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     useSessionStore().signIn({ account: { id: "a", name: "Operator", login: "operator", role: "operator",
@@ -27,15 +27,195 @@ describe("grouped quick replies", () => {
   });
   afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
-  it("does not send a slash query while the options are loading", async () => {
+  const groupsOf = (...names: string[]) => names.map((name, index) => ({ id: `g${index}`, name, revision: 0 }));
+  const repliesOf = (...texts: string[]) => texts.map((text, index) => ({ id: `r${index}`, text, group_id: "g0", revision: 0 }));
+  /** The groups, then the replies of whichever group is chosen. */
+  const serve = (groups = groupsOf("общее", "оплата"), replies = repliesOf("Здравствуйте!", "Спасибо!")) =>
+    vi.spyOn(useSessionStore(), "api").mockImplementation(async (path) => (String(path).startsWith("replies") ? replies : groups));
+  const mountAttached = () => mount(TooltipProvider, { slots: { default: () => h(Composer) }, attachTo: document.body });
+  /** Text typed into the reply box as a keyboard does: beforeinput, then (unless cancelled) input. */
+  async function type(wrapper: VueWrapper, data: string, inputType = "insertText", isComposing = false): Promise<boolean> {
+    const field = wrapper.get("textarea").element as HTMLTextAreaElement;
+    const before = new InputEvent("beforeinput", { data, inputType, isComposing, bubbles: true, cancelable: true });
+    field.dispatchEvent(before);
+    if (!before.defaultPrevented) {
+      const start = field.selectionStart;
+      field.value = field.value.slice(0, start) + data + field.value.slice(field.selectionEnd);
+      field.dispatchEvent(new InputEvent("input", { data, inputType, isComposing, bubbles: true }));
+    }
+    await vi.advanceTimersByTimeAsync(200);
+    await flushPromises();
+    return before.defaultPrevented;
+  }
+  const searchField = (wrapper: VueWrapper) => wrapper.get('[aria-label="Поиск готовых ответов"]');
+  const optionTexts = (wrapper: VueWrapper) => wrapper.findAll('[role="option"]').map((option) => option.text());
+  async function settle(): Promise<void> {
+    await vi.advanceTimersByTimeAsync(200);
+    await flushPromises();
+  }
+
+  it("\"/\" in an empty reply box opens the picker: the search takes the focus and the next keys, the draft stays empty", async () => {
+    serve();
+    const wrapper = mountAttached();
+    await flushPromises();
+    expect(await type(wrapper, "/")).toBe(true);
+    expect(useChatStore().draft?.text).toBe("");
+    expect(wrapper.get("textarea").element.value).toBe("");
+    expect(document.activeElement).toBe(searchField(wrapper).element);
+    expect(optionTexts(wrapper)).toEqual(["/общее", "/оплата"]);
+    await searchField(wrapper).setValue("опл");
+    await settle();
+    expect(vi.mocked(useSessionStore().api)).toHaveBeenLastCalledWith("reply-groups?q=%D0%BE%D0%BF%D0%BB&offset=0", {}, "p1");
+    expect(useChatStore().draft?.text).toBe("");
+    // The reply box is no combobox any more: the search field is.
+    expect(wrapper.get("textarea").attributes("aria-activedescendant")).toBeUndefined();
+    expect(wrapper.get("textarea").attributes("aria-controls")).toBeUndefined();
+    wrapper.unmount();
+  });
+
+  it("a \"/\" inside text, a pasted one and one from an IME composition are text", async () => {
+    serve();
+    const wrapper = mountAttached();
+    await flushPromises();
+    expect(await type(wrapper, "/", "insertFromPaste")).toBe(false);
+    expect(useChatStore().draft?.text).toBe("/");
+    useChatStore().edit("");
+    wrapper.get("textarea").element.value = "";
+    expect(await type(wrapper, "/", "insertCompositionText", true)).toBe(false);
+    expect(useChatStore().draft?.text).toBe("/");
+    useChatStore().edit("https:");
+    await flushPromises();
+    const field = wrapper.get("textarea").element as HTMLTextAreaElement;
+    field.setSelectionRange(6, 6);
+    expect(await type(wrapper, "/")).toBe(false);
+    expect(useChatStore().draft?.text).toBe("https:/");
+    expect(wrapper.find(".reply-options").exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("a keyboard whose \"/\" cannot be cancelled: it is taken back out of the box and the picker opens", async () => {
+    serve();
+    const wrapper = mountAttached();
+    await flushPromises();
+    const field = wrapper.get("textarea").element as HTMLTextAreaElement;
+    field.value = "/";
+    field.dispatchEvent(new InputEvent("input", { data: "/", inputType: "insertText", bubbles: true }));
+    await settle();
+    expect(field.value).toBe("");
+    expect(useChatStore().draft?.text).toBe("");
+    expect(document.activeElement).toBe(searchField(wrapper).element);
+    wrapper.unmount();
+  });
+
+  it("the button opens the same picker; a reply goes where the cursor was, or over the selection, the cursor after it", async () => {
+    serve();
+    const chat = useChatStore();
+    chat.edit("Добрый день. До свидания.");
+    const wrapper = mountAttached();
+    await flushPromises();
+    const field = wrapper.get("textarea").element as HTMLTextAreaElement;
+    field.setSelectionRange(13, 13);
+    await wrapper.get('[aria-label="Готовые ответы"]').trigger("click");
+    await settle();
+    expect(document.activeElement).toBe(searchField(wrapper).element);
+    await searchField(wrapper).trigger("keydown", { key: "Enter" });
+    await settle();
+    expect(optionTexts(wrapper)).toEqual(["Здравствуйте!", "Спасибо!"]);
+    expect(document.activeElement).toBe(searchField(wrapper).element);
+    await searchField(wrapper).trigger("keydown", { key: "ArrowDown" });
+    await searchField(wrapper).trigger("keydown", { key: "Enter" });
+    await flushPromises();
+    expect(chat.draft?.text).toBe("Добрый день. Спасибо!До свидания.");
+    expect(document.activeElement).toBe(field);
+    expect([field.selectionStart, field.selectionEnd]).toEqual([21, 21]);
+    // A selection is replaced.
+    field.setSelectionRange(0, 12);
+    await wrapper.get('[aria-label="Готовые ответы"]').trigger("click");
+    await settle();
+    await searchField(wrapper).trigger("keydown", { key: "Enter" });
+    await settle();
+    await searchField(wrapper).trigger("keydown", { key: "Enter" });
+    await flushPromises();
+    expect(chat.draft?.text).toBe("Здравствуйте! Спасибо!До свидания.");
+    expect([field.selectionStart, field.selectionEnd]).toEqual([13, 13]);
+    wrapper.unmount();
+  });
+
+  it("a reply into an empty box becomes its text; one that would break the limit is said and nothing changes", async () => {
+    serve(groupsOf("общее"), repliesOf("Здравствуйте!", "я".repeat(801)));
+    const chat = useChatStore();
+    chat.drafts.get("t1")!.files.push(new File(["%PDF"], "a.pdf", { type: "application/pdf" }));
+    const wrapper = mountAttached();
+    await flushPromises();
+    await type(wrapper, "/");
+    await searchField(wrapper).trigger("keydown", { key: "Enter" });
+    await settle();
+    await searchField(wrapper).trigger("keydown", { key: "ArrowDown" });
+    await searchField(wrapper).trigger("keydown", { key: "Enter" });
+    await flushPromises();
+    expect(useWorkspaceStore().notice).toBe("Ответ вместе с черновиком превышает 800 символов.");
+    expect(chat.draft?.text).toBe("");
+    expect(wrapper.find(".reply-options").exists()).toBe(true);
+    await searchField(wrapper).trigger("keydown", { key: "ArrowUp" });
+    await searchField(wrapper).trigger("keydown", { key: "Enter" });
+    await flushPromises();
+    expect(chat.draft).toMatchObject({ text: "Здравствуйте!" });
+    expect(chat.draft?.files).toHaveLength(1);
+    wrapper.unmount();
+  });
+
+  it("Esc closes without a change: the focus goes back to the reply box or to the button, whichever opened it", async () => {
+    serve();
+    const chat = useChatStore();
+    const wrapper = mountAttached();
+    await flushPromises();
+    await type(wrapper, "/");
+    await searchField(wrapper).setValue("общ");
+    await searchField(wrapper).trigger("keydown", { key: "Escape" });
+    await flushPromises();
+    expect(wrapper.find(".reply-options").exists()).toBe(false);
+    expect(document.activeElement).toBe(wrapper.get("textarea").element);
+    expect(chat.draft?.text).toBe("");
+    chat.edit("Черновик");
+    await wrapper.get('[aria-label="Готовые ответы"]').trigger("click");
+    await settle();
+    await searchField(wrapper).trigger("keydown", { key: "Escape" });
+    await flushPromises();
+    expect(document.activeElement).toBe(wrapper.get('[aria-label="Готовые ответы"]').element);
+    expect(chat.draft?.text).toBe("Черновик");
+    wrapper.unmount();
+  });
+
+  it("into a group and back: the search starts empty in each, keeps the focus and never touches the draft", async () => {
+    const api = serve();
+    const wrapper = mountAttached();
+    await flushPromises();
+    await type(wrapper, "/");
+    await searchField(wrapper).setValue("опл");
+    await settle();
+    await wrapper.findAll('[role="option"]')[0]!.trigger("click");
+    await settle();
+    expect((searchField(wrapper).element as HTMLInputElement).value).toBe("");
+    expect(api).toHaveBeenLastCalledWith("replies?group_id=g0&q=&offset=0", {}, "p1");
+    expect(wrapper.get('[role="listbox"]').attributes("aria-label")).toBe("Готовые ответы");
+    await wrapper.get(".reply-options-head button").trigger("click");
+    await settle();
+    expect(wrapper.get('[role="listbox"]').attributes("aria-label")).toBe("Группы ответов");
+    expect(document.activeElement).toBe(searchField(wrapper).element);
+    expect(useChatStore().draft?.text).toBe("");
+    wrapper.unmount();
+  });
+
+  it("does not choose or send while the options are loading", async () => {
     vi.spyOn(useSessionStore(), "api").mockImplementation(() => new Promise(() => {}));
     const send = vi.spyOn(useChatStore(), "send");
-    const wrapper = renderComposer();
+    const wrapper = mountAttached();
     await flushPromises();
-    await wrapper.get("textarea").setValue("/опл");
-    await wrapper.get("textarea").trigger("keydown", { key: "Enter" });
+    await type(wrapper, "/");
+    await searchField(wrapper).setValue("опл");
+    await searchField(wrapper).trigger("keydown", { key: "Enter" });
     expect(send).not.toHaveBeenCalled();
-    expect(useChatStore().draft?.text).toBe("/опл");
+    expect(useChatStore().draft?.text).toBe("");
     wrapper.unmount();
   });
 
@@ -44,7 +224,7 @@ describe("grouped quick replies", () => {
     vi.spyOn(useSessionStore(), "api").mockImplementation(() => new Promise(resolve => { finish = resolve; }));
     const wrapper = renderComposer();
     await flushPromises();
-    await wrapper.get("textarea").setValue("/");
+    await wrapper.get('[aria-label="Готовые ответы"]').trigger("click");
     await vi.advanceTimersByTimeAsync(200);
     useProjectsStore().currentId = "p2";
     useChatStore().ticketId = "t2";
@@ -56,8 +236,8 @@ describe("grouped quick replies", () => {
     wrapper.unmount();
   });
 
-  it("keeps a draft when the slash button is opened and cancelled", async () => {
-    vi.spyOn(useSessionStore(), "api").mockResolvedValue([]);
+  it("keeps a draft when the picker is opened and closed with its close button", async () => {
+    serve();
     const chat = useChatStore();
     chat.edit("Существующий черновик");
     const wrapper = renderComposer();
@@ -69,71 +249,66 @@ describe("grouped quick replies", () => {
     wrapper.unmount();
   });
 
-  const groupsOf = (...names: string[]) => names.map((name, index) => ({ id: `g${index}`, name, revision: 0 }));
-
   it("a failed lookup says so with a retry, apart from \"nothing found\"", async () => {
     const api = vi.spyOn(useSessionStore(), "api").mockRejectedValueOnce(new Error("Сервис недоступен."))
       .mockResolvedValue(groupsOf("общее"));
     const wrapper = renderComposer();
     await flushPromises();
     await wrapper.get('[aria-label="Готовые ответы"]').trigger("click");
-    await vi.advanceTimersByTimeAsync(200);
-    await flushPromises();
+    await settle();
     const failure = wrapper.get('.reply-options [role="alert"]');
     expect(failure.text()).toContain("Не удалось загрузить готовые ответы.");
     expect(wrapper.text()).not.toContain("Ничего не найдено");
     await failure.get("button").trigger("click");
-    await vi.advanceTimersByTimeAsync(200);
-    await flushPromises();
+    await settle();
     expect(api).toHaveBeenCalledTimes(2);
     expect(wrapper.find('.reply-options [role="alert"]').exists()).toBe(false);
-    expect(wrapper.findAll('[role="option"]').map((option) => option.text())).toEqual(["/общее"]);
+    expect(optionTexts(wrapper)).toEqual(["/общее"]);
     wrapper.unmount();
   });
 
-  it("opened by the button, its search field points at the options and the reply box does not", async () => {
-    vi.spyOn(useSessionStore(), "api").mockResolvedValue(groupsOf("общее", "оплата"));
+  it("its search field points at the options; the button controls the list", async () => {
+    serve();
     const wrapper = renderComposer();
     await flushPromises();
     await wrapper.get('[aria-label="Готовые ответы"]').trigger("click");
-    await vi.advanceTimersByTimeAsync(200);
-    await flushPromises();
-    const search = wrapper.get('[aria-label="Поиск готовых ответов"]');
+    await settle();
+    const search = searchField(wrapper);
     const list = wrapper.get('[role="listbox"]');
     expect(search.attributes()).toMatchObject({ role: "combobox", "aria-expanded": "true", "aria-autocomplete": "list" });
     expect(search.attributes("aria-controls")).toBe(list.attributes("id"));
     expect(search.attributes("aria-activedescendant")).toBe(wrapper.findAll('[role="option"]')[0]!.attributes("id"));
     await search.trigger("keydown", { key: "ArrowDown" });
     expect(search.attributes("aria-activedescendant")).toBe(wrapper.findAll('[role="option"]')[1]!.attributes("id"));
-    const field = wrapper.get("textarea");
-    expect(field.attributes("aria-activedescendant")).toBeUndefined();
-    expect(field.attributes("aria-controls")).toBeUndefined();
-    expect(wrapper.get('[aria-label="Готовые ответы"]').attributes("aria-controls")).toBe(list.attributes("id"));
+    const button = wrapper.get('[aria-label="Готовые ответы"]');
+    expect(button.attributes("aria-controls")).toBe(list.attributes("id"));
+    expect(button.attributes("aria-keyshortcuts")).toBe("/");
+    // An icon, not a "/" drawn on the button: "/" is the keyboard's way in.
+    expect(button.find("svg.icon").exists()).toBe(true);
+    expect(button.element.querySelector('span[aria-hidden="true"]')).toBeNull();
+    expect(button.attributes("aria-describedby")).toBeDefined();
+    expect(wrapper.get(`#${button.attributes("aria-describedby")}`).text()).toBe("Или «/» в пустом поле ответа");
     wrapper.unmount();
   });
 
   it("Enter that ends an IME composition chooses nothing", async () => {
-    vi.spyOn(useSessionStore(), "api").mockResolvedValue(groupsOf("общее"));
-    const chat = useChatStore();
-    const wrapper = renderComposer();
+    serve();
+    const wrapper = mountAttached();
     await flushPromises();
-    await wrapper.get("textarea").setValue("/");
-    await vi.advanceTimersByTimeAsync(200);
-    await flushPromises();
-    await wrapper.get("textarea").trigger("keydown", { key: "Enter", isComposing: true });
-    await wrapper.get("textarea").trigger("keydown", { key: "Enter", keyCode: 229 });
-    expect(chat.draft?.text).toBe("/");
-    expect(wrapper.find('[role="listbox"]').attributes("aria-label")).toBe("Группы ответов");
+    await type(wrapper, "/");
+    await searchField(wrapper).trigger("keydown", { key: "Enter", isComposing: true });
+    await searchField(wrapper).trigger("keydown", { key: "Enter", keyCode: 229 });
+    expect(wrapper.get('[role="listbox"]').attributes("aria-label")).toBe("Группы ответов");
+    expect(useChatStore().draft?.text).toBe("");
     wrapper.unmount();
   });
 
   it("Esc closes the list from a button inside it", async () => {
-    vi.spyOn(useSessionStore(), "api").mockResolvedValue(groupsOf("общее"));
+    serve();
     const wrapper = renderComposer();
     await flushPromises();
     await wrapper.get('[aria-label="Готовые ответы"]').trigger("click");
-    await vi.advanceTimersByTimeAsync(200);
-    await flushPromises();
+    await settle();
     await wrapper.get('[aria-label="Закрыть готовые ответы"]').trigger("keydown", { key: "Escape" });
     expect(wrapper.find(".reply-options").exists()).toBe(false);
     wrapper.unmount();

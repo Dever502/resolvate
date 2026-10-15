@@ -417,9 +417,15 @@
   /* Its 44 px buttons take the room of the padding (QuickReplies.vue); 3 px keep the close button's corner inside
      the list's rounded one. */
   .reply-options-head { display: flex; flex: none; align-items: center; gap: .5rem; padding: .1875rem 0 .1875rem .75rem; border-bottom: 1px solid var(--border); }
-  .reply-search { flex: none; min-width: 0; margin: .625rem .625rem .125rem; padding: .5rem .75rem; border: 1px solid var(--field-border); border-radius: var(--radius-control); background: var(--surface); color: var(--text); }
+  /* Its 3 px focus ring 3 px off the field reaches 6 px below it: the 8 px under the field keep the ring off the
+     scrolling results. */
+  .reply-search { flex: none; min-width: 0; margin: .625rem .625rem .5rem; padding: .5rem .75rem; border: 1px solid var(--field-border); border-radius: var(--radius-control); background: var(--surface); color: var(--text); }
   /* Room for the 3 px focus ring of the buttons inside the scrolling results. */
-  .reply-options-body { flex: 1; min-height: 0; overflow: auto; padding: .5rem; }
+  .reply-options-body { flex: 1; min-height: 0; overflow: auto; padding: .5rem; scroll-padding-block: 1rem; }
+  /* Scrolled away from their start, the results fade out over their top 14 px (QuickReplies.vue sets data-scrolled);
+     at the start, or with nothing to scroll, no fade. The scroll padding brings an option chosen with the arrows
+     fully below the fade. */
+  .reply-options-body[data-scrolled] { mask-image: linear-gradient(to bottom, transparent, #000 14px); }
   .reply-option { width: 100%; padding: .75rem; border-radius: 7px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; cursor: pointer; }
   .reply-options-error { margin: .5rem; color: var(--danger); font-size: .875rem; }
   .reply-option[aria-selected="true"] { background: var(--accent-soft); }
@@ -589,6 +595,7 @@
   .ticket[data-state="checked"], .folder-tab[data-state="active"] { outline: 2px solid Highlight; outline-offset: -2px; }
   .composer, .reply-options, .menu, .dialog, .picker-options { border: 1px solid ButtonText; }
   .drop-zone { border-color: Highlight; }
+  .reply-options-body[data-scrolled] { mask-image: none; }
   .catalog-group[data-state="checked"], .catalog-scope button[aria-pressed="true"] { outline: 2px solid Highlight; outline-offset: -2px; }
   .section-tab[data-state="active"], .picker-option[data-highlighted] { outline: 2px solid Highlight; outline-offset: -2px; }
   .account-theme-option[data-state="checked"] { outline: 2px solid Highlight; outline-offset: -3px; }
