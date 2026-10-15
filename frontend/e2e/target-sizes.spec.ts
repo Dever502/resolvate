@@ -217,7 +217,7 @@ for (const screen of SCREENS) {
       const chooser = page.waitForEvent("filechooser");
       await press(attach, "top right", touch);
       await (await chooser).setFiles({ name: "photo.png", mimeType: "image/png", buffer: Buffer.from("89504e47", "hex") });
-      const preview = page.getByRole("group", { name: "Выбранное вложение" });
+      const preview = page.getByRole("group", { name: "Выбранные вложения" });
       await expect(preview).toBeVisible();
       const remove = page.getByRole("button", { name: "Убрать вложение" });
       await calm(page);

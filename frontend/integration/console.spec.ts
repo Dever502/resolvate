@@ -94,11 +94,11 @@ test("a real multipart image is stored, rendered under CSP and still available a
     return canvas.toDataURL("image/png").split(",")[1]!;
   });
   await page.locator('input[type="file"]').setInputFiles({ name: "real.png", mimeType: "image/png", buffer: Buffer.from(png, "base64") });
-  await expect(page.getByRole("group", { name: "Выбранное вложение" }).locator("canvas")).toBeVisible();
+  await expect(page.getByRole("group", { name: "Выбранные вложения" }).locator("canvas")).toBeVisible();
   const sent = page.waitForResponse(response => response.url().endsWith(`/tickets/${TICKET}/send`) && response.request().method() === "POST");
   await page.getByRole("button", { name: "Отправить", exact: true }).click();
   expect((await sent).status()).toBe(200);
-  await expect(page.getByRole("group", { name: "Выбранное вложение" })).toBeHidden();
+  await expect(page.getByRole("group", { name: "Выбранные вложения" })).toBeHidden();
   await page.reload();
   const image = page.getByRole("region", { name: "Переписка" }).getByRole("button", { name: "Открыть изображение" }).last().locator("img");
   await expect(image).toBeVisible();

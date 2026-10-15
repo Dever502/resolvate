@@ -19,10 +19,11 @@ const detail = (id: string): TicketDetail => ({
   remnawave_user_uuid: null, created_at: "2026-10-01T00:00:00Z", folder_id: null, folder_revision: 0,
 });
 const empty: MessagePage = { order: [], items: [], removed: [], reset: false, before: null, has_older: false };
+const same = () => ({ put: new Map<string, ArrayBuffer>(), drop: [] });
 
 interface Sent { key: string; text: string; file: string | null }
 /** The project API: detail, history and lists answer; `send` decides the send requests. */
-function serve(send: (sent: Sent) => Promise<Response> | Response = () => new Response(JSON.stringify({ id: "m1" }))): Sent[] {
+function serve(send: (sent: Sent) => Promise<Response> | Response = () => new Response(JSON.stringify({ id: crypto.randomUUID() }))): Sent[] {
   const sent: Sent[] = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
     const path = url.replace(/^\/console\/projects\/p\d\//, "");
@@ -114,10 +115,11 @@ describe("persistent drafts and send attempts", () => {
     let chat = start();
     await openReady(chat);
     chat.edit("Same caption");
-    chat.attach(new File(["AAAA"], "same.png", { type: "image/png", lastModified: 1000 }));
+    chat.attach([new File(["AAAA"], "same.png", { type: "image/png", lastModified: 1000 })]);
     await chat.flushDrafts();
     expect(await chat.send()).toBe("unknown");
-    chat.attach(new File(["BBBB"], "same.png", { type: "image/png", lastModified: 1000 }));
+    chat.detach(chat.draft!.files[0]!);
+    chat.attach([new File(["BBBB"], "same.png", { type: "image/png", lastModified: 1000 })]);
     await chat.flushDrafts();
     if (reload) {
       chat = start();
@@ -128,15 +130,26 @@ describe("persistent drafts and send attempts", () => {
     fail = false;
     expect(await chat.retrySend()).toBe("accepted");
     expect(sent[1]?.key).toBe(sent[0]?.key);
-    expect(await chat.draft?.file?.text()).toBe("BBBB");
-    expect(await (await readDraft(anna))?.file?.text()).toBe("BBBB");
+    expect(await chat.draft?.files[0]?.text()).toBe("BBBB");
+    expect(await (await readDraft(anna))?.files[0]?.file.text()).toBe("BBBB");
   });
 
   it.each([false, true])("file comparison stays single-flight and cannot clear a new session (switch: %s)", async (switchAccount) => {
-    const sent = serve();
-    const chat = start();
+    let lose = true;
+    const sent = serve(() => {
+      if (lose) throw new TypeError("offline");
+      return new Response(JSON.stringify({ id: "m1" }));
+    });
+    let chat = start();
     await openReady(chat);
     chat.edit("Original reply");
+    chat.attach([new File(["png"], "photo.png", { type: "image/png", lastModified: 1000 })]);
+    expect(await chat.send()).toBe("unknown");
+    await chat.flushDrafts();
+    // After a reload the attempt's file and the draft's are two copies: only their bytes tell them apart.
+    chat = start();
+    await openReady(chat);
+    lose = false;
     let finish!: (equal: boolean) => void;
     vi.spyOn(workStore, "sameFile").mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
     const sending = chat.send();
@@ -155,6 +168,8 @@ describe("persistent drafts and send attempts", () => {
     finish(true);
     expect(await sending).toBe(switchAccount ? "skipped" : "accepted");
     expect(chat.draft?.text).toBe(switchAccount ? "New account's draft" : "");
+    expect(chat.draft?.files).toEqual([]);
+    expect(sent).toHaveLength(switchAccount ? 1 : 2);
     await chat.flushDrafts();
   });
 
@@ -189,7 +204,7 @@ describe("persistent drafts and send attempts", () => {
     await vi.waitFor(async () => expect((await readDraft(anna))?.text).toBe("Привет"));
     chat = start();
     await openReady(chat);
-    expect(chat.draft).toEqual({ text: "Привет", file: null });
+    expect(chat.draft).toEqual({ text: "Привет", files: [] });
   });
 
   it("leaving the page keeps in the tab the texts whose writes have not landed", async () => {
@@ -209,8 +224,8 @@ describe("persistent drafts and send attempts", () => {
 
   it("texts the page was left with come back after a reload, unless a newer draft is stored", async () => {
     serve();
-    await writeDraft({ v: 1, ...anna, text: "Старый текст", file: null, lostFile: null, rev: "r1", tab: "old-tab", updatedAt: 1_000 }, null, null);
-    await writeDraft({ v: 1, ...anna, ticket: "t2", text: "Новее в другой вкладке", file: null, lostFile: null, rev: "r2", tab: "other-tab", updatedAt: 5_000 }, null, null);
+    await writeDraft({ v: 2, ...anna, text: "Старый текст", files: [], lostFiles: [], rev: "r1", tab: "old-tab", updatedAt: 1_000 }, null, same());
+    await writeDraft({ v: 2, ...anna, ticket: "t2", text: "Новее в другой вкладке", files: [], lostFiles: [], rev: "r2", tab: "other-tab", updatedAt: 5_000 }, null, same());
     keepUnsaved([
       { ...anna, text: "Набрано перед обновлением", at: 2_000 },
       { ...anna, ticket: "t2", text: "Старее", at: 3_000 },
@@ -261,7 +276,7 @@ describe("persistent drafts and send attempts", () => {
     expect(await chat.retrySend()).toBe("accepted");
     expect(sent[1]).toEqual(sent[0]);
     expect(sent[1]!.text).toBe("Исходный текст");
-    expect(chat.draft).toEqual({ text: "Исправленный текст", file: null });
+    expect(chat.draft).toEqual({ text: "Исправленный текст", files: [] });
     chat.flushDrafts();
     await vi.waitFor(async () => expect(await readAttempt(anna)).toBeNull());
     expect((await readDraft(anna))?.text).toBe("Исправленный текст");
@@ -279,7 +294,7 @@ describe("persistent drafts and send attempts", () => {
     expect(await readAttempt(anna)).toBeNull();
     chat = start();
     await openReady(chat);
-    expect(chat.draft).toEqual({ text: "", file: null });
+    expect(chat.draft).toEqual({ text: "", files: [] });
   });
 
   it("without storage the send still goes, and says it would not survive a reload", async () => {
@@ -322,7 +337,7 @@ describe("persistent drafts and send attempts", () => {
     useSessionStore().signOut();
     chat = start("a2");
     await openReady(chat);
-    expect(chat.draft).toEqual({ text: "", file: null });
+    expect(chat.draft).toEqual({ text: "", files: [] });
     chat = start("a1");
     await openReady(chat);
     expect(chat.draft?.text).toBe("Для Анны");
@@ -334,11 +349,11 @@ describe("persistent drafts and send attempts", () => {
     let chat = start();
     await openReady(chat);
     chat.edit("Фото договора");
-    chat.attach(new File(["png bytes"], "contract.png", { type: "image/png", lastModified: 1000 }));
+    chat.attach([new File(["png bytes"], "contract.png", { type: "image/png", lastModified: 1000 })]);
     void chat.send();
     await vi.waitFor(() => expect(sent).toHaveLength(1));
     chat.flushDrafts();
-    await vi.waitFor(async () => expect((await readDraft(anna))?.file?.name).toBe("contract.png"));
+    await vi.waitFor(async () => expect((await readDraft(anna))?.files[0]?.file.name).toBe("contract.png"));
 
     answer = () => new Response(JSON.stringify({ id: "m1" }));
     chat = start();
@@ -348,7 +363,7 @@ describe("persistent drafts and send attempts", () => {
     expect(await chat.send()).toBe("accepted");
     expect(sent[1]).toEqual(sent[0]);
     expect(sent[1]!.file).toBe("contract.png");
-    expect(chat.draft).toEqual({ text: "", file: null });
+    expect(chat.draft).toEqual({ text: "", files: [] });
     await vi.waitFor(async () => expect(await readDraft(anna)).toBeNull());
     expect(await readAttempt(anna)).toBeNull();
   });
@@ -371,11 +386,102 @@ describe("persistent drafts and send attempts", () => {
     serve();
     const chat = start();
     await openReady(chat);
-    await writeDraft({ v: 1, ...anna, text: "Черновик другой вкладки", file: null, lostFile: null, rev: "theirs", tab: "other-tab", updatedAt: Date.now() }, null, null);
+    await writeDraft({ v: 2, ...anna, text: "Черновик другой вкладки", files: [], lostFiles: [], rev: "theirs", tab: "other-tab", updatedAt: Date.now() }, null, same());
     chat.edit("Мой ответ");
     expect(await chat.send()).toBe("accepted");
     await chat.flushDrafts();
     expect((await readDraft(anna))?.text).toBe("Черновик другой вкладки");
+  });
+
+  const png = (name: string) => new File([`${name} bytes`], `${name}.png`, { type: "image/png", lastModified: 1000 });
+
+  it("several files survive a reload in their order, with their bytes; a removed one does not come back", async () => {
+    serve();
+    let chat = start();
+    await openReady(chat);
+    chat.edit("Три файла");
+    chat.attach(["a", "b", "c"].map(png));
+    chat.detach(chat.draft!.files[1]!);
+    await chat.flushDrafts();
+    chat = start();
+    await openReady(chat);
+    expect(chat.draft?.text).toBe("Три файла");
+    expect(chat.draft?.files.map((file) => file.name)).toEqual(["a.png", "c.png"]);
+    expect(await Promise.all(chat.draft!.files.map((file) => file.text()))).toEqual(["a bytes", "c bytes"]);
+  });
+
+  it("a reload while a reply's files go: those taken stay sent, the one on its way comes back unknown, the rest stay", async () => {
+    let answer = (request: Sent): Promise<Response> | Response => (request.file === "b.png"
+      ? new Promise<Response>(() => undefined)
+      : new Response(JSON.stringify({ id: crypto.randomUUID() })));
+    const sent = serve((request) => answer(request));
+    let chat = start();
+    await openReady(chat);
+    chat.edit("Подпись");
+    chat.attach(["a", "b", "c"].map(png));
+    void chat.send();
+    await vi.waitFor(() => expect(sent.map((item) => item.file)).toEqual(["a.png", "b.png"]));
+
+    chat = start();
+    await openReady(chat);
+    // The caption went with the first file; nothing goes by itself after the reload.
+    expect(chat.draft?.text).toBe("");
+    expect(chat.draft?.files.map((file) => file.name)).toEqual(["b.png", "c.png"]);
+    expect(chat.attempt).toMatchObject({ key: sent[1]!.key, text: "", state: "unknown", reason: ATTEMPT_RELOADED });
+    expect(sent).toHaveLength(2);
+    answer = () => new Response(JSON.stringify({ id: crypto.randomUUID() }));
+    // The draft begins with the same file (its copy read back): Send goes on under its key, then the rest.
+    expect(await chat.send()).toBe("accepted");
+    expect(sent.map((item) => item.file)).toEqual(["a.png", "b.png", "b.png", "c.png"]);
+    expect(sent[2]!.key).toBe(sent[1]!.key);
+    expect(new Set(sent.map((item) => item.key)).size).toBe(3);
+    expect(chat.draft).toEqual({ text: "", files: [] });
+    await chat.flushDrafts();
+    await vi.waitFor(async () => expect(await readAttempt(anna)).toBeNull());
+    expect(await readDraft(anna)).toBeNull();
+  });
+
+  it("the next file's attempt is stored only once the draft without the file before it has landed", async () => {
+    const sent = serve();
+    const chat = start();
+    await openReady(chat);
+    chat.attach(["a", "b"].map(png));
+    await chat.flushDrafts();
+    const write = workStore.writeDraft;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const writes = vi.spyOn(workStore, "writeDraft").mockImplementation(async (...args) => {
+      await gate;
+      return write(...args);
+    });
+    const creates = vi.spyOn(workStore, "createAttempt");
+    const sending = chat.send();
+    // "a" is taken; the draft without it is on its way to the storage.
+    await vi.waitFor(() => expect(writes).toHaveBeenCalled());
+    for (let turn = 0; turn < 20; turn++) await new Promise((resolve) => setImmediate(resolve));
+    expect(sent.map((item) => item.file)).toEqual(["a.png"]);
+    expect(creates).toHaveBeenCalledTimes(1);
+    release();
+    expect(await sending).toBe("accepted");
+    expect(creates).toHaveBeenCalledTimes(2);
+    expect(sent.map((item) => item.file)).toEqual(["a.png", "b.png"]);
+  });
+
+  it("the stored attempt of a file the server took goes only once the stored draft no longer holds the file", async () => {
+    serve();
+    const chat = start();
+    await openReady(chat);
+    chat.attach(["a", "b"].map(png));
+    await chat.flushDrafts();
+    const seen: string[][] = [];
+    const remove = workStore.removeAttempt;
+    vi.spyOn(workStore, "removeAttempt").mockImplementation(async (scope, key) => {
+      seen.push((await readDraft(anna))?.files.map(({ file }) => file.name) ?? []);
+      return remove(scope, key);
+    });
+    expect(await chat.send()).toBe("accepted");
+    await vi.waitFor(() => expect(seen).toHaveLength(2));
+    expect(seen).toEqual([["b.png"], []]);
   });
 
   it("a storage that never answers leaves the reply box usable and the send unsaved", async () => {
@@ -385,7 +491,7 @@ describe("persistent drafts and send attempts", () => {
     const chat = start();
     void chat.open("t1");
     await vi.advanceTimersByTimeAsync(3_000);
-    await vi.waitFor(() => expect(chat.draft).toEqual({ text: "", file: null }));
+    await vi.waitFor(() => expect(chat.draft).toEqual({ text: "", files: [] }));
     expect(useWorkspaceStore().notice).toBe("Хранилище браузера не отвечает. Черновики и отправки после обновления страницы могут пропасть.");
     chat.edit("Без ответа хранилища");
     const sending = chat.send();
@@ -402,7 +508,7 @@ describe("persistent drafts and send attempts", () => {
     chat.edit("Моя версия");
     chat.flushDrafts();
     await vi.waitFor(async () => expect((await readDraft(anna))?.text).toBe("Моя версия"));
-    await writeDraft({ v: 1, ...anna, text: "Версия другой вкладки", file: null, lostFile: null, rev: "theirs", tab: "other-tab", updatedAt: Date.now() }, null, null);
+    await writeDraft({ v: 2, ...anna, text: "Версия другой вкладки", files: [], lostFiles: [], rev: "theirs", tab: "other-tab", updatedAt: Date.now() }, null, same());
     chat.edit("Моя новая версия");
     chat.flushDrafts();
     await vi.waitFor(() => expect(useWorkspaceStore().notice).toBe(DRAFT_CONFLICT));

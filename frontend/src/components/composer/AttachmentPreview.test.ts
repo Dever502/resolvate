@@ -11,7 +11,7 @@ const draw = vi.fn();
 const decode = vi.fn();
 
 function render(selected = file()) {
-  const props = reactive({ file: selected, disabled: false });
+  const props = reactive<{ file: File; disabled: boolean; status?: "sending" | "waiting" | "unknown" | null }>({ file: selected, disabled: false });
   const wrapper = mount(TooltipProvider, { slots: { default: () => h(AttachmentPreview, props) } });
   return { props, wrapper, preview: wrapper.getComponent(AttachmentPreview) };
 }
@@ -38,7 +38,7 @@ describe("attachment preview", () => {
       expect(draw).toHaveBeenCalledWith(image, 0, 0, w, h);
       expect(image.close).toHaveBeenCalledExactlyOnceWith();
       expect(wrapper.text()).toContain("photo.png");
-      expect(wrapper.text()).toContain("Изображение · 4 Б");
+      expect(wrapper.get(".attachment-preview-meta").text()).toMatch(/^Изображение · 4 Б/);
       expect(URL.createObjectURL).not.toHaveBeenCalled();
       wrapper.unmount();
       expect([canvas.width, canvas.height]).toEqual([1, 1]);
@@ -106,6 +106,18 @@ describe("attachment preview", () => {
     expect(image.close).toHaveBeenCalledOnce();
   });
 
+  it("says where the file is in a send instead of its preview hint", async () => {
+    const { wrapper, props } = render(file("report.pdf", "application/pdf"));
+    await flushPromises();
+    expect(wrapper.find(".attachment-preview-status").exists()).toBe(false);
+    for (const [status, text] of [["sending", "Отправляется…"], ["waiting", "В очереди"], ["unknown", "Результат неизвестен"]] as const) {
+      Object.assign(props, { status });
+      await flushPromises();
+      expect(wrapper.get(".attachment-preview-status").text()).toBe(text);
+      expect(wrapper.get(".attachment-preview").attributes("data-status")).toBe(status);
+    }
+  });
+
   it.each([
     ["clip.mp4", "video/mp4", "Видео"], ["clip.mov", "video/quicktime", "Видео"],
     ["report.pdf", "application/pdf", "PDF"], ["voice.ogg", "audio/ogg", "Аудио"],
@@ -129,7 +141,7 @@ describe("attachment preview", () => {
     expect(wrapper.get(".attachment-preview-name").attributes("title")).toBe(name);
     props.disabled = true;
     await flushPromises();
-    const remove = wrapper.get('[aria-label="Убрать вложение"]');
+    const remove = wrapper.get(`[aria-label="Убрать вложение «${[...name].slice(0, 59).join("")}…»"]`);
     expect(remove.attributes("disabled")).toBeDefined();
     await remove.trigger("click");
     expect(preview.emitted("remove")).toBeUndefined();

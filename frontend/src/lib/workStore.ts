@@ -1,15 +1,19 @@
 // The operator's unsent work kept in the browser (IndexedDB), per account, project and dialogue:
-// drafts (text and one file) and send attempts whose outcome is not known yet. Nothing of the
+// drafts (text and up to five files) and send attempts whose outcome is not known yet. Nothing of the
 // conversation itself is stored, and nothing is read before the session check named the account.
 // Files are kept as their bytes (an ArrayBuffer with name, type and date): WebKit keeps no Blobs in
-// IndexedDB in private windows. A draft's file has a store of its own, written only when the file
-// changes, not with every edit of the text. Every failure becomes a StorageError the caller can
-// explain; nothing here deletes work on its own, except records too damaged to be used.
+// IndexedDB in private windows. Each file of a draft has a record of its own (the draft's key plus the
+// file's id), written once when the file is attached, not with every edit of the text or of another
+// file. Every failure becomes a StorageError the caller can explain; nothing here deletes work on its
+// own, except records too damaged to be used.
 
 export const WORK_DB = "resolvate-work";
-const DB_VERSION = 1;
-/** The shape of the stored records; a record of another version is skipped. */
+/** 2: a draft holds several files (version 1 kept one, in a store of its own: moved over on upgrade). */
+const DB_VERSION = 2;
+/** The shape of the stored attempts; a record of another version is skipped. */
 export const RECORD_VERSION = 1;
+/** The shape of the stored drafts (1 held one file); a record of another version is skipped. */
+export const DRAFT_VERSION = 2;
 
 /** Which dialogue a record belongs to. */
 export interface WorkScope {
@@ -18,12 +22,19 @@ export interface WorkScope {
   ticket: string;
 }
 
+/** A file of a draft and the id its bytes are stored under. */
+export interface DraftFile {
+  id: string;
+  file: File;
+}
+
 export interface StoredDraft extends WorkScope {
-  v: typeof RECORD_VERSION;
+  v: typeof DRAFT_VERSION;
   text: string;
-  file: File | null;
-  /** The name of a file that could not be stored or read back: it has to be attached again. */
-  lostFile: string | null;
+  /** In the order they were attached. */
+  files: DraftFile[];
+  /** The names of files that could not be stored or read back: they have to be attached again. */
+  lostFiles: string[];
   /** Changes with every write: a tab that did not write the current revision knows another one did. */
   rev: string;
   tab: string;
@@ -41,8 +52,14 @@ export interface StoredAttempt extends WorkScope {
   createdAt: number;
 }
 
-/** What a draft write does with the draft's file: keeps the stored one, stores new bytes, or removes it. */
-export type FileChange = "same" | { bytes: ArrayBuffer } | null;
+/**
+ * What a draft write does with the files' bytes: stores `put` (by file id) and removes `drop`; the
+ * other files of the draft keep the bytes stored before.
+ */
+export interface FileChange {
+  put: Map<string, ArrayBuffer>;
+  drop: string[];
+}
 
 export type StorageProblem = "unavailable" | "quota" | "failed";
 
@@ -59,11 +76,14 @@ const OPEN_TIMEOUT = 3_000;
 export const STORAGE_PATIENCE = 3_000;
 
 const DRAFTS = "drafts";
-const FILES = "files";
+const DRAFT_FILES = "draftFiles";
+/** Version 1's one file per draft, under the draft's key: moved to DRAFT_FILES by the upgrade, then removed. */
+const LEGACY_FILES = "files";
 const ATTEMPTS = "attempts";
 const KEY_PATH = ["account", "project", "ticket"];
+const FILE_KEY_PATH = [...KEY_PATH, "id"];
 
-/** A file's description next to the draft; its bytes live in FILES under the same key. */
+/** A file's description next to the draft; its bytes live in DRAFT_FILES under the draft's key and its id. */
 interface FileInfo {
   name: string;
   type: string;
@@ -73,14 +93,29 @@ interface FileInfo {
 interface PackedFile extends FileInfo {
   bytes: ArrayBuffer;
 }
-type DraftRow = Omit<StoredDraft, "file"> & { file: FileInfo | null };
-type FileRow = WorkScope & PackedFile;
+type StoredInfo = FileInfo & { id: string };
+type DraftRow = Omit<StoredDraft, "files"> & { files: StoredInfo[] };
+type FileRow = WorkScope & { id: string } & PackedFile;
 type AttemptRow = Omit<StoredAttempt, "file"> & { file: PackedFile | null };
+/** A draft as version 1 stored it. */
+interface LegacyDraftRow extends WorkScope {
+  v: 1;
+  text: string;
+  file: FileInfo | null;
+  lostFile: string | null;
+  rev: string;
+  tab: string;
+  updatedAt: number;
+}
 
 const scopeKey = ({ account, project, ticket }: WorkScope): IDBValidKey => [account, project, ticket];
+const fileKey = ({ account, project, ticket }: WorkScope, id: string): IDBValidKey => [account, project, ticket, id];
 const scopeOf = ({ account, project, ticket }: WorkScope): WorkScope => ({ account, project, ticket });
 /** Every key of one account: arrays sort after strings, so [account, []] closes the range. */
 const accountRange = (account: string): IDBKeyRange => IDBKeyRange.bound([account], [account, []]);
+/** The files of one draft: [account, project, ticket, id]. */
+const draftRange = ({ account, project, ticket }: WorkScope): IDBKeyRange =>
+  IDBKeyRange.bound([account, project, ticket], [account, project, ticket, []]);
 
 function problemOf(error: unknown): StorageError {
   if (error instanceof StorageError) return error;
@@ -92,10 +127,12 @@ function problemOf(error: unknown): StorageError {
   return new StorageError("failed", "Не удалось сохранить данные в браузере.");
 }
 
-const info = (file: File): FileInfo => ({ name: file.name, type: file.type, size: file.size, lastModified: file.lastModified });
+const info = (file: FileInfo): FileInfo => ({ name: file.name, type: file.type, size: file.size, lastModified: file.lastModified });
 /** One file described twice (a draft's row and its bytes, or a file and its copy read back). */
 const sameInfo = (a: FileInfo | null, b: FileInfo | null): boolean =>
   a === b || (a !== null && b !== null && a.name === b.name && a.type === b.type && a.size === b.size && a.lastModified === b.lastModified);
+/** The same files in the same order, by their descriptions. */
+const sameInfos = (a: FileInfo[], b: FileInfo[]): boolean => a.length === b.length && a.every((item, index) => sameInfo(item, b[index]!));
 const unpack = (file: PackedFile): File => new File([file.bytes], file.name, { type: file.type, lastModified: file.lastModified });
 
 /** A file's bytes, read before a transaction starts (a transaction cannot wait for them). */
@@ -126,6 +163,58 @@ export async function sameFile(a: File | null, b: File | null): Promise<boolean>
   }
 }
 
+function validLegacy(value: unknown): value is LegacyDraftRow {
+  const row = value as LegacyDraftRow | null;
+  return Boolean(row) && row!.v === 1 && text(row!.text) && (row!.file === null || validInfo(row!.file))
+    && (row!.lostFile === null || text(row!.lostFile)) && text(row!.rev) && text(row!.tab) && number(row!.updatedAt);
+}
+
+/**
+ * Version 1 drafts become version 2 inside the upgrade, all of them or none: the one file's bytes move
+ * to DRAFT_FILES under a new id (bytes that are missing or not this file's leave its name, to be
+ * attached again), then `finished` runs. Records of other shapes are left to readDraft().
+ */
+function upgradeDrafts(transaction: IDBTransaction, finished: () => void): void {
+  const drafts = transaction.objectStore(DRAFTS);
+  const legacy = transaction.objectStore(LEGACY_FILES);
+  const files = transaction.objectStore(DRAFT_FILES);
+  const walk = drafts.openCursor();
+  walk.onsuccess = () => {
+    const cursor = walk.result;
+    if (!cursor) {
+      finished();
+      return;
+    }
+    const row: unknown = cursor.value;
+    if (!validLegacy(row)) {
+      cursor.continue();
+      return;
+    }
+    const { file, lostFile, ...rest } = row;
+    const lostFiles = lostFile ? [lostFile] : [];
+    const store = (kept: StoredInfo[]): void => {
+      cursor.update({ ...rest, v: DRAFT_VERSION, files: kept, lostFiles } satisfies DraftRow);
+      cursor.continue();
+    };
+    if (!file) {
+      store([]);
+      return;
+    }
+    const read = legacy.get(scopeKey(row));
+    read.onsuccess = () => {
+      const bytes: unknown = read.result;
+      if (validPacked(bytes) && sameInfo(bytes, file)) {
+        const id = crypto.randomUUID();
+        files.put({ ...scopeOf(row), id, ...info(bytes), bytes: bytes.bytes } satisfies FileRow);
+        store([{ id, ...info(file) }]);
+      } else {
+        lostFiles.push(file.name);
+        store([]);
+      }
+    };
+  };
+}
+
 let opening: Promise<IDBDatabase> | null = null;
 
 /** The database, opened once; it rejects with StorageError when the browser keeps no storage. */
@@ -152,9 +241,11 @@ export function openWork(): Promise<IDBDatabase> {
     const timer = setTimeout(() => giveUp(new StorageError("unavailable", "Хранилище браузера не отвечает.")), OPEN_TIMEOUT);
     request.onupgradeneeded = () => {
       const db = request.result;
-      for (const name of [DRAFTS, FILES, ATTEMPTS]) {
+      for (const name of [DRAFTS, ATTEMPTS]) {
         if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, { keyPath: KEY_PATH });
       }
+      if (!db.objectStoreNames.contains(DRAFT_FILES)) db.createObjectStore(DRAFT_FILES, { keyPath: FILE_KEY_PATH });
+      if (db.objectStoreNames.contains(LEGACY_FILES)) upgradeDrafts(request.transaction!, () => db.deleteObjectStore(LEGACY_FILES));
     };
     request.onsuccess = () => {
       clearTimeout(timer);
@@ -263,8 +354,9 @@ function validPacked(value: unknown): value is PackedFile {
 
 function validDraft(value: unknown): value is DraftRow {
   const row = value as DraftRow | null;
-  return Boolean(row) && row!.v === RECORD_VERSION && text(row!.text) && (row!.file === null || validInfo(row!.file))
-    && (row!.lostFile === null || text(row!.lostFile)) && text(row!.rev) && text(row!.tab) && number(row!.updatedAt);
+  return Boolean(row) && row!.v === DRAFT_VERSION && text(row!.text)
+    && Array.isArray(row!.files) && row!.files.every((file) => validInfo(file) && text(file.id))
+    && Array.isArray(row!.lostFiles) && row!.lostFiles.every(text) && text(row!.rev) && text(row!.tab) && number(row!.updatedAt);
 }
 
 function validAttempt(value: unknown): value is AttemptRow {
@@ -273,67 +365,77 @@ function validAttempt(value: unknown): value is AttemptRow {
     && (row!.state === "sending" || row!.state === "unknown") && text(row!.reason) && number(row!.tries) && number(row!.createdAt);
 }
 
-/** The dialogue's draft, or null; a damaged record is removed, a file that cannot be read back is named. */
+/**
+ * The dialogue's draft, or null; a damaged record is removed, a file that cannot be read back is named.
+ * Bytes the draft no longer lists (left by a write cut off with the page) are removed.
+ */
 export async function readDraft(scope: WorkScope): Promise<StoredDraft | null> {
-  return transact([DRAFTS, FILES], "readwrite", async (transaction) => {
+  return transact([DRAFTS, DRAFT_FILES], "readwrite", async (transaction) => {
     const drafts = transaction.objectStore(DRAFTS);
-    const files = transaction.objectStore(FILES);
+    const files = transaction.objectStore(DRAFT_FILES);
     const row = await done(drafts.get(scopeKey(scope)));
     if (row === undefined) return null;
     if (!validDraft(row)) {
       drafts.delete(scopeKey(scope));
-      files.delete(scopeKey(scope));
+      files.delete(draftRange(scope));
       return null;
     }
-    let file: File | null = null;
-    let lostFile = row.lostFile;
-    if (row.file) {
-      // Another tab may have stored its own file meanwhile: only the bytes of this very file count.
-      const bytes = await done(files.get(scopeKey(scope)));
-      if (validPacked(bytes) && sameInfo(bytes, row.file)) file = unpack(bytes);
-      else lostFile = row.file.name;
+    const kept: DraftFile[] = [];
+    const lostFiles = [...row.lostFiles];
+    for (const described of row.files) {
+      // Another tab may have stored its own files meanwhile: only the bytes of this very file count.
+      const bytes = await done(files.get(fileKey(scope, described.id)));
+      if (validPacked(bytes) && sameInfo(bytes, described)) kept.push({ id: described.id, file: unpack(bytes) });
+      else lostFiles.push(described.name);
     }
-    return { ...row, file, lostFile };
+    for (const key of await done(files.getAllKeys(draftRange(scope)))) {
+      if (!row.files.some((described) => described.id === (key as IDBValidKey[])[3])) files.delete(key);
+    }
+    return { ...row, files: kept, lostFiles };
   });
 }
 
 /**
- * Writes the draft (an empty one is removed instead) and, per `change`, its file. `known` is the
- * revision this tab last read or wrote: when the stored one differs and came from another tab, the
- * write still happens (the latest edit wins) and `conflict` tells the caller so it can say so.
- * "same" keeps the stored bytes, which are this draft's only over this tab's own last write: otherwise
- * `refile` asks for a write with the file's bytes (until then a read names the file as lost).
+ * Writes the draft (an empty one is removed instead) and, per `change`, its files' bytes. `known` is
+ * the revision this tab last read or wrote: when the stored one differs and came from another tab, the
+ * write still happens (the latest edit wins) and `conflict` tells the caller so it can say so. A file
+ * whose bytes are not in `put` keeps the bytes stored before, which are this draft's only over this
+ * tab's own last write: otherwise `refile` asks for a write with all the bytes (until then a read
+ * names such a file as lost).
  */
 export async function writeDraft(
   draft: StoredDraft,
   known: string | null,
   change: FileChange,
 ): Promise<{ conflict: boolean; refile: boolean }> {
-  return transact([DRAFTS, FILES], "readwrite", (transaction) => {
+  return transact([DRAFTS, DRAFT_FILES], "readwrite", (transaction) => {
     const drafts = transaction.objectStore(DRAFTS);
-    const files = transaction.objectStore(FILES);
+    const files = transaction.objectStore(DRAFT_FILES);
     const key = scopeKey(draft);
     // The read and the writes are queued at once and the transaction is committed: nothing waits for a
     // callback, so a write started while the page unloads still reaches the browser whole. Requests
     // run in order: the read sees the draft as it was before.
     const before = done(drafts.get(key));
     before.catch(() => undefined); // An aborted write rejects through the transaction instead.
-    if (!draft.text && !draft.file && !draft.lostFile) {
+    if (!draft.text && !draft.files.length && !draft.lostFiles.length) {
       drafts.delete(key);
-      files.delete(key);
+      files.delete(draftRange(draft));
     } else {
-      drafts.put({ ...draft, file: draft.file ? info(draft.file) : null } satisfies DraftRow);
-      if (change === null || !draft.file) files.delete(key);
-      else if (change !== "same") files.put({ ...scopeOf(draft), ...info(draft.file), bytes: change.bytes } satisfies FileRow);
+      drafts.put({ ...draft, files: draft.files.map(({ id, file }) => ({ id, ...info(file) })) } satisfies DraftRow);
+      for (const id of change.drop) files.delete(fileKey(draft, id));
+      for (const { id, file } of draft.files) {
+        const bytes = change.put.get(id);
+        if (bytes) files.put({ ...scopeOf(draft), id, ...info(file), bytes } satisfies FileRow);
+      }
     }
     transaction.commit();
     return before.then((current) => {
       const valid = validDraft(current);
       const ours = valid && current.rev === known;
-      const file = draft.file ? info(draft.file) : null;
+      const described = draft.files.map(({ file }) => info(file));
       return {
-        conflict: valid && !ours && current.tab !== draft.tab && (current.text !== draft.text || !sameInfo(current.file, file)),
-        refile: change === "same" && file !== null && !ours,
+        conflict: valid && !ours && current.tab !== draft.tab && (current.text !== draft.text || !sameInfos(current.files, described)),
+        refile: !ours && draft.files.some(({ id }) => !change.put.has(id)),
       };
     });
   });
@@ -341,24 +443,24 @@ export async function writeDraft(
 
 /**
  * A draft's text the page was left with before its write landed (kept in the tab, lib/navigation.ts):
- * written unless the stored draft is newer. The stored file stays; no text and no file remove the draft.
+ * written unless the stored draft is newer. The stored files stay; no text and no file remove the draft.
  */
 export async function restoreDraft(left: WorkScope & { text: string; at: number }, tab: string): Promise<void> {
-  await transact([DRAFTS, FILES], "readwrite", async (transaction) => {
+  await transact([DRAFTS, DRAFT_FILES], "readwrite", async (transaction) => {
     const drafts = transaction.objectStore(DRAFTS);
-    const files = transaction.objectStore(FILES);
+    const files = transaction.objectStore(DRAFT_FILES);
     const current = await done(drafts.get(scopeKey(left)));
     const valid = validDraft(current);
     if (valid && current.updatedAt >= left.at) return;
-    const file = valid ? current.file : null;
-    const lostFile = valid ? current.lostFile : null;
-    if (!valid) files.delete(scopeKey(left));
-    if (!left.text && !file && !lostFile) {
+    const kept = valid ? current.files : [];
+    const lostFiles = valid ? current.lostFiles : [];
+    if (!valid) files.delete(draftRange(left));
+    if (!left.text && !kept.length && !lostFiles.length) {
       drafts.delete(scopeKey(left));
       return;
     }
     drafts.put({
-      v: RECORD_VERSION, ...scopeOf(left), text: left.text, file, lostFile, rev: crypto.randomUUID(), tab, updatedAt: left.at,
+      v: DRAFT_VERSION, ...scopeOf(left), text: left.text, files: kept, lostFiles, rev: crypto.randomUUID(), tab, updatedAt: left.at,
     } satisfies DraftRow);
   });
 }
@@ -367,22 +469,22 @@ export async function restoreDraft(left: WorkScope & { text: string; at: number 
  * Removes the draft whose content was sent. A draft another tab wrote since this tab last saw it
  * (`known`), with other content, stays: it is not what was sent. True when no draft is left.
  */
-export async function removeDraft(scope: WorkScope, known: string | null, sent: { text: string; file: File | null }): Promise<boolean> {
+export async function removeDraft(scope: WorkScope, known: string | null, sent: { text: string; files: File[] }): Promise<boolean> {
   // Read outside the transaction: IndexedDB cannot stay alive waiting for File.arrayBuffer().
-  const bytes = sent.file ? await fileBytes(sent.file) : null;
-  return transact([DRAFTS, FILES], "readwrite", async (transaction) => {
+  const bytes = await Promise.all(sent.files.map(fileBytes));
+  return transact([DRAFTS, DRAFT_FILES], "readwrite", async (transaction) => {
     const drafts = transaction.objectStore(DRAFTS);
+    const files = transaction.objectStore(DRAFT_FILES);
     const current = await done(drafts.get(scopeKey(scope)));
-    if (current === undefined) return true;
     if (validDraft(current) && current.rev !== known) {
-      if (current.text !== sent.text || !sameInfo(current.file, sent.file ? info(sent.file) : null)) return false;
-      if (bytes) {
-        const stored = await done(transaction.objectStore(FILES).get(scopeKey(scope)));
-        if (!validPacked(stored) || !sameBytes(stored.bytes, bytes)) return false;
+      if (current.text !== sent.text || !sameInfos(current.files, sent.files.map(info))) return false;
+      for (const [index, described] of current.files.entries()) {
+        const stored = await done(files.get(fileKey(scope, described.id)));
+        if (!validPacked(stored) || !sameBytes(stored.bytes, bytes[index]!)) return false;
       }
     }
     drafts.delete(scopeKey(scope));
-    transaction.objectStore(FILES).delete(scopeKey(scope));
+    files.delete(draftRange(scope));
     return true;
   });
 }
@@ -406,14 +508,15 @@ export async function readAttempt(scope: WorkScope): Promise<StoredAttempt | nul
 /**
  * Stores a new attempt (with its file's bytes) before its first request leaves. Another tab's attempt
  * for the same dialogue is never overwritten: it comes back as `existing`, and the caller adopts it
- * instead of sending.
+ * instead of sending. `replaces` is the key of this tab's attempt the server has just taken (the file
+ * before this one in a queue): its record, if still there, gives way.
  */
-export async function createAttempt(attempt: StoredAttempt): Promise<{ existing: StoredAttempt | null }> {
+export async function createAttempt(attempt: StoredAttempt, replaces: string | null = null): Promise<{ existing: StoredAttempt | null }> {
   const file = attempt.file ? { ...info(attempt.file), bytes: await fileBytes(attempt.file) } : null;
   return transact([ATTEMPTS], "readwrite", async (transaction) => {
     const store = transaction.objectStore(ATTEMPTS);
     const current = await done(store.get(scopeKey(attempt)));
-    if (validAttempt(current) && current.key !== attempt.key) return { existing: attemptOf(current) };
+    if (validAttempt(current) && current.key !== attempt.key && current.key !== replaces) return { existing: attemptOf(current) };
     store.put({ ...attempt, file } satisfies AttemptRow);
     return { existing: null };
   }, true);
@@ -451,7 +554,7 @@ export async function countWork(account: string): Promise<{ drafts: number; atte
 
 /** Removes everything the account left in this browser (an explicit sign-out). */
 export async function clearWork(account: string): Promise<void> {
-  await transact([DRAFTS, FILES, ATTEMPTS], "readwrite", (transaction) => {
-    for (const name of [DRAFTS, FILES, ATTEMPTS]) transaction.objectStore(name).delete(accountRange(account));
+  await transact([DRAFTS, DRAFT_FILES, ATTEMPTS], "readwrite", (transaction) => {
+    for (const name of [DRAFTS, DRAFT_FILES, ATTEMPTS]) transaction.objectStore(name).delete(accountRange(account));
   }, true);
 }

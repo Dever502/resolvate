@@ -182,6 +182,14 @@ export function incoming({ ticket: id, text }) {
   changed(item.project);
 }
 
+/**
+ * Control: the next send of a file with this name is saved, then its connection drops in the middle of
+ * the answer, as by a proxy or a lost network: the browser never learns the message was taken.
+ */
+export function loseAnswer({ file }) {
+  state.loseAnswer = file;
+}
+
 /** Control: the server revokes the project's event streams (401: session, 403: access). */
 export function revoke({ project, status }) {
   for (const stream of [...streams]) {
@@ -334,6 +342,14 @@ export async function handle(request, response, path, url, tools) {
     state.messages.get(item.id).push(sent);
     state.sent.set(key, { id: sent.id, fingerprint });
     changed(projectId);
+    if (file && state.loseAnswer === file.filename) {
+      state.loseAnswer = null;
+      // The answer starts, then the connection drops: a browser sends such a request again on its own
+      // only when no answer had begun.
+      response.writeHead(200, { ...tools.headers.api, "content-type": "application/json", "content-length": "64" });
+      response.write('{"id":', () => request.socket.destroy());
+      return true;
+    }
     return done(200, { id: sent.id });
   }
   if ((match = /^tickets\/([^/]+)\/(close|reopen)$/.exec(rest)) && post) {

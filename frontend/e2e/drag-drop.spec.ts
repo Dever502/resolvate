@@ -3,8 +3,8 @@ import type { APIRequestContext, BrowserContext, JSHandle, Locator, Page } from 
 import { SESSION_COOKIE, expect, scenario, test } from "./fixtures";
 
 // Files dragged onto the open dialogue (components/chat/ConversationPanel.vue, composables/useFileDrop.ts):
-// the file picker's own check and attach (chat.attach, lib/attachment.ts), one file per reply, nothing
-// attached unseen. A drag from the computer is the browser's own events carrying a DataTransfer with
+// the file picker's own check and attach (chat.attach, lib/attachment.ts), up to five files per reply,
+// nothing attached unseen. A drag from the computer is the browser's own events carrying a DataTransfer with
 // files: one is built in the page, and its events are dispatched where the pointer would be, in the
 // order the browser fires them. Chromium also takes a drag through its own input (hit testing, drop
 // effect, default actions). Every test also fails on a CSP violation or a console error.
@@ -12,8 +12,8 @@ const CONSOLE = "/console/";
 const SEND = "**/console/projects/p1/tickets/t1/send";
 const MiB = 1024 * 1024;
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
-const HINT = "Перетащите файл для прикрепления";
-const MULTIPLE = "К ответу можно прикрепить только один файл: перетащите один.";
+const HINT = "Перетащите файлы для прикрепления";
+const FULL = "В ответе уже 5 файлов: уберите лишний, чтобы прикрепить другой.";
 const UNSUPPORTED = "Этот формат не поддерживается. Можно прикрепить фото JPEG, PNG или WebP, видео MP4 или MOV, PDF или голосовое OGG/Opus.";
 const NO_DIALOGUE = "Откройте диалог, чтобы прикрепить файл.";
 const SENDING = "Идёт отправка: перетащите файл, когда она закончится.";
@@ -22,7 +22,7 @@ const dialogue = (page: Page, name: RegExp) => list(page).getByRole("option", { 
 const panel = (page: Page) => page.locator("#workspace main");
 const history = (page: Page) => page.getByRole("region", { name: "Переписка" });
 const composer = (page: Page) => page.getByRole("textbox", { name: "Текст ответа" });
-const preview = (page: Page) => page.getByRole("group", { name: "Выбранное вложение" });
+const preview = (page: Page) => page.getByRole("group", { name: "Выбранные вложения" });
 const remove = (page: Page) => page.getByRole("button", { name: "Убрать вложение" });
 // The highlight is decoration, hidden from screen readers; the panel's notice says what a drop did.
 const zone = (page: Page) => page.locator(".drop-zone");
@@ -104,16 +104,16 @@ async function chooseProject(page: Page, name: string): Promise<void> {
 }
 
 /** The dialogue's draft as the page keeps it in IndexedDB: its text and the name of its file. */
-function storedDraft(page: Page, ticket: string): Promise<{ text: string; file: string | null } | null> {
+function storedDraft(page: Page, ticket: string): Promise<{ text: string; files: string[] } | null> {
   return page.evaluate((ticket) => new Promise((resolve, reject) => {
-    const request = indexedDB.open("resolvate-work", 1);
+    const request = indexedDB.open("resolvate-work");
     request.onsuccess = () => {
       const db = request.result;
       const read = db.transaction("drafts", "readonly").objectStore("drafts").getAll();
       read.onsuccess = () => {
         db.close();
-        const row = (read.result as { ticket: string; text: string; file: { name: string } | null }[]).find((item) => item.ticket === ticket);
-        resolve(row ? { text: row.text, file: row.file?.name ?? null } : null);
+        const row = (read.result as { ticket: string; text: string; files: { name: string }[] }[]).find((item) => item.ticket === ticket);
+        resolve(row ? { text: row.text, files: row.files.map((file) => file.name) } : null);
       };
       read.onerror = () => reject(read.error);
     };
@@ -196,26 +196,35 @@ test.describe("dropping a file on the open dialogue", () => {
     await expect(composer(page)).toHaveValue("Текст остаётся");
   });
 
-  test("several files at once are refused with a message, none of them attached; one at a time is taken", async ({ page, context, request, consoleErrors }) => {
+  test("several files dropped at once go after the attached one, in order; past five the rest are named, then the panel says it is full", async ({ page, context, request, consoleErrors }) => {
     void consoleErrors;
     await start(page, context, request);
     await openAnna(page);
-    await composer(page).fill("Два файла сразу");
+    await composer(page).fill("Несколько файлов сразу");
     await dropOn(history(page), await transfer(page, { files: [pdf("terms.pdf")] }));
-    await expect(preview(page)).toContainText("terms.pdf");
     const several = await transfer(page, { files: [photo("first.png"), photo("second.png")] });
     await arrive(history(page), several);
-    // Said while dragged: this drop would be refused.
-    await expect(zone(page)).toHaveText(MULTIPLE);
+    await expect(zone(page)).toHaveText(HINT);
+    await expect(zone(page)).not.toHaveAttribute("data-refused");
+    expect(await fire(history(page), "drop", several)).toBe(true);
+    const cards = preview(page).locator(".attachment-preview-name");
+    await expect(cards).toHaveText(["terms.pdf", "first.png", "second.png"]);
+    await expect(preview(page).locator("canvas:visible")).toHaveCount(2);
+    // Two places left for four files: said while dragged, the first two are taken and the others named.
+    const four = await transfer(page, { files: [pdf("a.pdf"), pdf("b.pdf"), pdf("c.pdf"), pdf("d.pdf")] });
+    await arrive(history(page), four);
+    await expect(zone(page)).toHaveText("Прикрепятся 2 из 4: к одному ответу — не больше 5 файлов.");
+    expect(await fire(history(page), "drop", four)).toBe(true);
+    await expect(cards).toHaveText(["terms.pdf", "first.png", "second.png", "a.pdf", "b.pdf"]);
+    await expect(notice(page)).toHaveText("Не прикреплены: «c.pdf» — в ответе уже 5 файлов; «d.pdf» — в ответе уже 5 файлов. К одному ответу можно прикрепить не больше 5 файлов.");
+    // Full: refused while dragged, and said if dropped anyway.
+    await arrive(history(page), several);
+    await expect(zone(page)).toHaveText(FULL);
     await expect(zone(page)).toHaveAttribute("data-refused", "");
     expect(await fire(history(page), "drop", several)).toBe(true);
-    await expect(zone(page)).toHaveCount(0);
-    await expect(notice(page)).toHaveText(MULTIPLE);
-    // Not the first of them either: the attached file and the text are as they were.
-    await expect(preview(page)).toContainText("terms.pdf");
-    await expect(composer(page)).toHaveValue("Два файла сразу");
-    await dropOn(history(page), await transfer(page, { files: [photo("second.png")] }));
-    await expect(preview(page)).toContainText("second.png");
+    await expect(notice(page)).toHaveText(FULL);
+    await expect(cards).toHaveCount(5);
+    await expect(composer(page)).toHaveValue("Несколько файлов сразу");
   });
 
   test("text and links are left to the browser: no highlight, nothing taken", async ({ page, context, request, consoleErrors }) => {
@@ -477,17 +486,18 @@ test.describe("dropping a file on the open dialogue", () => {
     await composer(page).fill("Черновик с файлом");
     await dropOn(history(page), await transfer(page, { files: [photo("contract.png")] }));
     await expect(preview(page)).toContainText("contract.png");
-    await dropOn(history(page), await transfer(page, { files: [photo("a.png"), photo("b.png")] }));
-    await expect(notice(page)).toHaveText(MULTIPLE);
     await dropOn(history(page), await transfer(page, { files: [{ name: "notes.txt", type: "text/plain" }] }));
     await expect(notice(page)).toHaveText(UNSUPPORTED);
+    await dropOn(history(page), await transfer(page, { files: [photo("scan.png"), { name: "notes.txt", type: "text/plain" }] }));
+    await expect(notice(page)).toHaveText("Файл «notes.txt» не прикреплён: формат не поддерживается.");
     await expect(composer(page)).toHaveValue("Черновик с файлом");
-    await expect(preview(page)).toContainText("contract.png");
-    await expect.poll(() => storedDraft(page, "t1")).toEqual({ text: "Черновик с файлом", file: "contract.png" });
+    await expect(preview(page).locator(".attachment-preview-name")).toHaveText(["contract.png", "scan.png"]);
+    await expect.poll(() => storedDraft(page, "t1")).toEqual({ text: "Черновик с файлом", files: ["contract.png", "scan.png"] });
     await page.reload();
     await expect(composer(page)).toHaveValue("Черновик с файлом");
-    await expect(preview(page)).toContainText("contract.png");
-    await expect(preview(page).locator("canvas")).toBeVisible();
+    await expect(preview(page).locator(".attachment-preview-name")).toHaveText(["contract.png", "scan.png"]);
+    await expect(preview(page).locator("canvas")).toHaveCount(2);
+    for (const canvas of await preview(page).locator("canvas").all()) await expect(canvas).toBeVisible();
   });
 
   test.describe("through the browser's own drag input", () => {
@@ -573,7 +583,12 @@ test.describe("dropping a file on the open dialogue", () => {
       await start(page, context, request);
       await openAnna(page);
       const data = await transfer(page, { files: [photo()] });
-      for (const [dragged, refused] of [[data, false], [await transfer(page, { files: [photo("a.png"), photo("b.png")] }), true]] as const) {
+      for (const refused of [false, true]) {
+        // A reply that has its five files refuses the drag.
+        if (refused) {
+          await page.locator('input[type="file"]').setInputFiles(["a", "b", "c", "d", "e"].map((name) => ({ name: `${name}.pdf`, mimeType: "application/pdf", buffer: Buffer.from("%PDF-1") })));
+        }
+        const dragged = data;
         await arrive(history(page), dragged);
         if (refused) await expect(zone(page)).toHaveAttribute("data-refused", "");
         else await expect(zone(page)).not.toHaveAttribute("data-refused");

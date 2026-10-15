@@ -391,14 +391,25 @@
   /* A send whose answer never came: above the reply box until it is sent again or given up. */
   .send-attempt { display: grid; gap: .5rem; margin-bottom: .625rem; padding: .75rem .875rem; border: 1px solid var(--warning-border); border-radius: var(--radius-control); background: var(--warning-bg); color: var(--warning-text); font-size: .875rem; }
   .send-attempt-copy { margin: 0; overflow: hidden; color: var(--text); text-overflow: ellipsis; white-space: nowrap; }
-  .attachment-preview { display: flex; align-items: center; gap: .75rem; min-width: 0; margin-bottom: .625rem; padding: .5rem; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--canvas); font-size: .8125rem; }
-  .attachment-preview-art { display: grid; place-items: center; flex: 0 0 80px; height: 56px; overflow: hidden; border-radius: 5px; color: var(--muted); }
+  /* The reply's files (Composer.vue): cards in the order they were attached, wrapping into rows that scroll past two;
+     on a phone one row that scrolls sideways. The list's padding keeps the remove buttons' focus rings inside it. */
+  .attachment-tray { margin-bottom: .625rem; }
+  .attachment-list { display: flex; flex-wrap: wrap; gap: .5rem; max-height: calc(2 * 54px + .5rem + 6px); margin: -3px; padding: 3px; overflow-y: auto; list-style: none; }
+  .attachment-preview { display: flex; flex: 1 1 14rem; align-items: center; gap: .625rem; min-width: 0; max-width: 22rem; padding: 4px 2px 4px 4px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--canvas); font-size: .8125rem; }
+  .attachment-preview-art { display: grid; place-items: center; flex: 0 0 60px; height: 44px; overflow: hidden; border-radius: 5px; color: var(--muted); }
   .attachment-preview-art canvas { display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; object-fit: contain; }
-  .attachment-preview-art .icon { width: 26px; height: 26px; }
+  .attachment-preview-art .icon { width: 24px; height: 24px; }
   .attachment-preview-info { flex: 1; min-width: 0; }
-  .attachment-preview-info p { margin: 0; }
-  .attachment-preview-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+  .attachment-preview-info p { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .attachment-preview-name { font-weight: 500; }
   .attachment-preview-meta, .attachment-preview-hint { color: var(--muted); font-size: .75rem; }
+  .attachment-preview-status { color: var(--accent); font-size: .75rem; font-weight: 500; }
+  .attachment-preview[data-status="unknown"] .attachment-preview-status { color: var(--warning-text); }
+  /* How far a reply's files got, with a way to stop the rest. */
+  .send-progress { display: flex; flex-wrap: wrap; align-items: center; gap: 0 .75rem; margin: -.125rem .25rem .5rem; color: var(--muted); font-size: .8125rem; }
+  .send-progress p { flex: 1 1 16rem; }
+  .send-progress[data-state="stopped"] { color: var(--warning-text); }
+  .send-progress:not([data-state]) { margin: 0; }
   /* A 44×44 hit area in the room of a 40 px button: the file's name keeps its width. */
   .attachment-preview-remove { display: grid; place-items: center; flex: 0 0 44px; height: 44px; margin: 0 -2px; padding: .5rem; }
   /* Header and search stay, the results scroll; on a wide chat the list keeps a readable width. */
@@ -532,6 +543,8 @@
   .send .icon { width: 1.125rem; height: 1.125rem; }
   .composer-area { padding: .625rem .75rem max(.625rem, env(safe-area-inset-bottom)); }
   .composer-hint { display: none; }
+  .attachment-list { flex-wrap: nowrap; max-height: none; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x proximity; overscroll-behavior-x: contain; }
+  .attachment-preview { flex: 0 0 min(15rem, calc(100% - 2.5rem)); scroll-snap-align: start; }
   .customer-card { width: min(320px, 100vw); }
   .form-grid { grid-template-columns: minmax(0, 1fr); }
   .admin-actions { justify-content: flex-start; margin-left: 0; }
