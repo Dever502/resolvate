@@ -363,6 +363,45 @@ test.describe("sending several files", () => {
 });
 
 test.describe("reloads, dialogues and accounts", () => {
+  test("a failed draft checkpoint keeps the recovery key, stops the queue and reload does not duplicate the accepted file", async ({ page, context, request, consoleErrors }) => {
+    void consoleErrors;
+    await start(page, context, request);
+    await openAnna(page);
+    await picker(page).setInputFiles([pdf("a.pdf"), pdf("b.pdf")]);
+    await expect.poll(async () => (await stored(page)).drafts[0]?.files).toEqual(["a.pdf", "b.pdf"]);
+    const keys: string[] = [];
+    page.on("request", item => {
+      if (item.url().endsWith("/tickets/t1/send")) keys.push(item.headers()["x-idempotency-key"] ?? "");
+    });
+    // Only draft cleanup fails: attempts are still durable. The patch ends on reload.
+    await page.evaluate(() => {
+      const put = IDBObjectStore.prototype.put;
+      IDBObjectStore.prototype.put = function (value: unknown, key?: IDBValidKey): IDBRequest<IDBValidKey> {
+        if (this.name === "drafts" && (value as { files?: unknown[] }).files?.length === 1) {
+          throw new DOMException("Injected checkpoint failure", "UnknownError");
+        }
+        return key === undefined ? put.call(this, value) : put.call(this, value, key);
+      };
+    });
+    await composer(page).press("Enter");
+    await expect(attempt(page)).toContainText("Сервер принял сообщение");
+    await expect(progress(page)).toContainText("Отправка остановлена");
+    expect(keys).toHaveLength(1);
+    await expect.poll(async () => (await stored(page)).attempts).toEqual([{ ticket: "t1", key: keys[0] }]);
+    expect((await stored(page)).drafts[0]?.files).toEqual(["a.pdf", "b.pdf"]);
+
+    await page.reload();
+    // The existing history confirms a.pdf under its original key and retries only local cleanup.
+    await expect(attempt(page)).toBeHidden();
+    await expect(names(page)).toHaveText(["b.pdf"]);
+    expect(await sendsReceived(request)).toBe(1);
+    await composer(page).press("Enter");
+    await expect(tray(page)).toBeHidden();
+    await expect.poll(async () => await stored(page)).toEqual({ drafts: [], attempts: [] });
+    expect(await sendsReceived(request)).toBe(2);
+    expect(new Set(keys).size).toBe(2);
+  });
+
   test("a reload keeps the text, the files in their order and their previews; nothing is sent", async ({ page, context, request, consoleErrors }) => {
     void consoleErrors;
     await start(page, context, request);

@@ -46,6 +46,8 @@ export interface StoredAttempt extends WorkScope {
   key: string;
   text: string;
   file: File | null;
+  /** Stable draft entry identity; older single-file attempts did not store it. */
+  draftFileId?: string;
   state: "sending" | "unknown";
   reason: string;
   tries: number;
@@ -362,6 +364,7 @@ function validDraft(value: unknown): value is DraftRow {
 function validAttempt(value: unknown): value is AttemptRow {
   const row = value as AttemptRow | null;
   return Boolean(row) && row!.v === RECORD_VERSION && text(row!.key) && text(row!.text) && (row!.file === null || validPacked(row!.file))
+    && (row!.draftFileId === undefined || text(row!.draftFileId))
     && (row!.state === "sending" || row!.state === "unknown") && text(row!.reason) && number(row!.tries) && number(row!.createdAt);
 }
 
