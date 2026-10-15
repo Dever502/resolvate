@@ -7,7 +7,7 @@ import { SESSION_COOKIE, expect, scenario, stubLog, test } from "./fixtures";
 const MiB = 1024 * 1024;
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAAABJRU5ErkJggg==", "base64");
 const composer = (page: Page) => page.getByRole("textbox", { name: "Текст ответа" });
-const preview = (page: Page) => page.getByRole("group", { name: "Выбранное вложение" });
+const preview = (page: Page) => page.getByRole("group", { name: "Выбранные вложения" });
 const picker = (page: Page) => page.locator('input[type="file"]');
 const limit = (page: Page) => page.locator(".composer-limit");
 const history = (page: Page) => page.getByRole("region", { name: "Переписка" });

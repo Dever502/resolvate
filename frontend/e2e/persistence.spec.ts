@@ -11,7 +11,7 @@ const list = (page: Page) => page.getByRole("listbox", { name: "Диалоги" 
 const history = (page: Page) => page.getByRole("region", { name: "Переписка" });
 const composer = (page: Page) => page.getByRole("textbox", { name: "Текст ответа" });
 const project = (page: Page) => page.getByRole("button", { name: /^Текущий проект/ });
-const preview = (page: Page) => page.getByRole("group", { name: "Выбранное вложение" });
+const preview = (page: Page) => page.getByRole("group", { name: "Выбранные вложения" });
 const attempt = (page: Page) => page.getByRole("region", { name: "Отправка с неизвестным результатом" });
 const outgoing = (page: Page, text: string) => history(page).locator("article.outgoing").filter({ hasText: text });
 const dialogue = (page: Page, name: RegExp) => list(page).getByRole("option", { name });
@@ -37,16 +37,17 @@ async function chooseProject(page: Page, name: string): Promise<void> {
 }
 
 interface Stored {
-  drafts: { project: string; ticket: string; account: string; text: string; file: string | null; lostFile: string | null }[];
+  drafts: { project: string; ticket: string; account: string; text: string; files: string[]; lostFiles: string[] }[];
   attempts: { project: string; ticket: string; key: string; state: string; text: string }[];
 }
 
 /** What the page keeps in its IndexedDB (opened with the same schema, so a missing one is not broken). */
 function stored(page: Page): Promise<Stored> {
   return page.evaluate(() => new Promise<Stored>((resolve, reject) => {
-    const request = indexedDB.open("resolvate-work", 1);
+    const request = indexedDB.open("resolvate-work", 2);
     request.onupgradeneeded = () => {
-      for (const name of ["drafts", "files", "attempts"]) request.result.createObjectStore(name, { keyPath: ["account", "project", "ticket"] });
+      for (const name of ["drafts", "attempts"]) request.result.createObjectStore(name, { keyPath: ["account", "project", "ticket"] });
+      request.result.createObjectStore("draftFiles", { keyPath: ["account", "project", "ticket", "id"] });
     };
     request.onsuccess = () => {
       const db = request.result;
@@ -58,7 +59,7 @@ function stored(page: Page): Promise<Stored> {
         resolve({
           drafts: drafts.result.map((item) => ({
             project: item.project, ticket: item.ticket, account: item.account, text: item.text,
-            file: item.file ? (item.file as { name: string }).name : null, lostFile: item.lostFile,
+            files: (item.files as { name: string }[]).map((file) => file.name), lostFiles: item.lostFiles,
           })),
           attempts: attempts.result.map((item) => ({ project: item.project, ticket: item.ticket, key: item.key, state: item.state, text: item.text })),
         });
@@ -72,9 +73,10 @@ function stored(page: Page): Promise<Stored> {
 /** Puts a raw record into the page's IndexedDB, as an older or broken console would have left it. */
 function inject(page: Page, store: "drafts" | "attempts", record: Record<string, unknown>): Promise<void> {
   return page.evaluate(({ store, record }) => new Promise<void>((resolve, reject) => {
-    const request = indexedDB.open("resolvate-work", 1);
+    const request = indexedDB.open("resolvate-work", 2);
     request.onupgradeneeded = () => {
-      for (const name of ["drafts", "files", "attempts"]) request.result.createObjectStore(name, { keyPath: ["account", "project", "ticket"] });
+      for (const name of ["drafts", "attempts"]) request.result.createObjectStore(name, { keyPath: ["account", "project", "ticket"] });
+      request.result.createObjectStore("draftFiles", { keyPath: ["account", "project", "ticket", "id"] });
     };
     request.onsuccess = () => {
       const db = request.result;
@@ -232,14 +234,14 @@ test.describe("drafts", () => {
     await composer(page).fill("Посмотрите фото");
     await page.locator('input[type="file"]').setInputFiles({ name: "photo.png", mimeType: "image/png", buffer: PNG });
     await expect(preview(page)).toContainText("photo.png");
-    await expect.poll(async () => await draftOf(page, "t1")).toMatchObject({ text: "Посмотрите фото", file: "photo.png" });
+    await expect.poll(async () => await draftOf(page, "t1")).toMatchObject({ text: "Посмотрите фото", files: ["photo.png"] });
     await page.reload();
     await expect(composer(page)).toHaveValue("Посмотрите фото");
     await expect(preview(page)).toContainText("photo.png");
     await expect(preview(page).locator("canvas")).toBeVisible();
 
     await page.getByRole("button", { name: "Убрать вложение" }).click();
-    await expect.poll(async () => (await draftOf(page, "t1"))?.file).toBeNull();
+    await expect.poll(async () => (await draftOf(page, "t1"))?.files).toEqual([]);
     await page.reload();
     await expect(composer(page)).toHaveValue("Посмотрите фото");
     await expect(preview(page)).toBeHidden();
@@ -334,7 +336,7 @@ test.describe("send attempts", () => {
     await composer(page).press("Enter");
     await expect.poll(() => keys.length).toBe(1);
     await expect.poll(async () => (await stored(page)).attempts.length).toBe(1);
-    await expect.poll(async () => (await draftOf(page, "t1"))?.file).toBe("contract.png");
+    await expect.poll(async () => (await draftOf(page, "t1"))?.files).toEqual(["contract.png"]);
     await page.reload();
     await expect(attempt(page)).toContainText("Фото договора");
     await expect(preview(page)).toContainText("contract.png");
@@ -433,7 +435,8 @@ test.describe("storage and accounts", () => {
     await page.addInitScript(() => {
       const put = IDBObjectStore.prototype.put;
       IDBObjectStore.prototype.put = function (value: unknown, key?: IDBValidKey) {
-        if ((value as { file?: unknown }).file) throw new DOMException("The quota has been exceeded.", "QuotaExceededError");
+        // The bytes of a draft's file: the draft itself, its text, still fits.
+        if ((value as { bytes?: unknown }).bytes) throw new DOMException("The quota has been exceeded.", "QuotaExceededError");
         return put.call(this, value, key);
       };
     });
@@ -442,7 +445,7 @@ test.describe("storage and accounts", () => {
     await composer(page).fill("Текст с файлом");
     await page.locator('input[type="file"]').setInputFiles({ name: "scan.png", mimeType: "image/png", buffer: PNG });
     await expect(page.getByRole("alert")).toHaveText("Вложение «scan.png» не удалось сохранить в браузере: после обновления страницы прикрепите его снова.");
-    await expect.poll(async () => await draftOf(page, "t1")).toMatchObject({ text: "Текст с файлом", file: null, lostFile: "scan.png" });
+    await expect.poll(async () => await draftOf(page, "t1")).toMatchObject({ text: "Текст с файлом", files: [], lostFiles: ["scan.png"] });
     await page.reload();
     await expect(composer(page)).toHaveValue("Текст с файлом");
     await expect(preview(page)).toBeHidden();

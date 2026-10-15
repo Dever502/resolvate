@@ -137,9 +137,9 @@ test.describe("operator flow", () => {
     await expect(composer(page)).toHaveValue("черновик для Бориса");
 
     await page.locator('input[type="file"]').setInputFiles({ name: "photo.png", mimeType: "image/png", buffer: Buffer.from("89504e47", "hex") });
-    await expect(page.getByRole("group", { name: "Выбранное вложение" })).toContainText("photo.png");
+    await expect(page.getByRole("group", { name: "Выбранные вложения" })).toContainText("photo.png");
     await page.getByRole("button", { name: "Отправить" }).click();
-    await expect(page.getByRole("group", { name: "Выбранное вложение" })).toBeHidden();
+    await expect(page.getByRole("group", { name: "Выбранные вложения" })).toBeHidden();
     await expect(history(page).locator("article.outgoing").last().getByRole("button", { name: "Открыть изображение" })).toBeVisible();
     await expect(history(page).locator("article.outgoing").last()).toContainText("черновик для Бориса");
   });

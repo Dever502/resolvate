@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  FILE_EMPTY, FILE_TOO_LARGE, FILE_UNSUPPORTED, MAX_FILE_BYTES, MAX_TEXT, MAX_TEXT_WITH_FILE, attachmentKind, fileProblem,
-  textLength, textProblem,
+  FILES_LIMIT, FILE_EMPTY, FILE_TOO_LARGE, FILE_UNSUPPORTED, MAX_FILE_BYTES, MAX_TEXT, MAX_TEXT_WITH_FILE, attachmentKind, fileProblem,
+  pastedFile, refusal, textLength, textProblem,
 } from "./attachment";
 
 // The browser's checks against the server's own rules (src/resolvate/console.py, media_storage.py).
@@ -68,5 +68,32 @@ describe("reply file", () => {
     expect(fileProblem(sized("a.pdf", "application/pdf", 0))).toBe(FILE_EMPTY);
     expect(fileProblem(sized("a.txt", "text/plain", MAX_FILE_BYTES + 1))).toBe(FILE_UNSUPPORTED);
     expect(fileProblem(sized("a.txt", "text/plain", 0))).toBe(FILE_UNSUPPORTED);
+  });
+});
+
+describe("files of one pick, drop or paste", () => {
+  it("one file refused alone is said as before; several, and any over the limit, are named with their reasons", () => {
+    expect(refusal([], 3)).toBe("");
+    expect(refusal([{ name: "a.txt", problem: FILE_UNSUPPORTED }], 1)).toBe(FILE_UNSUPPORTED);
+    expect(refusal([{ name: "a.txt", problem: FILE_UNSUPPORTED }], 2)).toBe("Файл «a.txt» не прикреплён: формат не поддерживается.");
+    expect(refusal([{ name: "f.pdf", problem: FILES_LIMIT }], 1))
+      .toBe("Файл «f.pdf» не прикреплён: в ответе уже 5 файлов. К одному ответу можно прикрепить не больше 5 файлов.");
+    expect(refusal([{ name: "big.pdf", problem: FILE_TOO_LARGE }, { name: "empty.pdf", problem: FILE_EMPTY }], 4))
+      .toBe("Не прикреплены: «big.pdf» — больше 20 МБ; «empty.pdf» — файл пустой.");
+    // A very long name is shortened in the sentence.
+    expect(refusal([{ name: `${"я".repeat(80)}.pdf`, problem: FILE_EMPTY }], 2)).toBe(`Файл «${"я".repeat(59)}…» не прикреплён: файл пустой.`);
+  });
+
+  it("names a pasted image without a name of its own; its type and bytes stay, a copied file keeps its name", async () => {
+    const at = new Date(2026, 0, 2, 3, 4, 5);
+    const pasted = pastedFile(new File(["png bytes"], "image.png", { type: "image/png", lastModified: 7 }), at);
+    expect([pasted.name, pasted.type, pasted.lastModified, await pasted.text()]).toEqual(["clipboard-2026-01-02-030405.png", "image/png", 7, "png bytes"]);
+    expect(pastedFile(new File(["x"], "", { type: "image/jpeg" }), at, 2).name).toBe("clipboard-2026-01-02-030405-3.jpg");
+    expect(pastedFile(new File(["x"], "", { type: "image/webp" }), at).name).toBe("clipboard-2026-01-02-030405.webp");
+    const named = new File(["x"], "Снимок экрана.png", { type: "image/png" });
+    expect(pastedFile(named, at)).toBe(named);
+    // Not an image the server takes: left as it is, for the usual check to refuse.
+    const gif = new File(["x"], "", { type: "image/gif" });
+    expect(pastedFile(gif, at)).toBe(gif);
   });
 });

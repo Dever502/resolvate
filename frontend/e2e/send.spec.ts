@@ -110,7 +110,7 @@ test.describe("sending a reply", () => {
     // Unchanged text and file: pressing "Отправить" again is the safe retry.
     await page.getByRole("button", { name: "Отправить" }).click();
     await expect(attempt(page)).toBeHidden();
-    await expect(page.getByRole("group", { name: "Выбранное вложение" })).toBeHidden();
+    await expect(page.getByRole("group", { name: "Выбранные вложения" })).toBeHidden();
     await expect(outgoing(page, "Фото заказа")).toHaveCount(1);
     expect(seen.map((item) => item.key)).toEqual([seen[0]!.key, seen[0]!.key]);
   });

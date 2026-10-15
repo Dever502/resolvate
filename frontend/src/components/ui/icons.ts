@@ -14,7 +14,8 @@ export const iconPaths = {
   back: "m14 6-6 6 6 6",
   info: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Zm0-11v6m0-10h.01",
   close: "m6 6 12 12M6 18 18 6",
-  attach: "m8 13 6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l9-9a2 2 0 0 1 3 3l-9 9",
+  // A paperclip at 45°: one wire turning three times (radii 5.75, 4 and 2.3), centred in the box.
+  attach: "M20.06 13.17 13.76 19.48A5.75 5.75 0 0 1 5.63 11.34L12.94 4.02A4.02 4.02 0 0 1 18.64 9.71L13.15 15.21A2.3 2.3 0 0 1 9.9 11.95L13.35 8.49",
   image: "M3 3h18v18H3Zm0 13 5-5 4 4 3-3 6 6M15 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z",
   video: "M3 5h12v14H3Zm12 5 6-4v12l-6-4",
   document: "M5 3h9l5 5v13H5Zm9 0v5h5M8 12h8m-8 4h6",

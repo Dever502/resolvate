@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, ref, useTemplateRef, watch } from "vue";
-import { attachmentKind } from "../../lib/attachment";
+import { attachmentKind, quoted, type AttachmentStatus } from "../../lib/attachment";
 import Icon from "../ui/Icon.vue";
 import IconButton from "../ui/IconButton.vue";
 
-const props = defineProps<{ file: File; disabled: boolean }>();
+// One file of the reply in the reply box's list (Composer.vue): its preview or icon, name, kind and
+// size, where it is in a send (`status`) and its own remove button.
+const props = withDefaults(defineProps<{ file: File; disabled: boolean; status?: AttachmentStatus }>(), { status: null });
 defineEmits<{ remove: [] }>();
 const canvas = useTemplateRef<HTMLCanvasElement>("canvas");
 const ready = ref(false);
@@ -19,6 +21,7 @@ const size = computed(() => {
   const unit = bytes < 1024 ** 2 ? "КБ" : "МБ";
   return `${(bytes / (unit === "КБ" ? 1024 : 1024 ** 2)).toLocaleString("ru", { maximumFractionDigits: 1 })} ${unit}`;
 });
+const statusText = computed(() => (props.status ? { sending: "Отправляется…", waiting: "В очереди", unknown: "Результат неизвестен" }[props.status] : ""));
 const hint = computed(() => {
   if (kind.value === "file") return "Формат не поддерживается";
   if (kind.value === "video" || failed.value) return "Предпросмотр недоступен";
@@ -59,18 +62,21 @@ watch([() => props.file, canvas], async ([file, target], _previous, onCleanup) =
 </script>
 
 <template>
-  <div class="attachment-preview" role="group" aria-label="Выбранное вложение">
+  <li class="attachment-preview" :data-status="status ?? undefined">
     <div class="attachment-preview-art" aria-hidden="true">
       <canvas ref="canvas" v-show="ready" />
       <Icon v-if="!ready" :name="kind" />
     </div>
     <div class="attachment-preview-info">
       <p class="attachment-preview-name" :title="file.name">{{ file.name }}</p>
-      <p class="attachment-preview-meta">{{ label }} · {{ size }}</p>
-      <p v-if="hint" class="attachment-preview-hint" role="status">{{ hint }}</p>
+      <!-- Two lines whatever it says, the cards of the list keep their height; a send's state comes first. -->
+      <p v-if="statusText" class="attachment-preview-meta"><span class="attachment-preview-status">{{ statusText }}</span> · {{ size }}</p>
+      <p v-else class="attachment-preview-meta">
+        {{ label }} · {{ size }}<template v-if="hint"> · <span class="attachment-preview-hint">{{ hint }}</span></template>
+      </p>
     </div>
-    <IconButton class="quiet attachment-preview-remove" label="Убрать вложение" :disabled="disabled" @click="$emit('remove')">
+    <IconButton class="quiet attachment-preview-remove" :label="`Убрать вложение ${quoted(file.name)}`" :disabled="disabled" @click="$emit('remove')">
       <Icon name="close" />
     </IconButton>
-  </div>
+  </li>
 </template>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, useTemplateRef, watch } from "vue";
 import { useFileDrop } from "../../composables/useFileDrop";
-import { FILES_MULTIPLE } from "../../lib/attachment";
+import { MAX_FILES } from "../../lib/attachment";
 import { useChatStore } from "../../stores/chat";
 import { useProjectsStore } from "../../stores/projects";
 import { useWorkspaceStore } from "../../stores/workspace";
@@ -23,9 +23,9 @@ watch(() => chat.ticketId, () => {
   cardOpen.value = false;
 });
 
-// A file dragged onto this panel goes into the open dialogue's draft through the picker's own check
+// Files dragged onto this panel go into the open dialogue's draft through the picker's own check
 // (chat.attach, lib/attachment.ts). The ticket list, the app bar and the windows take no files.
-const DROP_HINT = "Перетащите файл для прикрепления";
+const DROP_HINT = "Перетащите файлы для прикрепления";
 // Why a file is not taken now: shown over the panel while it is dragged, said if it is dropped anyway.
 // The attach button is off in two of these states (the draft not read yet, a send running); in the
 // others the file would land in no dialogue, in one that is gone (403/404) or behind a window.
@@ -35,6 +35,7 @@ const DROP_UNAVAILABLE = "Диалог недоступен: прикрепит�
 const DROP_LOADING = "Черновик диалога ещё загружается: перетащите файл чуть позже.";
 const DROP_SENDING = "Идёт отправка: перетащите файл, когда она закончится.";
 const DROP_SWITCHED = "Диалог сменился во время перетаскивания: перетащите файл снова.";
+const DROP_FULL = `В ответе уже ${MAX_FILES} файлов: уберите лишний, чтобы прикрепить другой.`;
 const panel = useTemplateRef<HTMLElement>("panel");
 
 /** A modal window over the workspace (Reka Dialog or AlertDialog): a file dropped now would land out of sight. */
@@ -48,17 +49,23 @@ function dropRefusal(count: number | null): string | null {
   if (chat.unavailable) return DROP_UNAVAILABLE;
   if (!chat.draft) return DROP_LOADING;
   if (chat.sending) return DROP_SENDING;
-  return count !== null && count > 1 ? FILES_MULTIPLE : null;
+  return chat.draft.files.length >= MAX_FILES ? DROP_FULL : null;
 }
 
 const files = useFileDrop(panel, {
   refusal: dropRefusal,
-  // One file, as from the picker: a refused one is said and leaves the attached file and the text as they were.
-  accept: ([file]) => chat.attach(file!),
+  // As from the picker: the ones refused are named, the others attached after the draft's own.
+  accept: (dropped) => chat.attach(dropped),
   refuse: (reason) => workspace.show(reason),
 });
 const dragging = files.over;
 const dropReason = computed(() => (dragging.value ? dropRefusal(files.count.value) : null));
+/** More files than the reply has room for: the first ones are attached, the rest named as refused. */
+const dropHint = computed(() => {
+  const room = MAX_FILES - (chat.draft?.files.length ?? 0);
+  const count = files.count.value;
+  return count !== null && count > room ? `Прикрепятся ${room} из ${count}: к одному ответу — не больше ${MAX_FILES} файлов.` : DROP_HINT;
+});
 // Another dialogue (or none) under the drag: the highlight goes, and its drop does not land there unseen.
 watch(() => [chat.ticketId, projects.currentId], () => files.interrupt(DROP_SWITCHED));
 </script>
@@ -91,7 +98,7 @@ watch(() => [chat.ticketId, projects.currentId], () => files.interrupt(DROP_SWIT
         <ProjectsEmptyState v-else />
         <!-- Shown only while files are dragged over the panel; decoration that never takes the pointer. -->
         <div v-if="dragging" class="drop-zone" :data-refused="dropReason ? '' : undefined" aria-hidden="true">
-          <p class="drop-zone-label">{{ dropReason ?? DROP_HINT }}</p>
+          <p class="drop-zone-label">{{ dropReason ?? dropHint }}</p>
         </div>
       </main>
     </div>

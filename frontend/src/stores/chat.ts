@@ -2,11 +2,11 @@ import { defineStore } from "pinia";
 import { computed, reactive, ref, shallowRef, watch } from "vue";
 import { ApiError } from "../api/client";
 import type { FolderAssignment, Message, MessagePage, TicketDetail, TicketHeading } from "../api/types";
-import { fileProblem, textLength, textProblem } from "../lib/attachment";
+import { FILES_LIMIT, MAX_FILES, fileProblem, quoted, refusal, textLength, textProblem } from "../lib/attachment";
 import { keepUnsaved, takeUnsaved } from "../lib/navigation";
 import {
-  StorageError, createAttempt, fileBytes, patience, readAttempt, readDraft, removeAttempt, removeDraft, restoreDraft,
-  sameFile, updateAttempt, writeDraft, type FileChange, type StoredAttempt, type StoredDraft, type WorkScope,
+  DRAFT_VERSION, StorageError, createAttempt, fileBytes, patience, readAttempt, readDraft, removeAttempt, removeDraft,
+  restoreDraft, sameFile, updateAttempt, writeDraft, type StoredAttempt, type StoredDraft, type WorkScope,
 } from "../lib/workStore";
 import { useProjectsStore } from "./projects";
 import { useSessionStore } from "./session";
@@ -33,8 +33,12 @@ export const ATTEMPT_RELOADED = "Ответ сервера не получен: 
 export const ATTEMPT_ELSEWHERE = "В другой вкладке есть отправка в этот диалог с неизвестным результатом: сначала повторите её или откажитесь от неё.";
 export const DRAFT_CONFLICT = "Черновик этого диалога меняли в другой вкладке: сохранён текст из этой вкладки.";
 export const STORAGE_OFF = "Браузер не сохраняет черновики и отправки: они пропадут после обновления страницы, черновики — и после смены проекта.";
-export const lostFile = (name: string): string =>
-  `Вложение «${name}» не удалось сохранить в браузере: после обновления страницы прикрепите его снова.`;
+export const lostFile = (names: string[]): string => names.length === 1
+  ? `Вложение ${quoted(names[0]!)} не удалось сохранить в браузере: после обновления страницы прикрепите его снова.`
+  : `Вложения ${names.map(quoted).join(", ")} не удалось сохранить в браузере: после обновления страницы прикрепите их снова.`;
+export const lostAfterReload = (names: string[]): string => names.length === 1
+  ? `Вложение ${quoted(names[0]!)} не сохранилось в браузере: прикрепите его снова.`
+  : `Вложения ${names.map(quoted).join(", ")} не сохранились в браузере: прикрепите их снова.`;
 /** Tells this tab's writes from another tab's. */
 const TAB = crypto.randomUUID();
 /** A dialogue opened again within this time shows its cached history at once, then refreshes it. */
@@ -47,14 +51,27 @@ export const CACHE_MESSAGES = 200;
 /** What the operator is writing in one dialogue: editable at any time. */
 export interface Draft {
   text: string;
-  file: File | null;
+  /** Up to MAX_FILES, in the order they were attached; the text is the first one's caption. */
+  files: File[];
+}
+
+const fileIds = new WeakMap<File, string>();
+/** A file's id in its draft: the key of its bytes in the browser's storage and of its card in the reply box. */
+export function fileId(file: File): string {
+  let id = fileIds.get(file);
+  if (!id) {
+    id = crypto.randomUUID();
+    fileIds.set(file, id);
+  }
+  return id;
 }
 
 /**
- * One press of "Отправить": a frozen copy of the text and the file with the idempotency key they went
- * under. Kept while its outcome is unknown (no answer in time, a lost connection, a proxy error): a
- * retry sends exactly this copy under this key, so the server returns the message it already saved or
- * saves it once. Editing the draft never changes it; the server refuses the key with other content.
+ * One message of a press of "Отправить": the text alone, or one file (the first with the text as its
+ * caption), a frozen copy with the idempotency key it went under. Kept while its outcome is unknown (no
+ * answer in time, a lost connection, a proxy error): a retry sends exactly this copy under this key, so
+ * the server returns the message it already saved or saves it once. Editing the draft never changes
+ * it; the server refuses the key with other content.
  */
 export interface SendAttempt {
   key: string;
@@ -73,12 +90,27 @@ export interface SendAttempt {
 }
 
 /**
- * How a send ended: the server took the message, refused it (nothing saved, the draft stays), or its
- * answer never came. "blocked": an attempt with an unknown outcome waits for a retry or for being
- * given up first; "invalid": the draft breaks a limit the server would refuse (said, nothing sent);
- * "skipped": nothing to send or another send runs.
+ * How a send ended: the server took the message (all the messages of the reply), refused it (nothing
+ * saved, the draft stays), or its answer never came. "blocked": an attempt with an unknown outcome
+ * waits for a retry or for being given up first; "invalid": the draft breaks a limit the server would
+ * refuse (said, nothing sent); "stopped": the operator stopped a reply's files part way; "skipped":
+ * nothing to send or another send runs.
  */
-export type SendOutcome = "accepted" | "rejected" | "unknown" | "blocked" | "invalid" | "skipped";
+export type SendOutcome = "accepted" | "rejected" | "unknown" | "blocked" | "invalid" | "stopped" | "skipped";
+
+/**
+ * A reply with several files on its way, or stopped part way, as the reply box tells it. `accepted`
+ * counts the messages the server took (not delivered to the customer: the history shows that).
+ */
+export interface SendProgress {
+  project: string;
+  ticket: string;
+  total: number;
+  accepted: number;
+  state: "running" | "stopping" | "stopped";
+  /** The file whose send did not end with the server taking it. */
+  stoppedAt: string | null;
+}
 
 /**
  * Only the application's own refusal (4xx) of an attempt's first request proves nothing was saved;
@@ -134,9 +166,15 @@ export const useChatStore = defineStore("chat", () => {
   /** Text edits waiting to be written, by `account/project/ticket`. */
   const pendingSaves = new Map<string, { timer: ReturnType<typeof setTimeout>; write: () => void }>();
   /** Files the storage could not keep (no room, a browser that keeps no files): the text is kept, these are not. */
-  const fileless = new Map<string, File>();
-  /** The file each stored draft holds, as this tab wrote it: a text edit does not write it again. */
-  const storedFiles = new Map<string, File | null>();
+  const fileless = new Map<string, Set<File>>();
+  /** The ids of the files whose bytes each stored draft holds, as this tab wrote them: they are not written again. */
+  const storedFiles = new Map<string, Set<string>>();
+  /** The removal of the stored record of an attempt the server took, by `project/ticket`: the reply's next file waits for it. */
+  const settling = new Map<string, Promise<void>>();
+  /** A reply with several files on its way or stopped part way (one at a time: a send holds the dialogue). */
+  const progress = ref<SendProgress | null>(null);
+  /** The draft's file whose attempt is being made or sent now: it cannot be removed meanwhile. */
+  const inFlight = shallowRef<File | null>(null);
   /** Each draft's writes, one after another: a file's bytes take time to read, the order must hold. */
   const writing = new Map<string, Promise<void>>();
   /**
@@ -216,22 +254,28 @@ export const useChatStore = defineStore("chat", () => {
     const failed = (error: unknown): void => {
       if (at === signedIn) storageFailed(error);
     };
-    let tried: File | null = null;
-    // The draft is read when its turn comes: the write holds the latest text and file.
+    let tried: File[] = [];
+    // The draft is read when its turn comes: the write holds the latest text and files.
     const write = async (): Promise<void> => {
-      const file = current.file;
-      const keepsFile = file !== null && file !== fileless.get(name);
+      const lost = fileless.get(name) ?? new Set<File>();
+      for (const file of lost) if (!current.files.includes(file)) lost.delete(file);
+      const files = current.files.filter((file) => !lost.has(file));
       const edit = unsaved.get(name)?.edit;
-      tried = keepsFile ? file : null;
+      const stored = storedFiles.get(name) ?? new Set<string>();
+      tried = files.filter((file) => !stored.has(fileId(file)));
+      const put = new Map<string, ArrayBuffer>();
+      for (const file of tried) put.set(fileId(file), await fileBytes(file));
+      const kept = new Set(files.map(fileId));
       const record: StoredDraft = {
-        v: 1, ...scope, text: current.text, file: keepsFile ? file : null, lostFile: file && !keepsFile ? file.name : null,
+        v: DRAFT_VERSION, ...scope, text: current.text, files: files.map((file) => ({ id: fileId(file), file })),
+        lostFiles: current.files.filter((file) => lost.has(file)).map((file) => file.name),
         rev: crypto.randomUUID(), tab: TAB, updatedAt: Date.now(),
       };
-      const change: FileChange = !keepsFile ? null : file === storedFiles.get(name) ? "same" : { bytes: await fileBytes(file) };
-      const { conflict, refile } = await writeDraft(record, draftRevs.get(name) ?? null, change);
+      const drop = [...stored].filter((id) => !kept.has(id));
+      const { conflict, refile } = await writeDraft(record, draftRevs.get(name) ?? null, { put, drop });
       draftRevs.set(name, record.rev);
       if (edit !== undefined && unsaved.get(name)?.edit === edit) unsaved.delete(name);
-      storedFiles.set(name, keepsFile && !refile ? file : null);
+      storedFiles.set(name, refile ? new Set(put.keys()) : kept);
       if (conflict) notify(DRAFT_CONFLICT);
       if (refile) void storeDraft(scope, current);
     };
@@ -239,16 +283,18 @@ export const useChatStore = defineStore("chat", () => {
       try {
         await write();
       } catch (error) {
-        // The file this write tried, not one attached since.
-        const file = tried;
-        if (!file || (error instanceof StorageError && error.problem === "unavailable")) {
+        // The files this write tried, not ones attached since.
+        const files = tried;
+        if (!files.length || (error instanceof StorageError && error.problem === "unavailable")) {
           failed(error);
           return;
         }
-        // No room, or a browser that keeps no files (WebKit in a private window): the text is kept,
-        // the file is named, to be attached again after a reload.
-        fileless.set(name, file);
-        notify(lostFile(file.name));
+        // No room, or a browser that keeps no files (WebKit in a private window): the text and the files
+        // stored before are kept, these are named, to be attached again after a reload.
+        const lost = fileless.get(name) ?? new Set<File>();
+        for (const file of files) lost.add(file);
+        fileless.set(name, lost);
+        notify(lostFile(files.map((file) => file.name)));
         await write().catch(failed);
       }
     });
@@ -259,20 +305,23 @@ export const useChatStore = defineStore("chat", () => {
    * Every write starts a new transaction, and the browser runs them in that order: an older text
    * never lands over a newer one.
    */
-  function queueDraft(id: string, delay: number): void {
+  function queueDraft(id: string, delay: number): Promise<void> {
     const projectId = project();
     const current = drafts.get(id);
     const scope = projectId ? scopeOf(projectId, id) : null;
-    if (!scope || !current) return;
+    if (!scope || !current) return Promise.resolve();
     const name = scopeName(scope);
     unsaved.set(name, { scope, draft: current, at: Date.now(), edit: ++edits });
+    let written = Promise.resolve();
     const write = (): void => {
       pendingSaves.delete(name);
-      void storeDraft(scope, current);
+      written = storeDraft(scope, current);
     };
     clearTimeout(pendingSaves.get(name)?.timer);
     if (delay <= 0) write();
     else pendingSaves.set(name, { timer: setTimeout(write, delay), write });
+    // A write made at once resolves when it has landed (or failed).
+    return written;
   }
 
   /**
@@ -291,14 +340,14 @@ export const useChatStore = defineStore("chat", () => {
    * A draft that has just been sent: a waiting write must not bring its text back. Another tab's draft
    * written since, with other content, stays.
    */
-  function dropDraft(scope: WorkScope, sent: Draft): void {
+  function dropDraft(scope: WorkScope, sent: Draft): Promise<void> {
     const name = scopeName(scope);
     clearTimeout(pendingSaves.get(name)?.timer);
     pendingSaves.delete(name);
     fileless.delete(name);
     unsaved.delete(name);
     // After any write already on its way: the removal comes last.
-    void enqueue(name, async () => {
+    return enqueue(name, async () => {
       try {
         if (await removeDraft(scope, draftRevs.get(name) ?? null, sent)) {
           draftRevs.delete(name);
@@ -332,9 +381,9 @@ export const useChatStore = defineStore("chat", () => {
     if (scope && pending.persisted) void updateAttempt(toRecord(scope, pending)).catch(storageFailed);
   }
 
-  function dropAttempt(pending: SendAttempt): void {
+  function dropAttempt(pending: SendAttempt): Promise<void> {
     const scope = scopeOf(pending.project, pending.ticket);
-    if (scope && pending.persisted) void removeAttempt(scope, pending.key).catch(storageFailed);
+    return scope && pending.persisted ? removeAttempt(scope, pending.key).catch(storageFailed) : Promise.resolve();
   }
 
   /** A dialogue's stored draft and attempt, read when it is first opened in this project. */
@@ -362,14 +411,16 @@ export const useChatStore = defineStore("chat", () => {
     });
     if (at !== signedIn || project() !== projectId) return;
     if (!drafts.has(id)) {
-      drafts.set(id, { text: stored?.text ?? "", file: stored?.file ?? null });
+      const files = (stored?.files ?? []).map((item) => {
+        fileIds.set(item.file, item.id);
+        return item.file;
+      });
+      drafts.set(id, { text: stored?.text ?? "", files });
       if (stored && scope) {
         draftRevs.set(scopeName(scope), stored.rev);
-        storedFiles.set(scopeName(scope), stored.file);
+        storedFiles.set(scopeName(scope), new Set(stored.files.map((item) => item.id)));
       }
-      if (stored?.lostFile && ticketId.value === id) {
-        workspace().show(`Вложение «${stored.lostFile}» не сохранилось в браузере: прикрепите его снова.`);
-      }
+      if (stored?.lostFiles.length && ticketId.value === id) workspace().show(lostAfterReload(stored.lostFiles));
     }
     if (kept && !attempts.has(slot(projectId, id))) {
       attempts.set(slot(projectId, id), fromRecord(kept));
@@ -560,30 +611,75 @@ export const useChatStore = defineStore("chat", () => {
     if (ticketId.value === id) jump.value = { ticket: id };
   }
 
-  /** Attaches a file, or removes it (null). A file the server would refuse leaves the draft as it was. */
-  function attach(file: File | null): boolean {
+  /**
+   * Attaches files after the draft's own, as one pick, drop or paste. Each is checked as the server
+   * would check it (lib/attachment.ts), and a reply takes MAX_FILES at most: the files refused are
+   * named with their reasons, the others are attached all the same, in the order given. The same file
+   * object again (a repeated event) is taken once; two files of the same name are two files. Returns
+   * how many were attached.
+   */
+  function attach(files: File[]): number {
     const current = draft.value;
-    if (!current) return false;
-    const problem = file && fileProblem(file);
-    if (problem) {
-      workspace().show(problem);
-      return false;
+    const id = ticketId.value;
+    if (!current || !id || !files.length) return 0;
+    const added: File[] = [];
+    const refused: { name: string; problem: string }[] = [];
+    for (const file of files) {
+      if (current.files.includes(file) || added.includes(file)) continue;
+      const problem = fileProblem(file) ?? (current.files.length + added.length >= MAX_FILES ? FILES_LIMIT : null);
+      if (problem) refused.push({ name: file.name, problem });
+      else added.push(file);
     }
-    current.file = file;
-    if (ticketId.value) queueDraft(ticketId.value, 0);
-    return true;
+    if (added.length) {
+      current.files.push(...added);
+      void queueDraft(id, 0);
+    }
+    if (refused.length) workspace().show(refusal(refused, files.length));
+    return added.length;
+  }
+
+  /**
+   * Removes a file from the open dialogue's draft. While a reply's files go, the ones still waiting can
+   * be removed (they are not sent then); the one on its way cannot.
+   */
+  function detach(file: File): void {
+    const current = draft.value;
+    const id = ticketId.value;
+    const queued = progress.value?.state === "running" || progress.value?.state === "stopping";
+    if (!current || !id || (sending.value && !queued) || file === inFlight.value) return;
+    const index = current.files.indexOf(file);
+    if (index < 0) return;
+    current.files.splice(index, 1);
+    void queueDraft(id, 0);
+    // A waiting file removed is no longer part of the reply; a reply stopped part way with nothing left is over.
+    const shown = progress.value;
+    if (shown?.ticket === id && shown.project === project()) {
+      if (queued) shown.total--;
+      else if (shown.state === "stopped" && !current.files.length) progress.value = null;
+    }
   }
 
   function edit(text: string): void {
     const current = draft.value;
     if (!current || !ticketId.value) return;
     current.text = text;
-    queueDraft(ticketId.value, DRAFT_SAVE_DELAY);
+    void queueDraft(ticketId.value, DRAFT_SAVE_DELAY);
+  }
+
+  /** Why the draft cannot go as it is (said before anything is sent), or null. */
+  function draftProblem(current: Draft): string | null {
+    if (current.files.length > MAX_FILES) return `${FILES_LIMIT} Уберите лишние.`;
+    for (const file of current.files) {
+      const problem = fileProblem(file);
+      if (problem) return current.files.length > 1 ? `${quoted(file.name)}: ${problem}` : problem;
+    }
+    return textProblem(current.text, current.files.length > 0);
   }
 
   /**
-   * Sends the open dialogue's draft as a new attempt. An attempt whose outcome is unknown comes first:
-   * the same text and file again send it once more under its key, anything else waits for it.
+   * Sends the open dialogue's draft (see run). An attempt whose outcome is unknown comes first: a draft
+   * that begins with the same text and file sends it once more under its key, then the rest; anything
+   * else waits for it.
    */
   async function send(): Promise<SendOutcome> {
     const generation = session.generation;
@@ -594,44 +690,117 @@ export const useChatStore = defineStore("chat", () => {
     const pending = attempts.get(slot(projectId, id));
     if (pending) {
       const text = current.text;
-      const file = current.file;
+      const head = current.files[0] ?? null;
       sending.value = true;
-      const matches = pending.text === text && await sameFile(pending.file, file);
+      const matches = pending.text === text && await sameFile(pending.file, head);
       if (generation !== session.generation) return "skipped";
       sending.value = false;
       if (attempts.get(slot(projectId, id)) !== pending || draft.value !== current || project() !== projectId) return "skipped";
-      if (matches && current.text === text && current.file === file) {
-        workspace().show();
-        return deliver(pending);
+      if (!matches || current.text !== text || (current.files[0] ?? null) !== head) {
+        workspace().show(SEND_BLOCKED);
+        return "blocked";
       }
-      workspace().show(SEND_BLOCKED);
-      return "blocked";
+    } else if (!textLength(current.text) && !current.files.length) {
+      return "skipped";
     }
-    if (!textLength(current.text) && !current.file) return "skipped";
     // Said before anything is sent: the draft stays as it is, to be fixed.
-    const problem = (current.file && fileProblem(current.file)) || textProblem(current.text, current.file);
+    const problem = draftProblem(current);
     if (problem) {
       workspace().show(problem);
       return "invalid";
     }
+    workspace().show();
+    return run(current, pending ?? null);
+  }
+
+  /**
+   * Sends a draft: its text alone, or its files one after another, each an attempt and a message of
+   * its own, the text as the first one's caption. `first` is the attempt with an unknown outcome the
+   * draft begins with: it goes again under its key. A file starts only once the server took the one
+   * before and the draft no longer holds it; any other outcome stops the reply, and what is left stays
+   * in the draft to be sent again. A file removed meanwhile is not sent; one attached later is not part
+   * of this send. The history is refreshed once, at the end.
+   */
+  async function run(current: Draft, first: SendAttempt | null): Promise<SendOutcome> {
+    const generation = session.generation;
+    const id = ticketId.value!;
+    const projectId = project()!;
+    const key = slot(projectId, id);
+    const planned = [...current.files];
+    progress.value = planned.length > 1
+      ? { project: projectId, ticket: id, total: planned.length, accepted: 0, state: "running", stoppedAt: null }
+      : null;
+    const shown = progress.value;
+    let outcome: SendOutcome = "accepted";
+    let previous: string | null = null;
+    let taken = 0;
+    let file: File | null = null;
+    sending.value = true;
+    try {
+      for (let index = 0; index < Math.max(planned.length, 1); index++) {
+        file = planned[index] ?? null;
+        if (index > 0) {
+          if (shown?.state === "stopping") {
+            outcome = "stopped";
+            file = null;
+            break;
+          }
+          if (drafts.get(id) !== current || !current.files.includes(file!)) continue;
+        }
+        inFlight.value = file;
+        const pending: SendAttempt | "blocked" | "skipped" = index === 0 && first ? first : await begin(id, projectId, index === 0 ? current.text : "", file, previous);
+        if (typeof pending === "string") {
+          outcome = pending;
+          break;
+        }
+        previous = pending.key;
+        const result = await deliver(pending, true);
+        if (result !== "accepted") {
+          outcome = result;
+          break;
+        }
+        taken++;
+        // The next file's attempt is stored once the draft no longer holds this one: a reload in between
+        // never offers it again. A storage that does not answer is not waited for.
+        await patience(settling.get(key) ?? Promise.resolve()).catch(() => undefined);
+        if (generation !== session.generation) return "skipped";
+      }
+    } finally {
+      if (generation === session.generation) {
+        inFlight.value = null;
+        sending.value = false;
+      }
+    }
+    if (generation !== session.generation || outcome === "skipped") return "skipped";
+    if (shown && progress.value === shown) {
+      if (outcome === "accepted") {
+        progress.value = null;
+      } else {
+        shown.state = "stopped";
+        shown.stoppedAt = file?.name ?? null;
+      }
+    }
+    if (taken) await refreshAfterSend(id, projectId, generation);
+    return outcome;
+  }
+
+  /** A new attempt, stored in the browser before its first request leaves; or why it does not go. */
+  async function begin(id: string, projectId: string, text: string, file: File | null, replaces: string | null): Promise<SendAttempt | "blocked" | "skipped"> {
+    const generation = session.generation;
     attempts.set(slot(projectId, id), {
-      key: crypto.randomUUID(), project: projectId, ticket: id, text: current.text, file: current.file,
+      key: crypto.randomUUID(), project: projectId, ticket: id, text, file,
       state: "sending", reason: "", tries: 0, createdAt: Date.now(), persisted: false,
     });
     const fresh = attempts.get(slot(projectId, id))!;
-    // The key is stored before the first request leaves: a reload in between keeps it. Nothing else
-    // starts meanwhile.
-    sending.value = true;
-    workspace().show();
+    // The key is stored before the first request leaves: a reload in between keeps it.
     const scope = scopeOf(projectId, id);
-    const storing = scope ? createAttempt(toRecord(scope, fresh)) : null;
+    const storing = scope ? createAttempt(toRecord(scope, fresh), replaces) : null;
     try {
       const { existing } = storing ? await patience(storing) : { existing: null };
       if (generation !== session.generation) return "skipped";
       if (existing) {
         // Another tab's attempt waits in this dialogue: it is taken over here instead of a second one.
         attempts.set(slot(projectId, id), fromRecord(existing));
-        sending.value = false;
         workspace().show(ATTEMPT_ELSEWHERE);
         return "blocked";
       }
@@ -649,10 +818,10 @@ export const useChatStore = defineStore("chat", () => {
         if (existing || generation !== session.generation) return;
         fresh.persisted = true;
         if (attempts.get(slot(projectId, id)) === fresh) storeAttempt(fresh);
-        else dropAttempt(fresh);
+        else void dropAttempt(fresh);
       }, () => undefined);
     }
-    return deliver(fresh);
+    return fresh;
   }
 
   /** Sends the open dialogue's attempt with an unknown outcome again: its own text, file and key. */
@@ -663,16 +832,24 @@ export const useChatStore = defineStore("chat", () => {
     return deliver(pending);
   }
 
+  /** Ends a reply's files after the one on its way: the rest stay in the draft. Nothing the server took is recalled. */
+  function stopSending(): void {
+    if (progress.value?.state === "running") progress.value.state = "stopping";
+  }
+
   /** The operator gives up an attempt with an unknown outcome (for example, seen in Telegram); the draft stays. */
   function forgetAttempt(): void {
     const pending = attempt.value;
     if (pending?.state !== "unknown") return;
     attempts.delete(slot(pending.project, pending.ticket));
-    dropAttempt(pending);
+    void dropAttempt(pending);
   }
 
-  /** One request of an attempt, bounded by its deadline; one at a time. */
-  async function deliver(pending: SendAttempt): Promise<SendOutcome> {
+  /**
+   * One request of an attempt, bounded by its deadline; one at a time. `queued`: a file of a reply
+   * (run), which holds `sending` and refreshes the history itself once its files are done.
+   */
+  async function deliver(pending: SendAttempt, queued = false): Promise<SendOutcome> {
     const generation = session.generation;
     const form = new FormData();
     form.set("text", pending.text);
@@ -694,7 +871,7 @@ export const useChatStore = defineStore("chat", () => {
         if (refused(error) && pending.tries === 1) {
           // Nothing was saved: the attempt is over and the draft is there to be fixed.
           attempts.delete(slot(pending.project, pending.ticket));
-          dropAttempt(pending);
+          void dropAttempt(pending);
           workspace().fail(error);
           return "rejected";
         }
@@ -712,12 +889,17 @@ export const useChatStore = defineStore("chat", () => {
       await accepted(pending);
     } finally {
       clearTimeout(deadline);
-      if (generation === session.generation) sending.value = false;
+      if (!queued && generation === session.generation) sending.value = false;
     }
     if (generation !== session.generation) return "skipped";
-    // The message is saved: a history or list that fails to reload says so, never as a failed send.
+    if (!queued) await refreshAfterSend(pending.ticket, pending.project, generation);
+    return "accepted";
+  }
+
+  /** The messages are saved: a history or list that fails to reload says so, never as a failed send. */
+  async function refreshAfterSend(id: string, projectId: string, generation: number): Promise<void> {
     try {
-      if (ticketId.value === pending.ticket && project() === pending.project) {
+      if (ticketId.value === id && project() === projectId) {
         await syncMessages();
         await useTicketsStore().sync();
         await syncDetail();
@@ -725,10 +907,15 @@ export const useChatStore = defineStore("chat", () => {
     } catch (error) {
       if (generation === session.generation) workspace().show(`${SEND_REFRESH_FAILED}: ${error instanceof Error && error.message ? error.message : FAILED}`);
     }
-    return "accepted";
   }
 
-  /** The server took the attempt: it ends, and so does a draft that still holds just what was sent. */
+  /**
+   * The server took the attempt: it ends, and what it sent leaves the draft: its file (the same bytes,
+   * a copy read back after a reload too), and its text unless edited since. A draft that no longer
+   * holds the file keeps its text as well. The attempt's stored record goes after the draft's write: a
+   * reload in between brings the attempt back as unknown (the history then settles it), never its
+   * file as one still to send.
+   */
   async function accepted(pending: SendAttempt): Promise<void> {
     const generation = session.generation;
     const key = slot(pending.project, pending.ticket);
@@ -738,16 +925,37 @@ export const useChatStore = defineStore("chat", () => {
     sending.value = true;
     try {
       const current = project() === pending.project ? drafts.get(pending.ticket) : undefined;
-      const file = current?.file ?? null;
-      const matches = current?.text === pending.text && await sameFile(file, pending.file);
+      let sent: File | null = current && pending.file && current.files.includes(pending.file) ? pending.file : null;
+      for (const file of current && pending.file && !sent ? [...current.files] : []) {
+        if (await sameFile(file, pending.file)) {
+          sent = file;
+          break;
+        }
+      }
       if (generation !== session.generation || attempts.get(key) !== pending) return;
       attempts.delete(key);
-      dropAttempt(pending);
-      if (matches && project() === pending.project && drafts.get(pending.ticket) === current
-        && current?.text === pending.text && current.file === file) {
-        drafts.set(pending.ticket, { text: "", file: null });
+      let written = Promise.resolve();
+      if (current && project() === pending.project && drafts.get(pending.ticket) === current) {
+        const before: Draft = { text: current.text, files: [...current.files] };
+        const index = sent ? current.files.indexOf(sent) : -1;
+        if (!pending.file || index >= 0) {
+          if (index >= 0) current.files.splice(index, 1);
+          if (current.text === pending.text) current.text = "";
+        }
         const scope = scopeOf(pending.project, pending.ticket);
-        if (scope) dropDraft(scope, { text: pending.text, file: pending.file });
+        if (scope && !current.text && !current.files.length) written = dropDraft(scope, before);
+        else if (current.text !== before.text || current.files.length !== before.files.length) written = queueDraft(pending.ticket, 0);
+      }
+      const removed = written.then(() => dropAttempt(pending), () => dropAttempt(pending));
+      settling.set(key, removed);
+      void removed.finally(() => {
+        if (settling.get(key) === removed) settling.delete(key);
+      });
+      // One more file of a reply sent part way: a reply stopped, then settled, is done once all are taken.
+      const shown = progress.value;
+      if (shown && shown.project === pending.project && shown.ticket === pending.ticket) {
+        shown.accepted++;
+        if (shown.state === "stopped" && shown.accepted >= shown.total) progress.value = null;
       }
     } finally {
       if (!wasSending && generation === session.generation) sending.value = false;
@@ -855,6 +1063,7 @@ export const useChatStore = defineStore("chat", () => {
     folderMove.busy = false;
     folderMove.status = "";
     viewer.value = null;
+    inFlight.value = null;
     drafts.clear();
     cache.clear();
     historyUpdatedAt = 0;
@@ -868,6 +1077,8 @@ export const useChatStore = defineStore("chat", () => {
     signedIn++;
     reset();
     attempts.clear();
+    progress.value = null;
+    settling.clear();
     draftRevs.clear();
     fileless.clear();
     storedFiles.clear();
@@ -912,7 +1123,8 @@ export const useChatStore = defineStore("chat", () => {
   return {
     ticketId, detail, heading, messages, ordered, before, hasOlder, loadingOlder, opening, sending,
     lifecycleBusy, unavailable, folderMove, change, viewer, drafts, draft, attempts, attempt, closed, jump,
-    open, close, syncDetail, syncMessages, loadOlder, markRead, jumpToLatest, attach, edit, send, retrySend, forgetAttempt,
-    retry, toggleClosed, moveToFolder, flushDrafts, reset,
+    progress, inFlight,
+    open, close, syncDetail, syncMessages, loadOlder, markRead, jumpToLatest, attach, detach, edit, send, retrySend, stopSending,
+    forgetAttempt, retry, toggleClosed, moveToFolder, flushDrafts, reset,
   };
 });

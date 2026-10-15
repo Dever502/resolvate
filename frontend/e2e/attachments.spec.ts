@@ -1,7 +1,7 @@
 import type { Page } from "@playwright/test";
 import { SESSION_COOKIE, expect, scenario, stubLog, test } from "./fixtures";
 
-const preview = (page: Page) => page.getByRole("group", { name: "Выбранное вложение" });
+const preview = (page: Page) => page.getByRole("group", { name: "Выбранные вложения" });
 const picker = (page: Page) => page.locator('input[type="file"]');
 const input = (page: Page) => page.getByRole("textbox", { name: "Текст ответа" });
 type Resources = { decoded: number; closed: number; urls: number };
@@ -69,21 +69,24 @@ for (const mime of ["image/jpeg", "image/png", "image/webp"]) {
   });
 }
 
-test("replacement, removal, per-dialogue draft and send keep attachments in sync", async ({ page, consoleErrors }) => {
+test("adding, removal, per-dialogue draft and send keep attachments in sync", async ({ page, consoleErrors }) => {
   void consoleErrors;
+  const names = preview(page).locator(".attachment-preview-name");
   await input(page).fill("Черновик с фото");
   await picker(page).setInputFiles(await photo(page));
   await expect(preview(page).locator("canvas")).toBeVisible();
+  // Another file goes after it: the photo keeps its preview, drawn once.
   await picker(page).setInputFiles({ name: "terms.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-test") });
-  await expect(preview(page)).toContainText("terms.pdf");
-  await expect(preview(page).locator("canvas")).toBeHidden();
+  await expect(names).toHaveText(["photo.png", "terms.pdf"]);
+  await expect(preview(page).locator("canvas:visible")).toHaveCount(1);
   await page.getByRole("option", { name: /Борис Петров/ }).click();
   await expect(preview(page)).toBeHidden();
   await picker(page).setInputFiles({ name: "voice.opus", mimeType: "audio/opus", buffer: Buffer.from("OggS") });
   await page.getByRole("option", { name: /Анна Смирнова/ }).click();
-  await expect(preview(page)).toContainText("terms.pdf");
+  await expect(names).toHaveText(["photo.png", "terms.pdf"]);
   await expect(input(page)).toHaveValue("Черновик с фото");
-  await page.getByRole("button", { name: "Убрать вложение" }).click();
+  await page.getByRole("button", { name: "Убрать вложение «photo.png»" }).click();
+  await page.getByRole("button", { name: "Убрать вложение «terms.pdf»" }).click();
   await expect(preview(page)).toBeHidden();
   await expect(input(page)).toHaveValue("Черновик с фото");
   await picker(page).setInputFiles(await photo(page));
@@ -93,7 +96,7 @@ test("replacement, removal, per-dialogue draft and send keep attachments in sync
   await expect(input(page)).toHaveValue("");
   await page.getByRole("option", { name: /Борис Петров/ }).click();
   await expect(preview(page)).toContainText("voice.opus");
-  expect(await resources(page)).toEqual({ decoded: 2, closed: 2, urls: 0 });
+  expect(await resources(page)).toEqual({ decoded: 3, closed: 3, urls: 0 });
 });
 
 test("failed send retains the preview and retry sends the same file and key", async ({ page, consoleErrors }) => {
@@ -144,11 +147,13 @@ test("document/audio/video cards, invalid images and unsupported formats are saf
     await expect(preview(page)).toContainText(name);
     await expect(preview(page)).toContainText(label);
     await expect(preview(page).locator("canvas")).toBeHidden();
+    if (name !== "voice.opus") await page.getByRole("button", { name: "Убрать вложение" }).click();
   }
   // An unsupported format is refused before it reaches the preview; the attached file stays.
   await picker(page).setInputFiles({ name: "drawing.svg", mimeType: "image/svg+xml", buffer: Buffer.from("<svg/>") });
   await expect(page.getByRole("alert")).toContainText("Этот формат не поддерживается.");
   await expect(preview(page)).toContainText("voice.opus");
+  await page.getByRole("button", { name: "Убрать вложение" }).click();
   await picker(page).setInputFiles({ name: "broken.png", mimeType: "image/png", buffer: Buffer.from("invalid image") });
   await expect(preview(page)).toContainText("Предпросмотр недоступен");
   await page.getByRole("button", { name: "Убрать вложение" }).click();
