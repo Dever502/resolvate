@@ -17,10 +17,11 @@ import SendAttemptNotice from "./SendAttemptNotice.vue";
 // came stays above the box until it is sent again under its key or given up, and editing the draft
 // never changes it. Several files go one after another, the text as the first one's caption; the box
 // says how far they got. Enter sends, Shift+Enter starts a new line, IME composition is left alone.
-// "/" at the start searches the quick replies: arrows move through them, Enter inserts one, Esc
-// closes the list. Focus stays in the text field. The "/" button opens the same list with a search
-// field of its own, which then holds the focus; Esc gives it back to the button, and a reply goes
-// where the cursor (or the selection) was.
+// Quick replies are one picker (QuickReplies.vue), opened by "/" typed into an empty reply box or by
+// the button: its own search field takes the focus, the "/" never reaches the draft, and the search
+// never changes it. Arrows move through the options, Enter chooses, Esc closes. A reply goes where the
+// cursor (or the selection) was when the picker opened, the cursor right after it, and the focus back
+// to the text field; a picker closed without a reply gives the focus back to where it was opened.
 const ACCEPT = "image/jpeg,image/png,image/webp,video/mp4,video/quicktime,application/pdf,audio/ogg,audio/opus,.ogg,.opus";
 const MAX_HEIGHT = 160;
 const REPLY_DELAY = 180;
@@ -32,6 +33,7 @@ const field = useTemplateRef<HTMLTextAreaElement>("field");
 const tray = useTemplateRef<HTMLElement>("tray");
 const picker = useTemplateRef<HTMLInputElement>("picker");
 const attemptNotice = useTemplateRef<{ focusRetry: () => void }>("attempt-notice");
+const repliesPicker = useTemplateRef<{ focusSearch: () => void }>("replies-picker");
 const listId = useId();
 const repliesButtonId = useId();
 const limitId = useId();
@@ -40,14 +42,16 @@ const replies = ref<QuickReply[]>([]);
 const groups = ref<QuickReplyGroup[]>([]);
 const group = ref<QuickReplyGroup | null>(null);
 const query = ref("");
-const buttonMode = ref(false);
 const loading = ref(false);
 /** The last lookup failed: said in the list, with a retry, apart from "nothing found". */
 const failed = ref(false);
 const hasMore = ref(false);
 const options = computed(() => group.value ? replies.value : groups.value.map(g => ({ id: g.id, text: '/' + g.name })));
+/** The text field's selection when the picker opened: a reply takes its place. */
 let insertAt = 0;
 let insertEnd = 0;
+/** Where the picker was opened from: a picker closed without a reply gives the focus back there. */
+let openedFrom: "field" | "button" = "field";
 const active = ref(0);
 let replyTimer: ReturnType<typeof setTimeout> | undefined;
 let sequence = 0;
@@ -125,12 +129,11 @@ function closeReplies(): void {
   failed.value = false;
 }
 
-/** Closes the list: focus goes back where it was opened from, the "/" button or the text field. */
+/** Closes the picker without a reply: the focus goes back where it was opened from. */
 async function dismiss(): Promise<void> {
-  const fromButton = buttonMode.value;
   closeReplies();
   await nextTick();
-  if (fromButton) document.getElementById(repliesButtonId)?.focus();
+  if (openedFrom === "button") document.getElementById(repliesButtonId)?.focus();
   else field.value?.focus();
 }
 
@@ -168,33 +171,50 @@ function search(value: string, more = false): void {
   }, REPLY_DELAY);
 }
 
-function onInput(event: Event): void {
-  const value = (event.target as HTMLTextAreaElement).value;
-  chat.edit(value);
-  resize();
-  if (!/^\/[^\n]*$/.test(value)) { closeReplies(); return; }
-  buttonMode.value = false;
-  repliesOpen.value = true;
-  const prefix = group.value ? `/${group.value.name} ` : "";
-  if (prefix && value.startsWith(prefix)) search(value.slice(prefix.length));
-  else { group.value = null; search(value.slice(1)); }
-}
-
-async function openByButton(): Promise<void> {
-  if (repliesOpen.value) { closeReplies(); return; }
+/** Opens the picker at its groups with an empty search; the text field's selection is kept for the reply. */
+async function openReplies(from: "field" | "button"): Promise<void> {
   insertAt = field.value?.selectionStart ?? text.value.length;
   insertEnd = field.value?.selectionEnd ?? insertAt;
-  buttonMode.value = true;
+  openedFrom = from;
+  group.value = null;
   repliesOpen.value = true;
   search("");
   await nextTick();
-  document.querySelector<HTMLInputElement>('[aria-label="Поиск готовых ответов"]')?.focus();
+  repliesPicker.value?.focusSearch();
 }
 
-function back(): void {
+/** "/" typed into an empty reply box (not a "/" inside text, a paste or an IME composition). */
+const slashIntoEmpty = (event: InputEvent): boolean =>
+  !event.isComposing && event.inputType === "insertText" && event.data === "/" && text.value === "" && Boolean(chat.draft);
+
+function onBeforeInput(event: InputEvent): void {
+  if (!slashIntoEmpty(event)) return;
+  event.preventDefault();
+  void openReplies("field");
+}
+
+function onInput(event: Event): void {
+  const element = event.target as HTMLTextAreaElement;
+  // A keyboard whose "/" could not be cancelled (some on-screen ones): it is taken back out of the box.
+  if (event instanceof InputEvent && element.value === "/" && slashIntoEmpty(event)) {
+    element.value = "";
+    void openReplies("field");
+    return;
+  }
+  chat.edit(element.value);
+  resize();
+}
+
+function openByButton(): void {
+  if (repliesOpen.value) void dismiss();
+  else void openReplies("button");
+}
+
+async function back(): Promise<void> {
   group.value = null;
-  if (!buttonMode.value) chat.edit("/");
   search("");
+  await nextTick();
+  repliesPicker.value?.focusSearch();
 }
 
 async function choose(index: number): Promise<void> {
@@ -202,15 +222,17 @@ async function choose(index: number): Promise<void> {
   if (!group.value) {
     const selected = groups.value[index];
     if (!selected) return;
+    // Its replies, searched from an empty query; the focus stays in the search field.
     group.value = selected;
-    if (!buttonMode.value) chat.edit(`/${selected.name} `);
     search("");
     return;
   }
   const reply = replies.value[index];
   if (!reply) return;
-  const inserted = buttonMode.value;
-  const next = inserted ? text.value.slice(0, insertAt) + reply.text + text.value.slice(insertEnd) : reply.text;
+  const current = text.value;
+  const start = Math.min(insertAt, current.length);
+  const end = Math.min(Math.max(insertEnd, start), current.length);
+  const next = current.slice(0, start) + reply.text + current.slice(end);
   if (textLength(next) > limit.value) { workspace.show(`Ответ вместе с черновиком превышает ${limit.value} символов.`); return; }
   chat.edit(next);
   closeReplies();
@@ -218,31 +240,29 @@ async function choose(index: number): Promise<void> {
   resize();
   field.value?.focus();
   // The cursor goes right after the reply, where the operator goes on writing.
-  if (inserted) field.value?.setSelectionRange(insertAt + reply.text.length, insertAt + reply.text.length);
+  field.value?.setSelectionRange(start + reply.text.length, start + reply.text.length);
 }
 
-function onKeyDown(event: KeyboardEvent): void {
+/** Keys of the picker's search field: they move through the options and choose; nothing is sent. */
+function onPickerKeyDown(event: KeyboardEvent): void {
   // Safari ends a composition with a keydown that is no longer "composing" but still has keyCode 229.
   if (event.isComposing || event.keyCode === 229) return;
   const list = options.value;
-  if (repliesOpen.value) {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation(); // Closes the list, not the customer card too.
-      void dismiss();
-      return;
-    }
-    if ((event.key === "ArrowDown" || event.key === "ArrowUp") && list.length) {
-      event.preventDefault();
-      active.value = (active.value + (event.key === "ArrowDown" ? 1 : -1) + list.length) % list.length;
-      return;
-    }
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      void choose(active.value);
-      return;
-    }
+  if (event.key === "Escape") {
+    event.preventDefault();
+    event.stopPropagation(); // Closes the list, not the customer card too.
+    void dismiss();
+  } else if ((event.key === "ArrowDown" || event.key === "ArrowUp") && list.length) {
+    event.preventDefault();
+    active.value = (active.value + (event.key === "ArrowDown" ? 1 : -1) + list.length) % list.length;
+  } else if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    void choose(active.value);
   }
+}
+
+function onKeyDown(event: KeyboardEvent): void {
+  if (event.isComposing || event.keyCode === 229) return;
   if (event.key === "Enter" && !event.shiftKey) {
     event.preventDefault();
     void submit();
@@ -326,10 +346,10 @@ onUnmounted(closeReplies);
 
 <template>
   <div class="composer-area">
-    <QuickReplies v-if="repliesOpen" :id="listId" :replies="options" :active="active"
-      :group="group?.name ?? ''" :loading="loading" :failed="failed" :more="hasMore" :query="query" :button-mode="buttonMode"
+    <QuickReplies v-if="repliesOpen" ref="replies-picker" :id="listId" :replies="options" :active="active"
+      :group="group?.name ?? ''" :loading="loading" :failed="failed" :more="hasMore" :query="query"
       @choose="choose" @hover="active = $event" @back="back" @close="dismiss" @retry="search(query)"
-      @search="search" @more="search(query, true)" @keydown="onKeyDown" />
+      @search="search" @more="search(query, true)" @keydown="onPickerKeyDown" />
     <SendAttemptNotice v-if="unresolved" ref="attempt-notice" :attempt="unresolved" :sending="chat.sending"
       @retry="retryAttempt" @forget="forgetAttempt" />
     <div v-if="files.length" ref="tray" class="attachment-tray" role="group"
@@ -356,23 +376,23 @@ onUnmounted(closeReplies);
         <Icon name="attach" />
       </IconButton>
       <input ref="picker" type="file" :accept="ACCEPT" multiple hidden @change="onFile" />
-      <IconButton :id="repliesButtonId" class="icon-button" label="Готовые ответы" :disabled="chat.sending || !chat.draft"
-        :aria-expanded="repliesOpen" :aria-controls="repliesOpen ? listId : undefined" @click="openByButton"><span aria-hidden="true">/</span></IconButton>
+      <IconButton :id="repliesButtonId" class="icon-button" label="Готовые ответы" description="Или «/» в пустом поле ответа"
+        :disabled="chat.sending || !chat.draft" aria-keyshortcuts="/" :aria-expanded="repliesOpen"
+        :aria-controls="repliesOpen ? listId : undefined" @click="openByButton"><Icon name="chat" /></IconButton>
       <textarea
         ref="field"
         :value="text"
         rows="1"
         placeholder="Написать ответ…"
         aria-label="Текст ответа"
-        aria-autocomplete="list"
-        :aria-controls="repliesOpen && !buttonMode ? listId : undefined"
-        :aria-activedescendant="repliesOpen && !buttonMode && options.length ? `${listId}-${active}` : undefined"
         :disabled="chat.sending"
         :readonly="!chat.draft"
         :aria-invalid="overLimit || undefined"
         :aria-describedby="overLimit ? limitId : undefined"
+        @beforeinput="onBeforeInput"
         @input="onInput"
         @keydown="onKeyDown"
+        @focus="repliesOpen && closeReplies()"
         @paste="onPaste"
       />
       <!-- aria-disabled, not disabled: a disabled button drops keyboard focus while the request runs. -->
@@ -387,7 +407,7 @@ onUnmounted(closeReplies);
       </template>
     </p>
     <div class="composer-hint">
-      <span><kbd>/</kbd> Готовые ответы</span>
+      <span><kbd>/</kbd> в пустом поле — готовые ответы</span>
       <span class="compact:hidden"><kbd>Enter</kbd> отправить · <kbd>Shift Enter</kbd> новая строка</span>
     </div>
   </div>

@@ -144,11 +144,13 @@ test.describe("operator flow", () => {
     await expect(history(page).locator("article.outgoing").last()).toContainText("черновик для Бориса");
   });
 
-  test("quick replies: / lists them, arrows move, Enter inserts, Esc closes, focus stays in the text field", async ({ page, context, request, consoleErrors }) => {
+  test("quick replies: / opens them, arrows move, Enter inserts, Esc closes, the focus comes back to the text field", async ({ page, context, request, consoleErrors }) => {
     void consoleErrors;
     await start(page, context, request);
     await openAnna(page);
     await composer(page).pressSequentially("/");
+    const search = page.getByRole("combobox", { name: "Поиск готовых ответов" });
+    await expect(search).toBeFocused();
     const groups = page.getByRole("listbox", { name: "Группы ответов" });
     await expect(groups.getByRole("option")).toHaveCount(2);
     await page.keyboard.press("Enter");
@@ -159,7 +161,7 @@ test.describe("operator flow", () => {
     await page.keyboard.press("ArrowDown");
     const second = replies.getByRole("option").nth(1);
     await expect(second).toHaveAttribute("aria-selected", "true");
-    await expect(composer(page)).toHaveAttribute("aria-activedescendant", (await second.getAttribute("id"))!);
+    await expect(search).toHaveAttribute("aria-activedescendant", (await second.getAttribute("id"))!);
     await page.keyboard.press("Enter");
     await expect(replies).toBeHidden();
     await expect(composer(page)).toHaveValue("Спасибо за обращение, хорошего дня.");
@@ -170,7 +172,8 @@ test.describe("operator flow", () => {
     await expect(page.getByText("Ничего не найдено")).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(replies).toBeHidden();
-    await expect(composer(page)).toHaveValue("/нет такого");
+    await expect(composer(page)).toHaveValue("");
+    await expect(composer(page)).toBeFocused();
   });
 
   test("quick reply button preserves the draft and searches only the chosen group", async ({ page, context, request, consoleErrors }) => {
