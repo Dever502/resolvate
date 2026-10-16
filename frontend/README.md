@@ -227,7 +227,10 @@ unit/PostgreSQL-тесты и smoke-проверка Docker-образа доп�
   `styles/app.css`. Обёртка в `components/ui/` нужна, когда повторяется поведение, а не разметка.
 - Составные контролы — на Reka UI: она даёт клавиатуру, фокус и ARIA. Подписи кнопок-иконок —
   Tooltip (`ui/IconButton`); окна — Dialog (`ui/ModalDialog`, просмотр фото); выбор проекта и папки
-  диалога — DropdownMenu с RadioGroup (`ui/MenuSelect`); вкладки папок — Tabs; список диалогов — Listbox
+  диалога — DropdownMenu с RadioGroup (`ui/MenuSelect`); вкладки папок — Tabs (ряд прокручивается колесом, тачпадом, касанием и
+  клавиатурой без видимого скроллбара; край, за которым есть вкладки, гаснет на 18 px — `data-beyond-start/-end`
+  по `scroll` и `ResizeObserver` ряда и вкладок; `scroll-padding-inline` держит фокус вне затухания; в forced-colors
+  без маски); список диалогов — Listbox
   (одна остановка Tab, стрелки, Home/End, поиск по буквам). Готовые ответы — свой лёгкий список при поле
   ответа (`composer/QuickReplies`), один и тот же при открытии «/» в пустом поле ответа и кнопкой: фокус в его
   поле поиска (combobox), активный вариант — `aria-activedescendant`; «/» в черновик не попадает, поиск его не

@@ -139,6 +139,10 @@
   --color-rating: var(--rating);
 }
 
+/* Registered, so the folder tabs' edge fades (.folder-tabs) grow and shrink smoothly instead of switching. */
+@property --folder-fade-start { syntax: "<length>"; inherits: false; initial-value: 0px; }
+@property --folder-fade-end { syntax: "<length>"; inherits: false; initial-value: 0px; }
+
 @layer base {
   :root {
     font-family: var(--font-sans);
@@ -318,7 +322,19 @@
   .search-field { position: relative; }
   .search-field .icon { position: absolute; top: 50%; left: .6875rem; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
   .search-field input { width: 100%; min-height: 36px; padding: .5rem .625rem .5rem 2.25rem; border: 1px solid transparent; border-radius: var(--radius-control); background: var(--subtle); color: var(--text); font-size: .875rem; }
-  .folder-tabs { display: flex; flex: 1; min-width: 0; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+  /* The folder tabs scroll sideways (wheel, trackpad, touch, keyboard) with no visible scrollbar: an edge with tabs
+     beyond it fades out over 18 px instead (FolderTabs.vue sets data-beyond-start / -end from the scroll position and
+     sizes). Tabs that all fit: no fade. The scroll padding keeps a focused or selected tab clear of the fades. */
+  .folder-tabs {
+    --folder-fade-start: 0px;
+    --folder-fade-end: 0px;
+    display: flex; flex: 1; min-width: 0; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; scroll-padding-inline: 1.25rem;
+    mask-image: linear-gradient(to right, transparent, #000 var(--folder-fade-start), #000 calc(100% - var(--folder-fade-end)), transparent);
+    transition: --folder-fade-start .15s ease, --folder-fade-end .15s ease;
+  }
+  .folder-tabs::-webkit-scrollbar { display: none; }
+  .folder-tabs[data-beyond-start] { --folder-fade-start: 18px; }
+  .folder-tabs[data-beyond-end] { --folder-fade-end: 18px; }
   .folder-tab { position: relative; flex: 0 0 auto; max-width: 11rem; min-width: 44px; min-height: 44px; padding: .625rem .75rem; overflow: hidden; border: 0; border-radius: 0; background: transparent; color: var(--muted); font-size: .9375rem; font-weight: 500; white-space: nowrap; text-overflow: ellipsis; }
   .folder-tab:hover:not(:disabled) { background: var(--subtle); }
   .folder-tab:not([data-state="active"]):hover:not(:disabled) { color: var(--text); }
@@ -595,6 +611,8 @@
   .ticket[data-state="checked"], .folder-tab[data-state="active"] { outline: 2px solid Highlight; outline-offset: -2px; }
   .composer, .reply-options, .menu, .dialog, .picker-options { border: 1px solid ButtonText; }
   .drop-zone { border-color: Highlight; }
+  /* Text at full contrast: no fade at the folder tabs' edges. */
+  .folder-tabs { mask-image: none; }
   .reply-options-body[data-scrolled] { mask-image: none; }
   .catalog-group[data-state="checked"], .catalog-scope button[aria-pressed="true"] { outline: 2px solid Highlight; outline-offset: -2px; }
   .section-tab[data-state="active"], .picker-option[data-highlighted] { outline: 2px solid Highlight; outline-offset: -2px; }
