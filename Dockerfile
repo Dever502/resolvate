@@ -16,7 +16,8 @@ RUN apk add --no-cache --upgrade \
     'libcrypto3>=3.5.8-r0' \
     'libssl3>=3.5.8-r0' \
     'libuuid>=2.42.3-r1' \
-    'pcre2>=10.49-r0'
+    'pcre2>=10.49-r0' \
+    'zlib>=1.3.2-r1'
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_NO_CACHE=1 \
@@ -42,7 +43,11 @@ RUN apk add --no-cache --upgrade \
     'libssl3>=3.5.8-r0' \
     'libuuid>=2.42.3-r1' \
     'pcre2>=10.49-r0' \
+    'zlib>=1.3.2-r1' \
     ffmpeg
+
+# Dependencies are installed in the builder by uv; no installer is needed at runtime.
+RUN /usr/local/bin/python -m pip uninstall --yes pip
 
 ARG BUILD_DATE=unknown
 ARG VCS_REF=unknown

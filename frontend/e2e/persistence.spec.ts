@@ -133,6 +133,9 @@ test.describe("the tab's place", () => {
     await page.reload();
     await expect(project(page)).toHaveAccessibleName("Текущий проект Поддержка");
     await expect(page.getByRole("alert")).toHaveText("Проект, открытый до обновления страницы, больше недоступен.");
+    // Drain intercepted refreshes before closing the context: WebKit may still
+    // have a route.fetch in flight after the visible state has settled.
+    await page.unrouteAll({ behavior: "wait" });
   });
 
   test("a dialogue gone or forbidden leaves the list, says so, and keeps its draft", async ({ page, context, request, consoleErrors }) => {

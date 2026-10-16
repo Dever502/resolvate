@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 
+import anyio
 from fastapi import HTTPException
 
 
@@ -47,20 +48,31 @@ class ConsoleEvents:
         heartbeat: float = 10,
         debounce: float = 0.5,
     ) -> AsyncIterator[str]:
+        async def reauthorize() -> None:
+            # StreamingResponse cancels its AnyIO scope on disconnect. Let this
+            # short DB check finish and return its connections before honoring
+            # that level cancellation; otherwise asyncpg cleanup is cancelled too.
+            # Never keep a cancel scope open across an async-generator yield.
+            try:
+                with anyio.CancelScope(shield=True):
+                    await authorize()
+            finally:
+                await anyio.lowlevel.checkpoint_if_cancelled()
+
         try:
             # Revalidate after subscribing to close the connection-establishment race.
-            await authorize()
+            await reauthorize()
             yield "event: ready\ndata: {}\n\n"
             while True:
                 try:
                     await asyncio.wait_for(item.changed.wait(), heartbeat)
                 except TimeoutError:
-                    await authorize()
+                    await reauthorize()
                     yield ": heartbeat\n\n"
                     continue
                 await asyncio.sleep(debounce)
                 item.changed.clear()
-                await authorize()
+                await reauthorize()
                 yield "event: change\ndata: {}\n\n"
         except HTTPException as error:
             yield f'event: revoked\ndata: {{"status":{error.status_code}}}\n\n'

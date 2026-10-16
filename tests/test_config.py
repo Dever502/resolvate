@@ -298,6 +298,23 @@ def test_trusted_proxy_ips_accept_cidr_and_reject_malformed_values() -> None:
         settings(api_trusted_proxy_ips="not-an-ip")
 
 
+@pytest.mark.parametrize("source", ["environment", "dotenv"])
+def test_trusted_proxy_ips_documented_json_format(
+    source: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    value = '["127.0.0.1", "10.0.0.0/24"]'
+    if source == "environment":
+        monkeypatch.setenv("API_TRUSTED_PROXY_IPS", value)
+        configured = settings()
+    else:
+        monkeypatch.delenv("API_TRUSTED_PROXY_IPS", raising=False)
+        env_file = tmp_path / ".env"
+        env_file.write_text(f"API_TRUSTED_PROXY_IPS='{value}'\n", encoding="utf-8")
+        configured = settings(_env_file=env_file)
+
+    assert configured.api_trusted_proxy_ips == frozenset({"127.0.0.1", "10.0.0.0/24"})
+
+
 def test_postgres_database_url_rejects_placeholder_password() -> None:
     with pytest.raises(ValidationError, match="DATABASE_URL"):
         settings(database_url="postgresql+asyncpg://resolvate:resolvate@postgres:5432/resolvate")
