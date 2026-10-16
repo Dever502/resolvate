@@ -19,6 +19,13 @@ const field = useTemplateRef<HTMLInputElement>("field");
 const body = useTemplateRef<HTMLElement>("body");
 /** The results are scrolled away from their start: the fade at their top edge is shown. */
 const scrolled = ref(false);
+let pointerSelection: number | undefined;
+
+function hover(index: number): void {
+  if (index === props.active) return;
+  pointerSelection = index;
+  emit("hover", index);
+}
 
 function onScroll(): void {
   scrolled.value = (body.value?.scrollTop ?? 0) > 0;
@@ -32,6 +39,11 @@ watch(() => props.replies, async () => {
 
 // The active option comes fully into view: the body's scroll padding keeps it clear of the fade.
 watch(() => props.active, async (index) => {
+  const fromPointer = pointerSelection === index;
+  pointerSelection = undefined;
+  // Wheel scrolling moves options under the pointer. Scrolling that hovered
+  // option back into view can cancel the browser's ongoing wheel scroll.
+  if (fromPointer) return;
   await nextTick();
   document.getElementById(`${props.id}-${index}`)?.scrollIntoView({ block: "nearest" });
 });
@@ -75,7 +87,7 @@ defineExpose({ focusSearch: () => field.value?.focus() });
           :aria-selected="index === active"
           @mousedown.prevent
           @click="emit('choose', index)"
-          @pointermove="index !== active && emit('hover', index)"
+          @pointermove="hover(index)"
         >
           {{ reply.text.slice(0, 240) }}
         </div>

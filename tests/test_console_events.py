@@ -4,13 +4,15 @@ import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
 
+import anyio
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, select, text, update
 from test_console import console as console
 from test_console import customer
 
 from resolvate.console_events import ConsoleEvents, Subscription
+from resolvate.database import Database
 from resolvate.models import DeliveryOutbox, DeliveryStatus, ProjectMember, Ticket, TicketMessage
 from resolvate.outbox_repository import OutboxRepository
 
@@ -116,6 +118,54 @@ async def test_connection_limits_and_cancellation() -> None:
     with pytest.raises(asyncio.CancelledError):
         await waiting
     assert not hub.listeners
+
+
+@pytest.mark.parametrize("phase", ["ready", "change", "heartbeat"])
+async def test_disconnect_finishes_in_progress_authorization(
+    migrated_postgres_database_url: str, phase: str
+) -> None:
+    database = Database(migrated_postgres_database_url)
+    hub = database.console_events
+    item = hub.subscribe("project", "account")
+    entered = anyio.Event()
+    release = anyio.Event()
+    completed = False
+    calls = 0
+    emitted: list[str] = []
+
+    async def authorize() -> None:
+        nonlocal calls, completed
+        calls += 1
+        if calls != (1 if phase == "ready" else 2):
+            return
+        async with database.session() as session:
+            await session.execute(text("SELECT 1"))
+            entered.set()
+            await release.wait()
+            await session.execute(text("SELECT 1"))
+        completed = True
+
+    async def consume() -> None:
+        async for message in hub.stream(item, authorize, heartbeat=0.001, debounce=0):
+            emitted.append(message)
+            if phase == "change":
+                hub.publish("project")
+
+    try:
+        with anyio.fail_after(5):
+            async with anyio.create_task_group() as tasks:
+                tasks.start_soon(consume)
+                await entered.wait()
+                # StreamingResponse disconnects cancel an AnyIO scope repeatedly at
+                # checkpoints, including asyncpg's transaction/connection cleanup.
+                tasks.cancel_scope.cancel()
+                release.set()
+        assert completed
+        assert not hub.listeners
+        assert emitted == ([] if phase == "ready" else ["event: ready\ndata: {}\n\n"])
+        assert database.engine.sync_engine.pool.checkedout() == 0  # type: ignore[attr-defined]
+    finally:
+        await database.dispose()
 
 
 async def test_changes_publish_only_after_commit_and_do_not_echo_receipts(console: Any) -> None:
