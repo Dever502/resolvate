@@ -154,7 +154,10 @@ test.describe("folder tabs", () => {
 
   test("a wider and a narrower sidebar: the fades follow the room, from overflow to all fitting and back", async ({ page, context, request, consoleErrors }) => {
     void consoleErrors;
-    await page.setViewportSize({ width: 1600, height: 900 });
+    // End caps the sidebar at one third of the viewport. Leave room for all four
+    // tabs (including the stub's VIP), padding and the management button even
+    // when CI's font metrics differ. At 1600px they can still overflow by 4px.
+    await page.setViewportSize({ width: 1920, height: 900 });
     await start(page, context, request, LONG.slice(0, 2));
     await resizer(page).focus();
     await page.keyboard.press("Home");
