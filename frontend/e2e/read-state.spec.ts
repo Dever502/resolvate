@@ -202,8 +202,9 @@ test.describe("scrolling", () => {
     await expect(badge(page, ANNA)).toHaveText(/1$/);
     const since = Date.now();
     await history(page).hover();
-    // Wheel scrolling, as the operator would: many scroll events on the way, one receipt at the end.
-    for (let step = 0; step < 12; step++) await page.mouse.wheel(0, 800);
+    // Wheel scrolling, as the operator would: many scroll events on the way, one receipt at the end. Firefox
+    // scrolls about 335 px a notch whatever the delta, so there are notches enough for the whole history.
+    for (let step = 0; step < 20; step++) await page.mouse.wheel(0, 800);
     await expect.poll(async () => (await view(page)).lastInView).toBe(true);
     await expect(badge(page, ANNA)).toBeHidden({ timeout: 3000 });
     for (let step = 0; step < 4; step++) await page.mouse.wheel(0, 200);

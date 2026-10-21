@@ -3,12 +3,13 @@ import {
   DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuPortal,
   DropdownMenuRoot, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "reka-ui";
-import { computed, nextTick, ref, useTemplateRef } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, useTemplateRef } from "vue";
 import { initials } from "../../lib/initials";
 import { clearNavigation } from "../../lib/navigation";
 import { clearWork, countWork, patience } from "../../lib/workStore";
 import { useChatStore } from "../../stores/chat";
 import { useSessionStore } from "../../stores/session";
+import { useWorkspaceStore } from "../../stores/workspace";
 import ConfirmDialog from "../ui/ConfirmDialog.vue";
 import Icon from "../ui/Icon.vue";
 import PasswordDialog from "./PasswordDialog.vue";
@@ -27,6 +28,9 @@ let passwordRequested = false;
 const kept = ref({ drafts: 0, attempts: 0 });
 const leaveOpen = ref(false);
 let leaveRequested = false;
+/** Gone from the page (a phone's drawer closed while signing out): a late error goes to the workspace's notice. */
+let gone = false;
+onBeforeUnmount(() => { gone = true; });
 
 function requestPassword(): void {
   passwordRequested = true;
@@ -82,7 +86,8 @@ async function leave(): Promise<void> {
     open.value = false;
     leaveOpen.value = false;
   } catch (caught) {
-    error.value = caught instanceof Error ? caught.message : String(caught);
+    if (gone) useWorkspaceStore().fail(caught);
+    else error.value = caught instanceof Error ? caught.message : String(caught);
   } finally {
     busy.value = false;
   }

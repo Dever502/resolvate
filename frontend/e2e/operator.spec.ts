@@ -336,17 +336,19 @@ test.describe("operator flow", () => {
     }
   });
 
-  test("a short phone screen keeps the account footer on screen and scrolls the list inside", async ({ page, context, request, consoleErrors }) => {
+  test("a short phone screen scrolls the list inside and keeps the drawer's account on screen", async ({ page, context, request, consoleErrors }) => {
     void consoleErrors;
     await page.setViewportSize({ width: 375, height: 400 });
     await start(page, context, request, { many: true });
     await expect(list(page).getByRole("option")).toHaveCount(50);
-    const trigger = page.getByRole("button", { name: /Меню аккаунта:/ });
-    await expect(trigger).toBeInViewport({ ratio: 1 });
     expect(await list(page).evaluate((element) => {
       const scroller = element.closest("#ticket-list") as HTMLElement;
       return scroller.scrollHeight > scroller.clientHeight;
     })).toBe(true);
+    // The account is at the foot of the app bar's drawer.
+    await page.getByRole("button", { name: /^Меню\. Проект:/ }).click();
+    const trigger = page.getByRole("button", { name: /Меню аккаунта:/ });
+    await expect(trigger).toBeInViewport({ ratio: 1 });
     await trigger.click();
     const menu = page.getByRole("menu");
     const box = (await menu.boundingBox())!;

@@ -12,6 +12,8 @@ export const iconPaths = {
   logout: "M9 4H4v16h5m5-13 5 5-5 5m-7-5h12",
   chat: "M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-6 4V6a2 2 0 0 1 2-2Zm2 5h10M7 13h6",
   back: "m14 6-6 6 6 6",
+  // Opens the narrow screens' menu (workspace/MobileMenu.vue).
+  menu: "M4 7h16M4 12h16M4 17h16",
   info: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Zm0-11v6m0-10h.01",
   close: "m6 6 12 12M6 18 18 6",
   // A paperclip at 45°: one wire turning three times (radii 5.75, 4 and 2.3), centred in the box.

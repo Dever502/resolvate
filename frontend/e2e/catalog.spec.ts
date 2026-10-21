@@ -16,8 +16,14 @@ async function start(page: Page, context: BrowserContext, request: APIRequestCon
 
 const opener = (page: Page) => page.getByRole("button", { name: "Управление готовыми ответами", exact: true });
 
+/** The catalog opens from the app bar, or on a narrow screen from the app bar's drawer. */
 async function openCatalog(page: Page): Promise<Locator> {
-  await opener(page).click();
+  if (page.viewportSize()!.width <= 700) {
+    await page.getByRole("button", { name: /^Меню\. Проект:/ }).click();
+    await page.getByRole("dialog", { name: "Resolvate" }).getByRole("button", { name: "Каталог готовых ответов" }).click();
+  } else {
+    await opener(page).click();
+  }
   const catalog = page.getByRole("dialog", { name: "Готовые ответы" });
   await expect(catalog).toBeVisible();
   return catalog;
@@ -164,7 +170,7 @@ test.describe("quick replies catalog", () => {
     await expectNoSidewaysScroll(page, catalog, 900);
   });
 
-  test("app bar opener: one normal space between the two words of its label, only the second word on a phone", async ({ page, context, request, consoleErrors }) => {
+  test("app bar opener: one normal space between the two words of its label; a phone names the catalog in full, in the drawer", async ({ page, context, request, consoleErrors }) => {
     void consoleErrors;
     // Widths of the button and of its copy holding `text` as one plain text run: they differ when the
     // label spaces its words wider than the font does (the flex gap of .quiet between two flex items).
@@ -183,9 +189,10 @@ test.describe("quick replies catalog", () => {
     const [desktop, desktopText] = await widths("Готовые ответы");
     expect(desktop).toBeCloseTo(desktopText, 0);
     await page.setViewportSize({ width: 375, height: 812 });
-    expect(await opener(page).innerText()).toBe("ответы");
-    const [phone, phoneText] = await widths("ответы");
-    expect(phone).toBeCloseTo(phoneText, 0);
+    // No half label in the phone's bar: the drawer says what the action does.
+    await expect(opener(page)).toHaveCount(0);
+    await page.getByRole("button", { name: /^Меню\. Проект:/ }).click();
+    await expect(page.getByRole("dialog", { name: "Resolvate" }).getByRole("button", { name: "Каталог готовых ответов" })).toBeVisible();
   });
 
   test("groups: a new group opens by itself; the server's refusals stay with the typed name; rename and delete use the group menu", async ({ page, context, request, consoleErrors }) => {

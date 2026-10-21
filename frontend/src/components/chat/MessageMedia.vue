@@ -4,12 +4,14 @@ import { useChatStore } from "../../stores/chat";
 
 // An attachment in a message. Photos show a server-made thumbnail and open the original in the
 // viewer; if the thumbnail fails, the original still opens. Voice, video and documents play or
-// download from the same protected address.
+// download from the same protected address. A photo's and a video's room is set before they load
+// (app.css, .image-preview and .bubble video): a late thumbnail or video size moves nothing in the
+// history. The thumbnail still loads lazily.
 const props = defineProps<{ url: string; mime: string }>();
 const chat = useChatStore();
-const thumbnailFailed = ref(false);
+const thumbnail = ref<"loading" | "loaded" | "failed">("loading");
 watch(() => props.url, () => {
-  thumbnailFailed.value = false;
+  thumbnail.value = "loading";
 });
 </script>
 
@@ -19,9 +21,11 @@ watch(() => props.url, () => {
     class="image-preview"
     type="button"
     aria-label="Открыть изображение"
+    :data-state="thumbnail"
     @click="chat.viewer = url"
   >
-    <img v-if="!thumbnailFailed" :src="`${url}/thumbnail`" alt="Фото из переписки" loading="lazy" @error="thumbnailFailed = true" />
+    <img v-if="thumbnail !== 'failed'" :src="`${url}/thumbnail`" alt="Фото из переписки" loading="lazy"
+      @load="thumbnail = 'loaded'" @error="thumbnail = 'failed'" />
     <span v-else class="muted">Открыть изображение</span>
   </button>
   <audio v-else-if="mime.startsWith('audio/')" :src="url" controls preload="metadata" aria-label="Голосовое сообщение" />

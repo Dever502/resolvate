@@ -156,6 +156,8 @@ test.describe("workspace frame", () => {
       await context.addCookies([SESSION_COOKIE]);
       await page.setViewportSize(viewport);
       await page.goto(CONSOLE);
+      // A phone has the account at the foot of the app bar's drawer.
+      if (viewport.width <= 700) await page.getByRole("button", { name: /^Меню\. Проект:/ }).click();
       await page.getByRole("button", { name: /Меню аккаунта:/ }).click();
       await page.getByRole("menuitem", { name: "Выйти" }).click();
       // Exactly one notice is visible inside the account menu, including on phones.

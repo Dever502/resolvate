@@ -118,6 +118,55 @@ test.describe("folder tabs", () => {
     await expectEdges(page, false, true);
   });
 
+  test("the wheel works from all of the row's band, the tabs' text, edges and the space above them; not from the folders button or the list", async ({ page, context, request, consoleErrors }) => {
+    void consoleErrors;
+    await start(page, context, request);
+    const view = (await tabs(page).boundingBox())!;
+    const search = (await page.getByRole("searchbox", { name: "Поиск клиента" }).boundingBox())!;
+    const button = (await manage(page).boundingBox())!;
+    const reset = () => tabs(page).evaluate((element) => { element.scrollLeft = 0; });
+    // Every point an operator takes for the folder row, from under the search field to the row's line.
+    const points: [string, number, number][] = [
+      ["a tab's text", view.x + 30, view.y + view.height / 2],
+      ["a tab's foot", view.x + 30, view.y + view.height - 2],
+      ["the faded end", view.x + view.width - 6, view.y + view.height / 2],
+      ["the space above the tabs", view.x + 60, (search.y + search.height + view.y) / 2],
+      ["between the tabs and the button", (view.x + view.width + button.x) / 2, view.y + view.height / 2],
+    ];
+    for (const [where, x, y] of points) {
+      await reset();
+      await expectEdges(page, false, true);
+      await page.mouse.move(x, y);
+      await page.mouse.wheel(0, 120);
+      await expect.poll(async () => (await row(page)).left, { message: where }).toBeGreaterThan(0);
+      await expectEdges(page, true, true);
+    }
+    // To both ends with the wheel alone.
+    await page.mouse.move(view.x + 60, view.y + view.height / 2);
+    for (let step = 0; step < 30; step++) await page.mouse.wheel(0, 200);
+    await expect.poll(async () => { const state = await row(page); return state.left >= state.max - 1; }).toBe(true);
+    await expectEdges(page, true, false);
+    for (let step = 0; step < 30; step++) await page.mouse.wheel(0, -200);
+    await expect.poll(async () => (await row(page)).left).toBe(0);
+    // At an end the wheel is not taken: the event goes on as the page's own.
+    const taken = (deltaY: number) => page.evaluate(({ x, y, deltaY }) => {
+      const target = document.elementFromPoint(x, y)!;
+      const event = new WheelEvent("wheel", { deltaY, bubbles: true, cancelable: true });
+      target.dispatchEvent(event);
+      return event.defaultPrevented;
+    }, { x: view.x + 60, y: view.y + view.height / 2, deltaY });
+    expect(await taken(-120)).toBe(false);
+    expect(await taken(120)).toBe(true);
+    // Over the folders button and over the list the wheel moves no tab.
+    for (const [x, y] of [[button.x + button.width / 2, button.y + button.height / 2], [view.x + 60, view.y + view.height + 60]] as const) {
+      await reset();
+      await page.mouse.move(x, y);
+      await page.mouse.wheel(0, 120);
+      await page.waitForTimeout(100);
+      expect((await row(page)).left).toBe(0);
+    }
+  });
+
   test("the keyboard: every focused tab is all in view, clear of the fades; the chosen one keeps its mark", async ({ page, context, request, consoleErrors }) => {
     void consoleErrors;
     await start(page, context, request);
@@ -249,6 +298,21 @@ test.describe("folder tabs", () => {
   test.describe("in Chromium only", () => {
     // Skipped before the test's fixtures start: a page never opened has no CSP probe to check.
     test.skip(({ browserName }) => browserName !== "chromium", "Touch gestures (CDP) and forced colors are emulated in Chromium.");
+
+    test("a mouse wheel through Chromium's own scroll input (gesture phases, latching) scrolls the row from its whole band", async ({ page, context, request, consoleErrors }) => {
+      void consoleErrors;
+      await start(page, context, request);
+      const view = (await tabs(page).boundingBox())!;
+      const search = (await page.getByRole("searchbox", { name: "Поиск клиента" }).boundingBox())!;
+      const client = await context.newCDPSession(page);
+      for (const y of [view.y + view.height / 2, (search.y + search.height + view.y) / 2]) {
+        await tabs(page).evaluate((element) => { element.scrollLeft = 0; });
+        await client.send("Input.synthesizeScrollGesture", {
+          x: Math.round(view.x + 60), y: Math.round(y), xDistance: 0, yDistance: -240, gestureSourceType: "mouse", speed: 2000,
+        });
+        await expect.poll(async () => (await row(page)).left).toBeGreaterThan(100);
+      }
+    });
 
     test("a touch swipe scrolls the row", async ({ page, context, request, consoleErrors }) => {
       void consoleErrors;

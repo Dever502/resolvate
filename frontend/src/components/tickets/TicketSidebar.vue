@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { TabsContent, TabsRoot } from "reka-ui";
 import { computed, onMounted, onUnmounted, useTemplateRef } from "vue";
+import { useNarrowScreen } from "../../composables/useNarrowScreen";
 import { useProjectsStore } from "../../stores/projects";
 import { useTicketsStore } from "../../stores/tickets";
 import { useWorkspaceStore } from "../../stores/workspace";
@@ -11,10 +12,14 @@ import Icon from "../ui/Icon.vue";
 import IconButton from "../ui/IconButton.vue";
 import TicketList from "./TicketList.vue";
 
-// The list column: active dialogues or the archive, search, folder tabs, pages of 50, account.
+// The list column: active dialogues or the archive, search, folder tabs, pages of 50, account. On
+// narrow screens the account lives in the app bar's drawer, and the blocks above the list keep to one
+// spacing scale (8 px above the title, 4 px between the title, search and folder rows): the list gets
+// the height.
 const tickets = useTicketsStore();
 const projects = useProjectsStore();
 const workspace = useWorkspaceStore();
+const narrow = useNarrowScreen();
 const heading = useTemplateRef<HTMLElement>("heading");
 const tab = computed(() => tickets.folderFilter || ALL);
 let searchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -60,8 +65,8 @@ function more(): void {
     <!-- Narrow screens hide the conversation panel, so its notices show above the list there.
          A project list that failed to load is explained by the empty state instead. -->
     <p v-if="workspace.notice && (projects.loaded || !projects.error)" class="notice hidden narrow:block" role="alert">{{ workspace.notice }}</p>
-    <header class="flex items-center justify-between gap-3 pt-6 pr-4 pb-1.5 pl-5 narrow:pt-5">
-      <h1 ref="heading" class="m-0 text-[1.625rem] font-[650] tracking-[-.025em] outline-none" tabindex="-1">
+    <header class="flex items-center justify-between gap-3 pt-6 pr-4 pb-1.5 pl-5 narrow:pt-2 narrow:pb-0 narrow:pl-4">
+      <h1 ref="heading" class="m-0 text-[1.625rem] font-[650] tracking-[-.025em] outline-none narrow:text-[1.375rem]" tabindex="-1">
         {{ tickets.archived ? "Архив" : "Диалоги" }}
       </h1>
       <IconButton
@@ -80,7 +85,7 @@ function more(): void {
       activation-mode="manual"
       @update:model-value="chooseFolder"
     >
-      <div class="px-4 pt-3 pb-1">
+      <div class="px-4 pt-3 pb-1 narrow:pt-1 narrow:pb-0">
         <div class="search-field">
           <Icon name="search" />
           <input
@@ -105,6 +110,6 @@ function more(): void {
         </div>
       </TabsContent>
     </TabsRoot>
-    <AccountFooter />
+    <AccountFooter v-if="!narrow" />
   </aside>
 </template>

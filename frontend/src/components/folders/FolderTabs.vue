@@ -14,7 +14,9 @@ import IconButton from "../ui/IconButton.vue";
 import FoldersDialog from "./FoldersDialog.vue";
 
 // Folder filter of the list: Reka tabs (arrows move, Enter or Space picks; the list is the panel)
-// and the button that manages the team's folders. A vertical wheel scrolls the tabs sideways. The row
+// and the button that manages the team's folders. A vertical wheel anywhere over the row (the tabs and
+// the band above them, up to the search field) scrolls the tabs sideways; over the folders button it
+// stays the page's. The row
 // scrolls without a visible scrollbar: an edge with tabs beyond it fades out instead (styles/app.css,
 // .folder-tabs), and a focused tab is brought fully in, clear of the fades.
 const folders = useFoldersStore();
@@ -60,9 +62,16 @@ function reveal(event: FocusEvent): void {
   (event.target as HTMLElement).closest('[role="tab"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 
+/**
+ * A vertical wheel over the row scrolls the tabs sideways; a sideways one (a trackpad) is the
+ * browser's own. At an end, or with nothing to scroll, the wheel is left alone. Ctrl+wheel zooms.
+ */
 function onWheel(event: WheelEvent): void {
   const element = list.value?.$el as HTMLElement | undefined;
   if (!element || event.ctrlKey || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
+  // The folders button beside the tabs is not part of the row's scrolling.
+  const target = event.target as Element;
+  if (!element.contains(target) && target.closest("button")) return;
   const scale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? element.clientWidth : 1;
   const next = Math.max(0, Math.min(element.scrollWidth - element.clientWidth, element.scrollLeft + event.deltaY * scale));
   if (next !== element.scrollLeft) {
@@ -80,10 +89,12 @@ watch(() => tickets.folderFilter, async () => {
 </script>
 
 <template>
-  <div class="my-2 flex shrink-0 items-center gap-1.5 border-b border-border">
+  <!-- The space above the tabs is the row's own padding: the wheel scrolls the tabs from all of the band
+       between the search field and the row's line, not only from the 44 px of the tabs. -->
+  <div class="mb-2 flex shrink-0 items-center gap-1.5 border-b border-border pt-2 narrow:mb-1 narrow:pt-1" @wheel="onWheel">
     <TabsList ref="list" class="folder-tabs" aria-label="Папки диалогов" loop
       :data-beyond-start="beyond.start || undefined" :data-beyond-end="beyond.end || undefined"
-      @wheel="onWheel" @scroll.passive="measure" @focusin="reveal">
+      @scroll.passive="measure" @focusin="reveal">
       <TabsTrigger :value="ALL" class="folder-tab" :disabled="!projects.currentId">Все</TabsTrigger>
       <TabsTrigger
         v-for="folder in folders.folders"
