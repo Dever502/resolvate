@@ -79,9 +79,35 @@ test("adding, removal, per-dialogue draft and send keep attachments in sync", as
   await picker(page).setInputFiles({ name: "terms.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-test") });
   await expect(names).toHaveText(["photo.png", "terms.pdf"]);
   await expect(preview(page).locator("canvas:visible")).toHaveCount(1);
+  // Hold a real IndexedDB transaction: the next dialogue cannot finish reading
+  // its draft until released, regardless of the browser/CI machine's speed.
+  await page.evaluate(async () => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("resolvate-work");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    let held = true;
+    Object.assign(window, { __releaseAttachmentDraft: () => { held = false; } });
+    const transaction = db.transaction("drafts", "readwrite");
+    transaction.oncomplete = () => db.close();
+    const store = transaction.objectStore("drafts");
+    const keepAlive = () => {
+      store.get(["test", "hold", "read"]).onsuccess = () => { if (held) keepAlive(); };
+    };
+    keepAlive();
+  });
   await page.getByRole("option", { name: /Борис Петров/ }).click();
   await expect(preview(page)).toBeHidden();
+  await expect(input(page)).not.toBeEditable();
+  await expect(page.getByRole("button", { name: "Прикрепить файл" })).toBeDisabled();
+  await page.evaluate(() => (window as unknown as { __releaseAttachmentDraft: () => void }).__releaseAttachmentDraft());
+  // setInputFiles bypasses the visible attach button: wait for the same ready
+  // state a user needs, not just for the previous dialogue's preview to vanish.
+  await expect(input(page)).toBeEditable();
+  await expect(page.getByRole("button", { name: "Прикрепить файл" })).toBeEnabled();
   await picker(page).setInputFiles({ name: "voice.opus", mimeType: "audio/opus", buffer: Buffer.from("OggS") });
+  await expect(preview(page)).toContainText("voice.opus");
   await page.getByRole("option", { name: /Анна Смирнова/ }).click();
   await expect(names).toHaveText(["photo.png", "terms.pdf"]);
   await expect(input(page)).toHaveValue("Черновик с фото");
