@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useSessionStore } from "../../stores/session";
 import { useThemeStore } from "../../stores/theme";
+import { useWorkspaceStore } from "../../stores/workspace";
 import AccountFooter from "./AccountFooter.vue";
 
 enableAutoUnmount(afterEach);
@@ -61,5 +62,7 @@ describe("account menu", () => {
     expect(session.status).toBe("signed-in");
     expect(document.querySelector('[role="alert"]')?.textContent).toBe("Не удалось выйти.");
     expect(logout.hasAttribute("aria-disabled")).toBe(false);
+    wrapper.unmount();
+    expect(useWorkspaceStore().notice).toBe("Не удалось выйти.");
   });
 });

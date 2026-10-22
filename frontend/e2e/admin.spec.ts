@@ -550,23 +550,19 @@ test.describe("staff", () => {
 });
 
 test.describe("layout and keyboard", () => {
-  test("narrow screens: the administration icon has a tooltip and the windows take the whole screen", async ({ page, context, request, consoleErrors }) => {
+  test("narrow screens: administration is in the app bar's drawer and the windows take the whole screen", async ({ page, context, request, consoleErrors }) => {
     void consoleErrors;
     for (const width of [375, 320]) {
       await page.setViewportSize({ width, height: 740 });
       await start(page, context, request, { account: "admin" });
-      const trigger = adminMenu(page);
-      await expect(trigger).toBeVisible();
+      // No administration button in the bar: its actions are in the drawer, by role.
+      await expect(adminMenu(page)).toHaveCount(0);
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
-      await expect(trigger).toHaveAccessibleName("Управление");
-      await trigger.focus();
-      await expect(page.locator(".admin-trigger-label")).toBeVisible();
-      await page.mouse.move(1, 700);
-      await trigger.blur();
-      await expect(page.locator(".admin-trigger-label")).toBeHidden();
-      await trigger.hover();
-      await expect(page.locator(".admin-trigger-label")).toBeVisible();
-      const dialog = await openWindow(page, "Проекты");
+      await page.getByRole("button", { name: /^Меню\. Проект:/ }).click();
+      const drawer = page.getByRole("dialog", { name: "Resolvate" });
+      await drawer.getByRole("button", { name: "Проекты" }).click();
+      const dialog = page.getByRole("dialog", { name: "Проекты" });
+      await expect(dialog).toBeVisible();
       const box = (await dialog.boundingBox())!;
       expect(Math.round(box.width)).toBe(width);
       expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
@@ -580,9 +576,8 @@ test.describe("layout and keyboard", () => {
     await start(page, context, request, { account: "admin" });
     const trigger = adminMenu(page);
     await trigger.focus();
-    // The text is visible on wide screens: no extra label.
+    // The text is visible on wide screens.
     await expect(trigger).toContainText("Управление");
-    await expect(page.locator(".admin-trigger-label")).toBeHidden();
     await page.keyboard.press("Enter");
     await expect(page.getByRole("menuitem", { name: "Проекты" })).toBeFocused();
     await page.keyboard.press("ArrowDown");

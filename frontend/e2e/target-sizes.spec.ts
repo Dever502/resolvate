@@ -84,12 +84,27 @@ function inspect(element: Element, { selector, field }: { selector: string; fiel
   // A popup intentionally covers the conversation. Compare neighbours within the same UI layer,
   // while the point probes above still catch anything that actually steals this control's clicks.
   const layer = (node: Element): Element | null => node.closest('.reply-options, [role="dialog"], [role="menu"]');
+  // What of a control is on the screen: its box cut by the ancestors that clip it (a photo scrolled under the
+  // history's top edge does not reach the controls above the history).
+  const shown = (node: Element): { left: number; top: number; right: number; bottom: number } => {
+    let { left, top, right, bottom } = node.getBoundingClientRect();
+    for (let parent = node.parentElement; parent; parent = parent.parentElement) {
+      const css = getComputedStyle(parent);
+      if (css.overflowX === "visible" && css.overflowY === "visible") continue;
+      const clip = parent.getBoundingClientRect();
+      left = Math.max(left, clip.left);
+      top = Math.max(top, clip.top);
+      right = Math.min(right, clip.right);
+      bottom = Math.min(bottom, clip.bottom);
+    }
+    return { left, top, right, bottom };
+  };
   const overlaps: string[] = [];
   for (const other of document.querySelectorAll(selector)) {
     if (other === holder || owns(other) || other.contains(element)) continue;
     if (layer(other) !== layer(element)) continue;
-    const box = other.getBoundingClientRect();
-    if (box.width < 1 || box.height < 1) continue;
+    const box = shown(other);
+    if (box.right - box.left < 1 || box.bottom - box.top < 1) continue;
     const hit = document.elementFromPoint((box.left + box.right) / 2, (box.top + box.bottom) / 2);
     if (!hit || !(hit === other || other.contains(hit))) continue;
     const across = Math.min(right, box.right) - Math.max(left, box.left);
@@ -172,19 +187,35 @@ for (const screen of SCREENS) {
       const coarse = await start(page, context, request);
       // Touch is emulated with a coarse primary pointer in every engine; a mouse keeps a fine one.
       expect(coarse).toBe(touch);
-      const project = page.getByRole("button", { name: /^Текущий проект/ });
+      // A narrow screen's app bar is one menu button with the current project; its drawer has the rest.
+      const project = narrow ? page.getByRole("button", { name: /^Меню\. Проект:/ }) : page.getByRole("button", { name: /^Текущий проект/ });
       await calm(page);
       await expectTarget("project menu", project);
-      await expectTarget("administration menu", page.getByRole("button", { name: "Управление", exact: true }));
-      await expectTarget("quick replies catalog", page.getByRole("button", { name: "Управление готовыми ответами" }));
+      if (!narrow) {
+        await expectTarget("administration menu", page.getByRole("button", { name: "Управление", exact: true }));
+        await expectTarget("quick replies catalog", page.getByRole("button", { name: "Управление готовыми ответами" }));
+      }
       await expectTarget("archive", page.getByRole("button", { name: "Открыть архив" }));
       await expectTarget("folder tab with a one-letter name", page.getByRole("tab", { name: "Я", exact: true }));
       await expectTarget("folders", page.getByRole("button", { name: "Управление общими папками" }));
       // The caption "Текущий проект" is part of the project's button.
       await press(project, "top left", touch);
-      await expect(page.getByRole("menu")).toBeVisible();
-      await page.keyboard.press("Escape");
-      await expect(page.getByRole("menu")).toBeHidden();
+      if (narrow) {
+        const drawer = page.getByRole("dialog", { name: "Resolvate" });
+        await expect(drawer).toBeVisible();
+        await calm(page);
+        await expectTarget("close the menu", drawer.getByRole("button", { name: "Закрыть меню" }));
+        await expectTarget("project in the menu", drawer.getByRole("radio", { name: /Второй проект/ }));
+        await expectTarget("projects in the menu", drawer.getByRole("button", { name: "Проекты" }));
+        await expectTarget("quick replies catalog", drawer.getByRole("button", { name: "Каталог готовых ответов" }));
+        await expectTarget("account menu", drawer.getByRole("button", { name: /Меню аккаунта:/ }));
+        await page.keyboard.press("Escape");
+        await expect(drawer).toBeHidden();
+      } else {
+        await expect(page.getByRole("menu")).toBeVisible();
+        await page.keyboard.press("Escape");
+        await expect(page.getByRole("menu")).toBeHidden();
+      }
 
       await page.getByRole("listbox", { name: "Диалоги" }).getByRole("option", { name: /Анна Смирнова/ }).click();
       await expect(page.getByRole("textbox", { name: "Текст ответа" })).toBeEditable();
@@ -265,8 +296,16 @@ for (const screen of SCREENS) {
     test("windows: projects, folders, a confirmation, the quick replies catalog with its panes", async ({ page, context, request, consoleErrors }) => {
       void consoleErrors;
       await start(page, context, request);
-      await page.getByRole("button", { name: "Управление", exact: true }).click();
-      await page.getByRole("menuitem", { name: "Проекты" }).click();
+      // A narrow screen has administration and the catalog in the app bar's drawer.
+      const drawer = page.getByRole("dialog", { name: "Resolvate" });
+      const menu = page.getByRole("button", { name: /^Меню\. Проект:/ });
+      if (narrow) {
+        await menu.click();
+        await drawer.getByRole("button", { name: "Проекты" }).click();
+      } else {
+        await page.getByRole("button", { name: "Управление", exact: true }).click();
+        await page.getByRole("menuitem", { name: "Проекты" }).click();
+      }
       const projects = page.getByRole("dialog", { name: "Проекты" });
       await expect(projects).toBeVisible();
       await calm(page);
@@ -304,7 +343,12 @@ for (const screen of SCREENS) {
       // A reply longer than six lines has a toggle.
       const added = await page.request.post("/console/projects/p1/replies", { data: { group_id: "g1", text: lines(9) } });
       expect(added.ok(), await added.text()).toBe(true);
-      await page.getByRole("button", { name: "Управление готовыми ответами" }).click();
+      if (narrow) {
+        await menu.click();
+        await drawer.getByRole("button", { name: "Каталог готовых ответов" }).click();
+      } else {
+        await page.getByRole("button", { name: "Управление готовыми ответами" }).click();
+      }
       const catalog = page.getByRole("dialog", { name: "Готовые ответы" });
       const groupList = catalog.getByRole("listbox", { name: "Группы" });
       await expect(groupList.getByRole("option").first()).toBeVisible();

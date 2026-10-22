@@ -9,8 +9,11 @@ const CONSOLE = "/console/";
 const SHORT = "TEST_1";
 // Eighty characters: more than the app bar shows at any width.
 const LONG = "Служба поддержки клиентов интернет-магазина бытовой техники и электроники Москвы";
+// A phone (700 px and less) has no picker in the bar: it chooses the project in the bar's drawer
+// (workspace/MobileMenu.vue, mobile-workspace.spec.ts); only the folder menu is checked there.
 const VIEWPORTS = [
   { device: "desktop", width: 1280, height: 800 },
+  { device: "tablet", width: 768, height: 1024 },
   { device: "phone", width: 375, height: 812 },
 ] as const;
 
@@ -30,7 +33,8 @@ async function start(page: Page, context: BrowserContext, request: APIRequestCon
   await page.goto(CONSOLE);
   await expect(page.locator("#workspace")).toBeVisible();
   // The button is named by the whole name, whatever it shows.
-  await expect(project(page)).toHaveAccessibleName(`Текущий проект ${name}`);
+  if (page.viewportSize()!.width <= 700) await expect(page.getByRole("button", { name: `Меню. Проект: ${name}` })).toBeVisible();
+  else await expect(project(page)).toHaveAccessibleName(`Текущий проект ${name}`);
 }
 
 interface Edges {
@@ -73,7 +77,8 @@ function turn(trigger: Locator): Promise<number> {
 
 for (const { device, width, height } of VIEWPORTS) {
   test.describe(`current project in the app bar, ${width}px`, () => {
-    test.beforeEach(async ({ page }) => {
+    test.beforeEach(async ({ page }, testInfo) => {
+      test.skip(width <= 700 && !testInfo.title.startsWith("the folder menu"), "a phone has no project picker in the app bar");
       await page.setViewportSize({ width, height });
     });
 

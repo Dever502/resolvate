@@ -265,6 +265,13 @@
   :root[data-theme="dark"] .tooltip { border-color: var(--border); }
   .tooltip-note { color: var(--chrome-muted); }
   .pill { font-size: .75rem; padding: .25rem .5rem; border-radius: 5px; background: var(--subtle); color: var(--muted); white-space: nowrap; }
+  /* A loading placeholder in the shape of what comes, in the surface's own text colour faintly, so it fits the light
+     and dark themes and the dark app bar alike. Decoration only (aria-hidden): the loading area says aria-busy. */
+  .skeleton { display: block; flex: none; border-radius: 6px; background: color-mix(in srgb, currentColor 13%, transparent); animation: skeleton-pulse 1.4s ease-in-out infinite; }
+  .skeleton.avatar { color: inherit; }
+  .project-emblem-skeleton { width: 2.375rem; height: 2.375rem; border-radius: 10px; }
+  .header-action-skeleton { width: 7.5rem; height: 2.375rem; border-radius: var(--radius-control); }
+  .folder-select-skeleton { width: 7rem; height: 2.25rem; margin-block: .25rem; border-radius: var(--radius-control); }
   .list-empty { padding: 2rem 1rem; color: var(--muted); text-align: center; font-size: .875rem; }
 
   /* Workspace frame: the separator between the list and the conversation. */
@@ -356,8 +363,11 @@
   .count { display: grid; place-items: center; min-width: 20px; height: 20px; padding: 0 .3125rem; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-size: .6875rem; font-weight: 600; }
 
   /* Dialogue: header, history and messages. */
-  .customer-title { display: flex; align-items: center; gap: .75rem; min-width: 0; padding: .25rem; border: 0; border-radius: var(--radius-control); background: transparent; color: inherit; text-align: left; }
-  .customer-title:hover { background: var(--canvas); }
+  /* The customer's name opens their card: a control with room around its avatar, name and icon; the negative margins
+     keep the avatar where the header's padding puts it and the header as tall as before. */
+  .customer-title { display: flex; align-items: center; gap: .75rem; min-width: 0; min-height: 44px; margin: -.5rem 0 -.5rem -.5rem; padding: .5rem .75rem .5rem .5rem; border: 0; border-radius: var(--radius-control); background: transparent; color: inherit; text-align: left; }
+  .customer-title:hover { background: var(--hover); }
+  .customer-title:active { background: var(--pressed); }
   .messages { flex: 1; min-height: 0; overflow: auto; padding: 1.75rem clamp(1rem, 4vw, 3.5rem) 2rem; background: var(--message-canvas); scrollbar-gutter: stable; overscroll-behavior-y: contain; outline: none; }
   .message { align-self: flex-start; min-width: 0; max-width: min(82%, 65ch); }
   .message.outgoing { align-self: flex-end; }
@@ -374,7 +384,15 @@
   .message.system .message-meta { justify-content: center; }
   .message.system .bubble { padding: .25rem .75rem; background: transparent; color: var(--muted); font-size: .8125rem; text-align: center; }
   .message.system .rating-card { min-width: min(280px, 100%); padding: 1.125rem 1.25rem; border-radius: 12px; background: var(--surface); color: var(--text); text-align: left; white-space: normal; }
-  .image-preview { display: block; max-width: 100%; padding: 0; border: 0; border-radius: var(--radius-control); background: transparent; cursor: zoom-in; }
+  /* A photo's thumbnail has its room before it loads: a 4:3 frame, the picture contained in it (never cropped or
+     stretched, a tall one does not stretch the message), so a late thumbnail moves nothing in the history. Its width
+     is set, not taken from the picture: the bubble around it would otherwise grow with the thumbnail. The
+     frame's tone is the placeholder; a failed thumbnail keeps the frame with its fallback inside. */
+  .image-preview { display: grid; place-items: center; width: 20rem; max-width: 100%; aspect-ratio: 4 / 3; margin-bottom: .5rem; padding: 0; overflow: hidden; border: 0; border-radius: var(--radius-control); background: var(--subtle); cursor: zoom-in; }
+  .image-preview[data-state="loading"] { animation: skeleton-pulse 1.4s ease-in-out infinite; }
+  .bubble .image-preview img { width: 100%; height: 100%; max-height: none; margin: 0; border-radius: 0; object-fit: contain; }
+  /* A video has its room before its metadata says its size, the picture contained in it. */
+  .bubble video { width: 20rem; max-width: 100%; height: auto; aspect-ratio: 16 / 9; max-height: none; object-fit: contain; background: #000; }
   /* Stickers are artwork, not photo cards. */
   .sticker-message .bubble { padding: 0; border: 0; background: transparent; box-shadow: none; }
   .sticker-preview { display: grid; place-items: center; width: 100%; aspect-ratio: 1; padding: 0; border: 0; border-radius: .75rem; background: transparent; cursor: pointer; }
@@ -449,9 +467,6 @@
   /* Administration: the app bar menu, rows of projects, members and accounts, forms and the
      employee search (staff/StaffPicker.vue, a Reka combobox). */
   .admin-trigger { position: relative; font-size: .875rem; }
-  /* The narrow-screen label of the icon, styled as .tooltip (see workspace/AdminMenu.vue). */
-  .admin-trigger-label { display: none; position: absolute; z-index: 50; top: calc(100% + 6px); left: 0; padding: .375rem .625rem; border: 1px solid transparent; border-radius: 6px; background: var(--chrome); color: #fff; font-size: .8125rem; font-weight: 400; line-height: 1.4; white-space: nowrap; box-shadow: 0 4px 16px rgb(0 0 0 / 18%); pointer-events: none; }
-  :root[data-theme="dark"] .admin-trigger-label { border-color: var(--border); }
   .admin-list { margin: .75rem 0 0; padding: 0; list-style: none; }
   .admin-row { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem 1rem; padding: .875rem 0; border-bottom: 1px solid var(--border); }
   .admin-row-title { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem .5rem; margin: 0 0 .125rem; font-weight: 600; }
@@ -532,6 +547,23 @@
 
   /* Modal windows (ui/ModalDialog.vue) and the image viewer, both on Reka Dialog. */
   .dialog-backdrop { position: fixed; inset: 0; z-index: 50; background: var(--backdrop); }
+  /* Narrow screens' app bar: the menu button with the current project (workspace/MobileMenu.vue). */
+  .mobile-menu-trigger { align-items: center; gap: .625rem; min-width: 0; min-height: 44px; flex: 1; padding: .25rem .625rem .25rem .5rem; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--text); font-size: .9375rem; font-weight: 600; text-align: left; }
+  .mobile-menu-trigger:hover, .mobile-menu-trigger[data-state="open"] { background: var(--hover); }
+  .mobile-menu-trigger:active { background: var(--pressed); }
+  /* Its drawer: from the left over a backdrop, as tall as the screen; the head stays, the sections scroll, the
+     account stays at the foot. Safe areas are kept clear. */
+  .drawer { position: fixed; z-index: 50; top: 0; bottom: 0; left: 0; display: flex; flex-direction: column; width: min(20rem, calc(100vw - 3rem)); background: var(--surface); color: var(--text); box-shadow: 8px 0 32px #1d1d1f26; outline: none; animation: drawer-in 150ms ease-out; }
+  .drawer-head { display: flex; flex: none; align-items: center; justify-content: space-between; gap: .5rem; min-height: 56px; padding: max(.375rem, env(safe-area-inset-top)) .5rem .375rem max(1rem, env(safe-area-inset-left)); }
+  .drawer-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: .25rem .5rem .75rem max(.5rem, env(safe-area-inset-left)); }
+  .drawer-heading { margin: .75rem .625rem .25rem; color: var(--muted); font-size: .75rem; font-weight: 600; }
+  .drawer-note { margin: .25rem .625rem .5rem; color: var(--muted); font-size: .8125rem; }
+  .drawer-item { display: flex; align-items: center; gap: .625rem; width: 100%; min-height: 44px; padding: .5rem .625rem; border: 0; border-radius: 8px; background: transparent; color: var(--text); font-size: .9375rem; text-align: left; }
+  .drawer-item:hover:not(:disabled) { background: var(--hover); }
+  .drawer-item:active:not(:disabled) { background: var(--pressed); }
+  .drawer-item[aria-checked="true"] { font-weight: 600; }
+  .drawer-item:disabled { opacity: .55; }
+  .drawer-foot { flex: none; padding: .5rem .5rem max(.5rem, env(safe-area-inset-bottom)) max(.5rem, env(safe-area-inset-left)); border-top: 1px solid var(--border); background: var(--footer); }
   .dialog { position: fixed; z-index: 50; top: 50%; left: 50%; width: 520px; max-width: calc(100vw - 32px); max-height: calc(100dvh - 48px); overflow: auto; padding: 1.75rem; border-radius: var(--radius-panel); background: var(--surface); color: var(--text); box-shadow: 0 20px 80px #15192230; overscroll-behavior: contain; transform: translate(-50%, -50%); animation: dialog-appear 150ms ease-out; }
   .dialog-wide { width: 620px; }
   .dialog-catalog { display: flex; flex-direction: column; width: 960px; height: min(760px, calc(100dvh - 48px)); overflow: hidden; padding: 1.5rem 1.5rem 1.25rem; }
@@ -546,6 +578,13 @@
   .image-stage.zoomed:active { cursor: grabbing; }
 }
 
+@keyframes drawer-in {
+  from { transform: translateX(-100%); }
+  to { transform: none; }
+}
+@keyframes skeleton-pulse {
+  50% { opacity: .55; }
+}
 @keyframes dialog-appear {
   from { opacity: 0; transform: translate(-50%, calc(-50% + 4px)); }
   to { opacity: 1; transform: translate(-50%, -50%); }
@@ -570,7 +609,6 @@
   .customer-card { width: min(320px, 100vw); }
   .form-grid { grid-template-columns: minmax(0, 1fr); }
   .admin-actions { justify-content: flex-start; margin-left: 0; }
-  .admin-trigger:is(:hover, :focus-visible):not([data-state="open"]) .admin-trigger-label { display: block; }
   .settings-section { padding: .875rem .875rem 1rem; }
   /* The folders window takes the whole screen; a confirmation stays a small card. */
   .dialog-wide, .dialog-catalog { top: 0; left: 0; width: 100%; max-width: 100%; height: 100dvh; max-height: 100dvh; padding: max(.875rem, env(safe-area-inset-top)) 1rem max(1.5rem, env(safe-area-inset-bottom)); border-radius: 0; transform: none; animation: none; }
@@ -607,10 +645,12 @@
 }
 @media (forced-colors: active) {
   .primary { border: 1px solid ButtonText; }
-  .tooltip, .admin-trigger-label { border-color: CanvasText; }
+  .tooltip { border-color: CanvasText; }
   .ticket[data-state="checked"], .folder-tab[data-state="active"] { outline: 2px solid Highlight; outline-offset: -2px; }
   .composer, .reply-options, .menu, .dialog, .picker-options { border: 1px solid ButtonText; }
   .drop-zone { border-color: Highlight; }
+  .skeleton { border: 1px solid GrayText; }
+  .drawer { border-right: 1px solid CanvasText; }
   /* Text at full contrast: no fade at the folder tabs' edges. */
   .folder-tabs { mask-image: none; }
   .reply-options-body[data-scrolled] { mask-image: none; }

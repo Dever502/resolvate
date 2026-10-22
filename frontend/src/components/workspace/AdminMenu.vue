@@ -1,22 +1,34 @@
-<script setup lang="ts">
-import { DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuRoot, DropdownMenuTrigger } from "reka-ui";
-import { computed, nextTick, useTemplateRef } from "vue";
+<script lang="ts">
+import { computed } from "vue";
 import { useProjectsStore } from "../../stores/projects";
 import { useSessionStore } from "../../stores/session";
+
+/**
+ * What the account may administer (the app bar's menu, the narrow screens' drawer): "Проекты" for the
+ * installation administrator and project administrators (`shown`), "Сотрудники" for the installation
+ * administrator only (`owner`). Hiding is a convenience: the server checks every request.
+ */
+export function adminAccess() {
+  const session = useSessionStore();
+  const projects = useProjectsStore();
+  const owner = computed(() => session.account?.role === "admin");
+  const shown = computed(() => owner.value || projects.all.some((project) => project.role === "admin"));
+  return { owner, shown };
+}
+</script>
+
+<script setup lang="ts">
+import { DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuRoot, DropdownMenuTrigger } from "reka-ui";
+import { nextTick, useTemplateRef } from "vue";
 import { useWorkspaceStore } from "../../stores/workspace";
 import Icon from "../ui/Icon.vue";
 
 // Administration in the app bar, apart from everyday work and from the personal account menu:
 // "Проекты" for the installation administrator and project administrators, "Сотрудники" for the
 // installation administrator only. Hiding is a convenience: the server checks every request.
-// On narrow screens only the icon remains; its label shows on hover and keyboard focus. That label
-// is a plain hidden element, not a Reka tooltip: in reka-ui 2.11.0 a tooltip trigger around (or
-// inside) a menu trigger loses the element the menu is positioned against.
-const session = useSessionStore();
-const projects = useProjectsStore();
+// Narrow screens have the same actions in the app bar's drawer (MobileMenu.vue) instead.
 const workspace = useWorkspaceStore();
-const owner = computed(() => session.account?.role === "admin");
-const shown = computed(() => owner.value || projects.all.some((project) => project.role === "admin"));
+const { owner, shown } = adminAccess();
 const trigger = useTemplateRef<{ $el: HTMLElement }>("trigger");
 let chosen: (() => void) | null = null;
 
@@ -39,11 +51,10 @@ function afterClose(event: Event): void {
 <template>
   <div v-if="shown">
     <DropdownMenuRoot :modal="false">
-      <!-- At least 44×44 (on narrow screens it is the icon alone); the negative margins keep the bar's height. -->
+      <!-- At least 44×44; the negative margins keep the bar's height. -->
       <DropdownMenuTrigger ref="trigger" class="quiet admin-trigger -my-1 min-h-11 min-w-11">
         <Icon name="settings" />
-        <span class="narrow:sr-only">Управление</span>
-        <span class="admin-trigger-label" aria-hidden="true">Управление</span>
+        <span>Управление</span>
       </DropdownMenuTrigger>
       <DropdownMenuPortal>
         <DropdownMenuContent class="menu" align="end" :side-offset="6" :collision-padding="8" loop @close-auto-focus="afterClose">

@@ -365,7 +365,9 @@ onUnmounted(closeReplies);
       <p class="m-0" aria-live="polite">{{ progressText }}</p>
       <button v-if="queue?.state === 'running'" type="button" class="quiet min-h-11" @click="chat.stopSending()">Остановить</button>
     </div>
-    <form class="composer" @submit.prevent="submit">
+    <!-- Until the dialogue's stored draft is read the box is read-only and says so: it never takes input that
+         the draft would then replace. -->
+    <form class="composer" :aria-busy="!chat.draft || undefined" @submit.prevent="submit">
       <IconButton
         class="icon-button"
         label="Прикрепить файл"
@@ -383,7 +385,7 @@ onUnmounted(closeReplies);
         ref="field"
         :value="text"
         rows="1"
-        placeholder="Написать ответ…"
+        :placeholder="chat.draft ? 'Написать ответ…' : 'Черновик загружается…'"
         aria-label="Текст ответа"
         :disabled="chat.sending"
         :readonly="!chat.draft"

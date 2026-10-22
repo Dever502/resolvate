@@ -30,6 +30,9 @@ export const useSessionStore = defineStore("session", () => {
   const csrf = ref("");
   /** Changes on every sign-in and sign-out: answers to older requests must not act on a new session. */
   const generation = ref(0);
+  /** Survives account menu unmounts (drawer dismissal or a responsive layout change). */
+  const loggingOut = ref(false);
+  let logoutPending: Promise<void> | null = null;
   /** Message on the sign-in form: why the session check failed, or a confirmation. */
   const notice = ref("");
   const noticeIsSuccess = ref(false);
@@ -145,9 +148,17 @@ export const useSessionStore = defineStore("session", () => {
     signIn(payload);
   }
 
-  async function logout(): Promise<void> {
-    await api("logout", { method: "POST" });
-    signOut();
+  function logout(): Promise<void> {
+    if (logoutPending) return logoutPending;
+    const sentIn = generation.value;
+    loggingOut.value = true;
+    logoutPending = api("logout", { method: "POST" }).then(() => {
+      if (generation.value === sentIn) signOut();
+    }).finally(() => {
+      loggingOut.value = false;
+      logoutPending = null;
+    });
+    return logoutPending;
   }
 
   /**
@@ -161,7 +172,7 @@ export const useSessionStore = defineStore("session", () => {
   }
 
   return {
-    status, account, csrf, generation, notice, noticeIsSuccess,
+    status, account, csrf, generation, notice, noticeIsSuccess, loggingOut,
     api, check, login, logout, changePassword, signIn, signOut, onSessionEnd,
   };
 });

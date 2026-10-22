@@ -12,6 +12,7 @@ const folders = useFoldersStore();
 const pending = ref<string | null>(null);
 
 const current = computed(() => chat.detail?.folder_id ?? NONE);
+const loading = computed(() => !chat.detail && chat.opening);
 const options = computed(() => {
   const list = [{ value: NONE, label: "Без папки" }, ...folders.folders.map((folder) => ({ value: folder.id, label: folder.name }))];
   // The detail can arrive before the folder list does: never show such a dialogue as unfiled.
@@ -34,9 +35,13 @@ async function move(value: string): Promise<void> {
 
 <template>
   <!-- The menu button is 44 px tall: the row's padding gives back what it adds. -->
-  <div class="flex flex-wrap items-center gap-2 border-b border-border px-5 py-1 compact:px-4 narrow:px-3">
+  <div class="flex flex-wrap items-center gap-2 border-b border-border px-5 py-1 compact:px-4 narrow:px-3" :aria-busy="loading || undefined">
     <span class="text-xs text-muted" aria-hidden="true">Папка</span>
+    <!-- The folder is the dialogue's detail: until it comes (an opening), a placeholder of the button's size, not
+         "Без папки". A dialogue truly without a folder says so once its detail is here. -->
+    <span v-if="loading" class="skeleton folder-select-skeleton" aria-hidden="true" />
     <MenuSelect
+      v-else
       class="max-w-[min(20rem,75%)]"
       :model-value="pending ?? current"
       :options="options"
