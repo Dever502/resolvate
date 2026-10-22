@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { DialogClose, DialogContent, DialogOverlay, DialogPortal, DialogRoot, DialogTitle, DialogTrigger } from "reka-ui";
+import { DialogClose, DialogContent, DialogOverlay, DialogPortal, DialogRoot, DialogTitle, DialogTrigger, RadioGroupItem, RadioGroupRoot } from "reka-ui";
 import { computed, nextTick, ref, useTemplateRef, watch } from "vue";
 import { useChatStore } from "../../stores/chat";
 import { useProjectsStore } from "../../stores/projects";
@@ -77,22 +77,20 @@ watch(() => projects.currentId, () => {
           <section aria-labelledby="drawer-projects">
             <h2 id="drawer-projects" class="drawer-heading">Проект</h2>
             <p v-if="chat.sending" class="drawer-note">Идёт отправка: проект можно сменить после неё.</p>
-            <div role="radiogroup" aria-labelledby="drawer-projects">
-              <button
+            <RadioGroupRoot :model-value="projects.currentId ?? ''" orientation="vertical" loop
+              aria-labelledby="drawer-projects" :disabled="chat.sending"
+              @update:model-value="(id) => chooseProject(String(id), workspace.fail)">
+              <RadioGroupItem
                 v-for="project in projects.available"
                 :key="project.id"
-                type="button"
-                role="radio"
+                :value="project.id"
                 class="drawer-item"
-                :aria-checked="project.id === projects.currentId"
-                :disabled="chat.sending"
-                @click="chooseProject(project.id, workspace.fail)"
               >
                 <ProjectEmblem :project="project" class="size-8 rounded-lg text-sm" />
                 <span class="min-w-0 flex-1 truncate">{{ project.name }}</span>
                 <Icon v-if="project.id === projects.currentId" name="check" class="size-4 shrink-0 text-accent" />
-              </button>
-            </div>
+              </RadioGroupItem>
+            </RadioGroupRoot>
             <p v-if="!projects.available.length" class="drawer-note">{{ name }}</p>
           </section>
           <section v-if="shown" aria-labelledby="drawer-admin">

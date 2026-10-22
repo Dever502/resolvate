@@ -15,6 +15,8 @@ FROM python:3.12.13-alpine3.24@sha256:6d43704baacd1bfbe7c295d7f13079d5d8104ed335
 RUN apk add --no-cache --upgrade \
     'libcrypto3>=3.5.8-r0' \
     'libssl3>=3.5.8-r0' \
+    'libexpat>=2.9.0-r0' \
+    'musl-utils>=1.2.6-r3' \
     'libuuid>=2.42.3-r1' \
     'pcre2>=10.49-r0' \
     'zlib>=1.3.2-r1'
@@ -41,6 +43,9 @@ FROM python:3.12.13-alpine3.24@sha256:6d43704baacd1bfbe7c295d7f13079d5d8104ed335
 RUN apk add --no-cache --upgrade \
     'libcrypto3>=3.5.8-r0' \
     'libssl3>=3.5.8-r0' \
+    'libexpat>=2.9.0-r0' \
+    'musl-utils>=1.2.6-r3' \
+    'libx11>=1.8.14-r0' \
     'libuuid>=2.42.3-r1' \
     'pcre2>=10.49-r0' \
     'zlib>=1.3.2-r1' \

@@ -229,8 +229,10 @@ test("a sign-out that fails after the drawer was closed still says why, on the s
   });
   await openDrawer(page);
   await drawer(page).getByRole("button", { name: /Меню аккаунта:/ }).click();
+  const sent = page.waitForRequest(request => request.url().endsWith("/console/logout"));
   await page.getByRole("menuitem", { name: "Выйти" }).click();
   // The menu, then the drawer close while the request runs: the account menu leaves the page.
+  await sent;
   await page.keyboard.press("Escape");
   await expect(page.getByRole("menu")).toHaveCount(0);
   await page.keyboard.press("Escape");
@@ -251,6 +253,67 @@ test("on the desktop nothing moved: the project picker and the account footer, n
   await expect(page.getByRole("button", { name: "Управление готовыми ответами" })).toHaveText("Готовые ответы");
   await expect(page.getByRole("button", { name: /^Меню аккаунта:/ })).toBeVisible();
   expect((await bar(page).boundingBox())!.height).toBeGreaterThanOrEqual(76);
+});
+
+test("project radios have one Tab stop and arrow keys select the next project", async ({ page, context, request, consoleErrors }) => {
+  void consoleErrors;
+  await page.setViewportSize({ width: 375, height: 740 });
+  await start(page, context, request);
+  await openDrawer(page);
+  const selected = drawer(page).getByRole("radio", { name: "Поддержка", exact: true });
+  const other = drawer(page).getByRole("radio", { name: "Второй проект" });
+  // Reka's group is the entry Tab stop; entering it focuses the checked item.
+  await drawer(page).getByRole("button", { name: "Закрыть меню" }).focus();
+  await page.keyboard.press("Tab");
+  await expect(selected).toBeFocused();
+  await expect(selected).toHaveAttribute("tabindex", "0");
+  await expect(other).toHaveAttribute("tabindex", "-1");
+  await page.keyboard.press("ArrowDown");
+  await expect(drawer(page)).toBeHidden();
+  await expect(menuButton(page)).toHaveAccessibleName("Меню. Проект: Второй проект");
+  await expect(menuButton(page)).toBeFocused();
+  await openDrawer(page);
+  await expect(other).toHaveAttribute("aria-checked", "true");
+  await other.focus();
+  await page.keyboard.press("Tab");
+  await expect(drawer(page).getByRole("button", { name: "Каталог готовых ответов" })).toBeFocused();
+});
+
+test("reopening the drawer cannot duplicate logout; an error survives a later dismissal", async ({ page, context, request, consoleErrors }) => {
+  void consoleErrors;
+  await page.setViewportSize({ width: 375, height: 740 });
+  await start(page, context, request);
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let calls = 0;
+  await page.route("**/console/logout", async route => {
+    calls++;
+    await held;
+    await route.fulfill({ status: 500, json: { detail: "Выход временно недоступен." } });
+  });
+  await openDrawer(page);
+  await drawer(page).getByRole("button", { name: /^Меню аккаунта:/ }).click();
+  await page.getByRole("menuitem", { name: "Выйти" }).click();
+  await expect.poll(() => calls).toBe(1);
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  await expect(drawer(page)).toBeHidden();
+  await openDrawer(page);
+  await drawer(page).getByRole("button", { name: /^Меню аккаунта:/ }).click();
+  await expect(page.getByRole("menuitem", { name: "Выходим…" })).toBeDisabled();
+  release();
+  await expect(page.getByRole("menuitem", { name: "Выйти" })).toBeEnabled();
+  expect(calls).toBe(1);
+  // Retry in the new instance: the refusal arrives before the drawer is dismissed this time.
+  await page.getByRole("menuitem", { name: "Выйти" }).click();
+  await expect(page.locator(".account-error")).toHaveText("Выход временно недоступен.");
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  await expect(drawer(page)).toBeHidden();
+  await expect(page.getByRole("alert")).toHaveText("Выход временно недоступен.");
+  await expect(page.getByRole("alert")).toBeInViewport();
+  await expect(list(page)).toBeVisible();
+  expect(calls).toBe(2);
 });
 
 test.describe("forced colors", () => {

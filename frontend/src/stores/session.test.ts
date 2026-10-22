@@ -162,6 +162,48 @@ describe("session store", () => {
   });
 });
 
+describe("logout single flight", () => {
+  beforeEach(() => setActivePinia(createPinia()));
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("shares an in-flight logout across callers and permits a retry after failure", async () => {
+    let answer!: (response: Response) => void;
+    const fetch = vi.fn(() => new Promise<Response>((resolve) => { answer = resolve; }));
+    vi.stubGlobal("fetch", fetch);
+    const session = useSessionStore();
+    session.signIn({ account: ACCOUNT as never, csrf: "c" });
+    const first = session.logout();
+    const second = session.logout();
+    expect(session.loggingOut).toBe(true);
+    expect(fetch).toHaveBeenCalledOnce();
+    const outcomes = Promise.allSettled([first, second]);
+    answer(json(500, { detail: "Повторите позже." }));
+    expect((await outcomes).map(result => result.status)).toEqual(["rejected", "rejected"]);
+    expect(session.loggingOut).toBe(false);
+    expect(session.status).toBe("signed-in");
+    const retry = session.logout();
+    answer(json(200, { ok: true }));
+    await retry;
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(session.loggingOut).toBe(false);
+    expect(session.status).toBe("signed-out");
+  });
+
+  it("a late successful logout does not end a newer session", async () => {
+    let answer!: (response: Response) => void;
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(resolve => { answer = resolve; })));
+    const session = useSessionStore();
+    session.signIn({ account: ACCOUNT as never, csrf: "old" });
+    const pending = session.logout();
+    session.signOut();
+    session.signIn({ account: ACCOUNT as never, csrf: "new" });
+    answer(json(200, { ok: true }));
+    await pending;
+    expect(session.status).toBe("signed-in");
+    expect(session.csrf).toBe("new");
+  });
+});
+
 describe("own password change", () => {
   beforeEach(() => setActivePinia(createPinia()));
   afterEach(() => vi.unstubAllGlobals());

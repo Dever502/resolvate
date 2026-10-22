@@ -19,6 +19,7 @@ const session = useSessionStore();
 const open = ref(false);
 const busy = ref(false);
 const error = ref("");
+const signingOut = computed(() => busy.value || session.loggingOut);
 const name = computed(() => session.account?.name ?? "");
 const role = computed(() => session.account?.role === "admin" ? "Администратор установки" : "Оператор");
 const trigger = useTemplateRef<{ $el: HTMLElement }>("trigger");
@@ -30,7 +31,11 @@ const leaveOpen = ref(false);
 let leaveRequested = false;
 /** Gone from the page (a phone's drawer closed while signing out): a late error goes to the workspace's notice. */
 let gone = false;
-onBeforeUnmount(() => { gone = true; });
+const mountedIn = session.generation;
+onBeforeUnmount(() => {
+  gone = true;
+  if (error.value && session.generation === mountedIn) useWorkspaceStore().show(error.value);
+});
 
 function requestPassword(): void {
   passwordRequested = true;
@@ -55,7 +60,7 @@ function afterClose(event: Event): void {
 // and the tab's own); with work kept it asks first. A session that ends by itself (expired, password
 // changed) keeps it for the next sign-in.
 async function logout(): Promise<void> {
-  if (busy.value) return;
+  if (signingOut.value) return;
   const account = session.account?.id;
   let work: { drafts: number; attempts: number } | null = null;
   busy.value = true;
@@ -67,6 +72,8 @@ async function logout(): Promise<void> {
   } finally {
     busy.value = false;
   }
+  // The drawer may have closed while local storage was read: do not start an invisible action.
+  if (gone || session.generation !== mountedIn) return;
   if (work && (work.drafts || work.attempts)) {
     kept.value = work;
     leaveRequested = true;
@@ -86,8 +93,10 @@ async function leave(): Promise<void> {
     open.value = false;
     leaveOpen.value = false;
   } catch (caught) {
-    if (gone) useWorkspaceStore().fail(caught);
-    else error.value = caught instanceof Error ? caught.message : String(caught);
+    if (session.generation === mountedIn) {
+      if (gone) useWorkspaceStore().fail(caught);
+      else error.value = caught instanceof Error ? caught.message : String(caught);
+    }
   } finally {
     busy.value = false;
   }
@@ -133,9 +142,9 @@ async function leave(): Promise<void> {
         <DropdownMenuSeparator class="account-separator" />
         <!-- Keep the menu while awaiting the API, including errors. Reka disables selection
              on this non-button item; the handler also guards against same-tick repeats. -->
-        <DropdownMenuItem class="menu-item account-logout" :disabled="busy" @select.prevent="logout">
+        <DropdownMenuItem class="menu-item account-logout" :disabled="signingOut" @select.prevent="logout">
           <Icon name="logout" class="size-4" />
-          {{ busy ? "Выходим…" : "Выйти" }}
+          {{ signingOut ? "Выходим…" : "Выйти" }}
         </DropdownMenuItem>
         <p v-if="error" class="error account-error" role="alert">{{ error }}</p>
       </DropdownMenuContent>
