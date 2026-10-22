@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import tomllib
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -294,9 +295,12 @@ def test_public_start_script_is_transparent_and_pins_the_pulled_image() -> None:
 def test_public_documentation_is_curated() -> None:
     required = (
         "README.md",
+        "docs/CONSOLE.md",
+        "docs/DESIGN.md",
         "docs/OBSERVABILITY.md",
         "docs/OPERATIONS.md",
         "docs/TECHNICAL.md",
+        "frontend/README.md",
     )
     for relative_path in required:
         assert (ROOT / relative_path).is_file()
@@ -306,15 +310,22 @@ def test_public_documentation_is_curated() -> None:
         assert not (ROOT / relative_path).exists()
 
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "> Версия: `v4.0.0`." in readme
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    version = project["project"]["version"]
+    assert f"`{version}`" in readme
+    assert f"`v{version}`" in readme
+    for relative_path in required[1:]:
+        assert f"]({relative_path})" in readme
+    assert "sh scripts/deploy.sh deploy" in readme
+    assert "sh scripts/production-compose.sh" in readme
+    assert "python -m resolvate.console_admin" in readme
+    assert "ghcr.io/dever502/resolvate:<commit-sha>" in readme
     assert "./scripts/start.sh" in readme
-    assert "## Ограничения" not in readme
-    assert "## Разработка" not in readme
-    assert "Официальный способ поставки — container image" in readme
-    assert "полноценная интеграция с Remnawave 2.8.x" in readme
-    assert "notification webhook с durable at-least-once доставкой" in readme
     assert "Remnawave 2.8.x" in readme
-    assert "@sha256:<digest>" in readme
+    assert "notification webhook" in readme
+    assert "at-least-once" in readme
+    operations = (ROOT / "docs/OPERATIONS.md").read_text(encoding="utf-8")
+    assert "ghcr.io/dever502/resolvate@sha256:<digest>" in operations
 
     public_markdown = "\n".join(
         (ROOT / relative_path).read_text(encoding="utf-8") for relative_path in required
