@@ -41,8 +41,10 @@ for (const width of [1280, 375, 320]) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
     // Hover and focus use the shared interactive states.
     await control(page).hover();
-    const hover = await control(page).evaluate((element) => getComputedStyle(element).backgroundColor);
-    expect(hover).not.toBe("rgba(0, 0, 0, 0)");
+    // Shared buttons animate the background for 120 ms. Hover waits for hit
+    // testing, not for that transition's first paint (especially on CI).
+    await expect.poll(() => control(page).evaluate((element) => getComputedStyle(element).backgroundColor))
+      .not.toBe("rgba(0, 0, 0, 0)");
     await page.mouse.move(0, 0);
     await page.keyboard.press("Tab");
     await control(page).focus();

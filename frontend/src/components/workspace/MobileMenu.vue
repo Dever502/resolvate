@@ -42,6 +42,23 @@ function afterClose(event: Event): void {
   void nextTick(action);
 }
 
+function onProjectKey(event: KeyboardEvent, id: string): void {
+  if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+  if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+  // Reka 2.11 selects on a deferred focus callback only while the arrow is held.
+  // Handle these keys before its roving-focus handler: even a quick keyup must
+  // select the project. Reka still owns Tab, Space, clicks and focus restoration.
+  event.preventDefault();
+  event.stopPropagation();
+  if (!open.value || chat.sending || event.repeat) return;
+  const items = projects.available;
+  const index = items.findIndex(project => project.id === id);
+  if (index < 0) return;
+  const target = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1
+    : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+  chooseProject(items[target]!.id, workspace.fail);
+}
+
 // Another project chosen: the drawer has done its job.
 watch(() => projects.currentId, () => {
   open.value = false;
@@ -85,6 +102,7 @@ watch(() => projects.currentId, () => {
                 :key="project.id"
                 :value="project.id"
                 class="drawer-item"
+                @keydown.capture="onProjectKey($event, project.id)"
               >
                 <ProjectEmblem :project="project" class="size-8 rounded-lg text-sm" />
                 <span class="min-w-0 flex-1 truncate">{{ project.name }}</span>

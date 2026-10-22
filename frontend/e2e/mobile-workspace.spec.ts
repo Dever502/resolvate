@@ -279,6 +279,30 @@ test("project radios have one Tab stop and arrow keys select the next project", 
   await expect(drawer(page).getByRole("button", { name: "Каталог готовых ответов" })).toBeFocused();
 });
 
+test("project keys released before deferred focus still select, wrap and restore focus", async ({ page, context, request, consoleErrors }) => {
+  void consoleErrors;
+  await page.setViewportSize({ width: 375, height: 740 });
+  await start(page, context, request);
+  for (const [key, name] of [
+    ["ArrowDown", "Второй проект"], ["ArrowUp", "Поддержка"],
+    ["ArrowUp", "Второй проект"], ["Home", "Поддержка"], ["End", "Второй проект"],
+  ]) {
+    await openDrawer(page);
+    const selected = drawer(page).getByRole("radio", { checked: true });
+    await selected.focus();
+    // Deterministically release the key before Reka's deferred focus/click callbacks.
+    // A fast real key press must not depend on how soon those timers run.
+    await selected.evaluate((element, key) => {
+      for (const type of ["keydown", "keyup"]) {
+        element.dispatchEvent(new KeyboardEvent(type, { key, bubbles: true, cancelable: true }));
+      }
+    }, key);
+    await expect(drawer(page)).toBeHidden();
+    await expect(menuButton(page)).toHaveAccessibleName(`Меню. Проект: ${name}`);
+    await expect(menuButton(page)).toBeFocused();
+  }
+});
+
 test("reopening the drawer cannot duplicate logout; an error survives a later dismissal", async ({ page, context, request, consoleErrors }) => {
   void consoleErrors;
   await page.setViewportSize({ width: 375, height: 740 });
