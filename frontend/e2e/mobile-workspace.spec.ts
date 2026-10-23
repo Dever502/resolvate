@@ -22,6 +22,21 @@ async function start(page: Page, context: BrowserContext, request: APIRequestCon
 async function openDrawer(page: Page): Promise<void> {
   await menuButton(page).click();
   await expect(drawer(page)).toBeVisible();
+  // Visibility precedes the end of drawer-in and Reka's deferred outside-pointer
+  // listener. Wait for the actual entrance, not a fixed screenshot/test delay.
+  await drawer(page).evaluate(async (element) => {
+    await Promise.all(element.getAnimations().map(animation => animation.finished));
+  });
+}
+
+async function pressBackdrop(page: Page, touch = false): Promise<void> {
+  const backdrop = page.locator(".dialog-backdrop");
+  const box = (await backdrop.boundingBox())!;
+  const position = { x: box.width - 8, y: box.height / 2 };
+  // Unlike page.mouse.click, locator input waits for the backdrop to receive
+  // events. Do not force/retry the gesture: one click/tap must close the drawer.
+  if (touch) await backdrop.tap({ position });
+  else await backdrop.click({ position });
 }
 
 for (const width of [320, 375, 430]) {
@@ -96,7 +111,6 @@ test("the drawer: Esc and the backdrop close it, the focus goes back to the menu
   await expect(drawer(page).getByRole("heading", { name: "Управление" })).toHaveCount(0);
   await expect.poll(async () => (await drawer(page).boundingBox())!.x).toBe(0);
   expect((await drawer(page).boundingBox())!.height).toBe(740);
-  await page.waitForTimeout(200);
   for (const theme of ["light", "dark"]) {
     await page.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
     await attachScreenshot(`drawer-375-${theme}`);
@@ -106,10 +120,32 @@ test("the drawer: Esc and the backdrop close it, the focus goes back to the menu
   await expect(drawer(page)).toBeHidden();
   await expect(menuButton(page)).toBeFocused();
   await openDrawer(page);
-  await page.mouse.click(370, 400);
+  await pressBackdrop(page);
   await expect(drawer(page)).toBeHidden();
   await expect(menuButton(page)).toBeFocused();
 });
+
+for (const touch of [false, true]) {
+  test.describe(`drawer backdrop with ${touch ? "touch" : "mouse"}`, () => {
+    test.use({ hasTouch: touch });
+    for (const width of [320, 375]) {
+      test(`one gesture closes each reopening at ${width}px, including reduced motion`, async ({ page, context, request, consoleErrors }) => {
+        void consoleErrors;
+        await page.setViewportSize({ width, height: 740 });
+        await start(page, context, request);
+        for (const reducedMotion of ["no-preference", "reduce"] as const) {
+          await page.emulateMedia({ reducedMotion });
+          for (let cycle = 0; cycle < 3; cycle++) {
+            await openDrawer(page);
+            await pressBackdrop(page, touch);
+            await expect(drawer(page)).toBeHidden();
+            await expect(menuButton(page)).toBeFocused();
+          }
+        }
+      });
+    }
+  });
+}
 
 test("another project chosen in the drawer: the drawer closes, the bar and the list follow, drafts stay", async ({ page, context, request, consoleErrors }) => {
   void consoleErrors;
