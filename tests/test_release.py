@@ -277,6 +277,7 @@ def test_image_security_floors_apply_to_builder_and_runtime() -> None:
         assert "'zlib>=1.3.2-r1'" in stage
         assert "--allow-untrusted" not in stage
     assert "RUN /usr/local/bin/python -m pip uninstall --yes pip" in runtime
+    assert "'brotli-libs>=1.2.1-r0'" in runtime
 
 
 def test_public_start_script_is_transparent_and_pins_the_pulled_image() -> None:
