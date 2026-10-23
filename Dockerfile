@@ -49,6 +49,7 @@ RUN apk add --no-cache --upgrade \
     'libuuid>=2.42.3-r1' \
     'pcre2>=10.49-r0' \
     'zlib>=1.3.2-r1' \
+    'brotli-libs>=1.2.1-r0' \
     ffmpeg
 
 # Dependencies are installed in the builder by uv; no installer is needed at runtime.

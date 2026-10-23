@@ -26,7 +26,8 @@ test("real login, PostgreSQL-backed reply, reload and logout; project access and
   await input.fill("Reply persisted through the real API");
   const sent = page.waitForResponse(response => response.url().endsWith(`/tickets/${TICKET}/send`) && response.request().method() === "POST");
   await input.press("Enter");
-  expect((await sent).status()).toBe(200);
+  const response = await sent;
+  expect(response.status(), await response.text()).toBe(200);
   await expect(input).toHaveValue("");
   await page.reload();
   await expect(history).toContainText("Reply persisted through the real API");
@@ -97,7 +98,8 @@ test("a real multipart image is stored, rendered under CSP and still available a
   await expect(page.getByRole("group", { name: "Выбранные вложения" }).locator("canvas")).toBeVisible();
   const sent = page.waitForResponse(response => response.url().endsWith(`/tickets/${TICKET}/send`) && response.request().method() === "POST");
   await page.getByRole("button", { name: "Отправить", exact: true }).click();
-  expect((await sent).status()).toBe(200);
+  const response = await sent;
+  expect(response.status(), await response.text()).toBe(200);
   await expect(page.getByRole("group", { name: "Выбранные вложения" })).toBeHidden();
   await page.reload();
   const image = page.getByRole("region", { name: "Переписка" }).getByRole("button", { name: "Открыть изображение" }).last().locator("img");
