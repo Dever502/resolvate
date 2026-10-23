@@ -312,7 +312,9 @@ def api_app(tmp_path: Path, **options: Any) -> Any:
     )
     service = AsyncMock(spec=TicketService)
     service.send_operator_message.return_value = SimpleNamespace(changed=True)
-    return create_app(database=AsyncMock(spec=Database), ticket_service=service, settings=settings)
+    database = AsyncMock(spec=Database)
+    database.project_id = PROJECT_ID
+    return create_app(database=database, ticket_service=service, settings=settings)
 
 
 @pytest.mark.parametrize(

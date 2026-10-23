@@ -14,6 +14,7 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 
+from resolvate.action_permissions import OPERATOR_API_ACTIONS, ActionActor, allows_action
 from resolvate.api_idempotency import ApiIdempotencyConflictError
 from resolvate.api_routes import API_TICKET_CLOSED_TEXT as API_TICKET_CLOSED_TEXT
 from resolvate.api_routes import register_routes
@@ -207,6 +208,12 @@ def create_app(
                 # leaving the dependency in place for the API contract and OpenAPI.
                 await require_api_token(request, request.headers.get("X-API-Token"))
                 request.state.api_admitted = True
+                if self.path.startswith("/api/v1/tickets") and not allows_action(
+                    ActionActor(database.project_id, "operator-api", admitted=True),
+                    OPERATOR_API_ACTIONS.get(self.name),
+                    project_id=database.project_id,
+                ):
+                    raise HTTPException(status_code=403, detail="Action is not permitted")
                 # The upload route has its own larger streaming bound after admission.
                 if self.path != "/api/v1/web/messages":
                     length = request.headers.get("content-length")

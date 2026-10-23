@@ -42,6 +42,28 @@ PASSWORD = "console-test-password-only"
 ORIGIN = "http://localhost:8080"
 
 
+async def test_project_action_policy_denies_before_handler(
+    console: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from resolvate.action_permissions import Action, ActionActor
+
+    client, database, _, _, admin, _ = console
+    calls: list[tuple[ActionActor, Action | None]] = []
+
+    def deny(actor: ActionActor, action: Action | None, *, project_id: str | None) -> bool:
+        assert actor.project_id == project_id == database.project_id
+        assert actor.actor_id == admin.id
+        calls.append((actor, action))
+        return False
+
+    monkeypatch.setattr("resolvate.console_auth.allows_action", deny)
+    assert (await client.get("/console/folders")).status_code == 403
+    assert (await client.post("/console/folders", json={"name": "Denied"})).status_code == 403
+    assert [action for _, action in calls] == [Action.FOLDER_READ, Action.FOLDER_WRITE]
+    # Authentication remains separate from project actions.
+    assert (await client.get("/console/me")).status_code == 200
+
+
 @pytest.mark.parametrize("operation", ["create_account", "set_active"])
 @pytest.mark.parametrize("revoke", ["role", "session"])
 async def test_account_mutation_rechecks_admin_at_write(

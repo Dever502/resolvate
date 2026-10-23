@@ -11,6 +11,7 @@ from sqlalchemy import delete, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from resolvate.action_permissions import CONSOLE_ACTIONS, Action, ActionActor, allows_action
 from resolvate.api_security import InMemoryRateLimiter
 from resolvate.database import Database
 from resolvate.models import AccessAudit, ConsoleAccount, ConsoleSession, Project, utcnow
@@ -110,13 +111,34 @@ class ConsoleAuth:
         return account
 
     async def project_actor(self, request: Request) -> ConsoleAccount:
+        account = await self.require(request)
+        await self.authorize_project_action(request, account)
+        return account
+
+    async def authorize_project_action(self, request: Request, account: ConsoleAccount) -> None:
         from resolvate.projects import membership
 
-        account = await self.require(request)
         if self.database.project_id is None:
             raise HTTPException(403, "Выберите доступный проект.")
-        await membership(self.database, account)
-        return account
+        project = await membership(self.database, account)
+        endpoint = request.scope["route"].name
+        action = CONSOLE_ACTIONS.get(endpoint)
+        if endpoint == "lifecycle":
+            # Invalid path values still reach FastAPI's existing Literal validation.
+            action = {"close": Action.CLOSE, "reopen": Action.REOPEN}.get(
+                str(request.path_params.get("action", "")), Action.READ
+            )
+        if not allows_action(
+            ActionActor(
+                project.id,
+                account.id,
+                admitted=True,
+                administrator=project.admin_id == account.id or account.role == "admin",
+            ),
+            action,
+            project_id=self.database.project_id,
+        ):
+            raise HTTPException(403, "Нет права на это действие.")
 
     async def admin(self, request: Request) -> ConsoleAccount:
         account = await self.require(request)

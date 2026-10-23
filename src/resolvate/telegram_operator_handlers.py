@@ -6,6 +6,7 @@ from html import escape
 from aiogram.exceptions import TelegramAPIError
 from aiogram.types import Message
 
+from resolvate.action_permissions import TELEGRAM_ACTIONS, Action
 from resolvate.authorization import AuthorizationService
 from resolvate.media_storage import LocalMediaStorage, MediaValidationError, StoredMedia
 from resolvate.service_types import (
@@ -53,7 +54,7 @@ class TelegramOperatorHandlers(
             actor is None
             or actor.is_bot
             or message.message_thread_id is None
-            or not await self.authorization.can_operate(actor.id)
+            or not await self.authorization.can_execute(actor.id, Action.EDIT)
         ):
             return
         if await self.handle_quick_reply_topic_message(message):
@@ -224,6 +225,15 @@ class TelegramOperatorHandlers(
             )
             return
 
+        action = TELEGRAM_ACTIONS.get(command) if command.startswith("/") else Action.SEND
+        if not await self.authorization.can_execute(message.from_user.id, action):
+            await message.reply(
+                "⛔ Требуются права администратора проекта."
+                if action == Action.RESOLVE_PANEL
+                else "⛔ Нет права на это действие."
+            )
+            return
+
         command_key = build_command_key(message, command)
         if command == "/info":
             await message.reply(operator_ticket_info(ticket))
@@ -236,9 +246,6 @@ class TelegramOperatorHandlers(
             await message.reply(internal_notes_text(notes))
             return
         if command == "/resolvepanel":
-            if not await self.authorization.can_administer(message.from_user.id):
-                await message.reply("⛔ Требуются права администратора проекта.")
-                return
             if self.panel_service is None:
                 await message.reply("⚠️ Интеграция с Remnawave не подключена.")
                 return
@@ -417,8 +424,8 @@ class TelegramOperatorHandlers(
         )
 
     async def _handle_root_command(self, message: Message) -> None:
-        if message.from_user is None or not await self.authorization.can_operate(
-            message.from_user.id
+        if message.from_user is None or not await self.authorization.can_execute(
+            message.from_user.id, Action.RETRY_TOPIC
         ):
             return
         parts = (message.text or "").split()
@@ -433,8 +440,8 @@ class TelegramOperatorHandlers(
         )
 
     async def _handle_orphan_topic_command(self, message: Message, command: str) -> None:
-        if message.from_user is None or not await self.authorization.can_operate(
-            message.from_user.id
+        if message.from_user is None or not await self.authorization.can_execute(
+            message.from_user.id, Action.BIND_TOPIC
         ):
             return
         parts = (message.text or "").split()
