@@ -161,6 +161,14 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+      - name: Make Python available to isolated media workers
+        # Container jobs mount the tool cache at /__t, outside Python's compiled
+        # library path. Media workers intentionally discard LD_LIBRARY_PATH.
+        run: |
+          test -d "$pythonLocation/lib"
+          printf '%s\n' "$pythonLocation/lib" > /etc/ld.so.conf.d/resolvate-ci-python.conf
+          ldconfig
+          env -i "$pythonLocation/bin/python3" -c 'import resource, ssl; print("Isolated Python runtime ready")'
       - name: Install uv and restore dependency cache
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:

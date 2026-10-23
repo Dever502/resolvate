@@ -446,6 +446,14 @@ def test_ci_browser_runtime_is_preinstalled_pinned_and_matches_lockfile() -> Non
     # Job and service containers share a Docker network, not loopback.
     assert "@postgres:5432/" in integration["env"]["TEST_POSTGRES_DATABASE_URL"]
     assert "ports" not in integration["services"]["postgres"]
+    runtime = next(
+        step
+        for step in integration["steps"]
+        if step.get("name") == "Make Python available to isolated media workers"
+    )
+    assert '"$pythonLocation/lib"' in runtime["run"]
+    assert "ldconfig" in runtime["run"]
+    assert 'env -i "$pythonLocation/bin/python3"' in runtime["run"]
 
 
 def test_ci_postgres_parallelism_keeps_role_provisioning_serial() -> None:
