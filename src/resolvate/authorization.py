@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy import or_, select
 
+from resolvate.action_permissions import Action, ActionActor, allows_action
 from resolvate.config import Settings
 from resolvate.database import Database
 from resolvate.models import ConsoleAccount, Project, ProjectMember
@@ -16,6 +17,20 @@ class AuthorizationService:
 
     def is_admin(self, telegram_user_id: int) -> bool:
         return telegram_user_id in self.settings.admin_telegram_ids
+
+    async def can_execute(self, telegram_user_id: int, action: Action | None) -> bool:
+        admitted = await self.can_operate(telegram_user_id)
+        administrator = (
+            await self.can_administer(telegram_user_id)
+            if admitted and action == Action.RESOLVE_PANEL
+            else False
+        )
+        project_id = self.database.project_id if self.database is not None else None
+        return allows_action(
+            ActionActor(project_id, str(telegram_user_id), admitted, administrator),
+            action,
+            project_id=project_id,
+        )
 
     async def can_administer(self, telegram_user_id: int) -> bool:
         if self.database is None or self.database.project_id is None:

@@ -556,7 +556,10 @@ async def test_bindtopic_replaces_uncertain_claim_and_attaches_with_fresh_token(
     )
 
     class FakeAuthorization:
-        async def can_operate(self, telegram_user_id: int) -> bool:
+        async def can_execute(self, telegram_user_id: int, action: object) -> bool:
+            from resolvate.action_permissions import Action
+
+            assert action == Action.BIND_TOPIC
             return telegram_user_id == 7
 
     class FakeTicketService:
@@ -1151,7 +1154,10 @@ async def test_only_bot_quick_response_pin_service_message_is_deleted(
 
 
 @pytest.mark.parametrize("admin", [True, False])
-async def test_only_admin_can_resolve_inconclusive_panel_action(admin: bool) -> None:
+@pytest.mark.parametrize("policy_denied", [True, False])
+async def test_only_admin_can_resolve_inconclusive_panel_action(
+    admin: bool, policy_denied: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
     calls: list[dict[str, object]] = []
 
     class FakeTicketService:
@@ -1188,11 +1194,13 @@ async def test_only_admin_can_resolve_inconclusive_panel_action(admin: bool) -> 
     adapter.ticket_service = FakeTicketService()  # type: ignore[assignment]
     adapter.panel_service = FakePanelService()  # type: ignore[assignment]
     adapter.authorization.can_administer = AsyncMock(return_value=admin)  # type: ignore[method-assign]
+    if policy_denied:
+        monkeypatch.setattr("resolvate.authorization.allows_action", lambda *args, **kwargs: False)
     message = FakeMessage()
 
     await adapter.handle_group_message(message)  # type: ignore[arg-type]
 
-    if not admin:
+    if not admin or policy_denied:
         assert calls == []
         assert message.replies == ["⛔ Требуются права администратора проекта."]
         return

@@ -8,6 +8,7 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 
+from resolvate.action_permissions import Action
 from resolvate.authorization import AuthorizationService
 from resolvate.config import Settings
 from resolvate.statistics import STATISTICS_PERIODS, StatisticsService, SupportStatistics
@@ -139,8 +140,8 @@ class TelegramStatisticsDashboard:
         await self.statistics_service.save_dashboard(message_id=message.message_id, period=period)
 
     async def handle_statistics_callback(self, callback: CallbackQuery) -> None:
-        if callback.from_user is None or not await self.authorization.can_operate(
-            callback.from_user.id
+        if callback.from_user is None or not await self.authorization.can_execute(
+            callback.from_user.id, Action.STATISTICS
         ):
             await callback.answer("Недостаточно прав.", show_alert=True)
             return

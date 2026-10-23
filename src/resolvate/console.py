@@ -23,7 +23,6 @@ from resolvate.database import Database
 from resolvate.media_storage import LocalMediaStorage, MediaValidationError
 from resolvate.models import ConsoleAccount, ConsoleSession
 from resolvate.project_branding import MAX_LOGO_BYTES
-from resolvate.projects import membership
 from resolvate.quick_reply_catalog import QuickReplyCatalog
 from resolvate.service_types import TicketNotFoundError
 from resolvate.services import TicketService
@@ -235,7 +234,7 @@ def create_console(
             current = await auth.session_account(request)
             if current.id != actor.id:
                 raise HTTPException(401)
-            await membership(database, current)
+            await auth.authorize_project_action(request, current)
 
         await authorize()
         hub = database.console_events

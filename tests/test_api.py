@@ -62,6 +62,34 @@ def _client(app: Any) -> AsyncClient:
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
 
 
+async def test_operator_action_policy_runs_after_auth_before_body_and_mutation(
+    api_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from resolvate.action_permissions import Action, ActionActor
+
+    app, database, _, ticket = api_context
+    calls: list[Action | None] = []
+
+    def deny(actor: ActionActor, action: Action | None, *, project_id: str | None) -> bool:
+        assert actor.project_id == project_id == database.project_id
+        assert actor.actor_id == "operator-api"
+        assert not actor.administrator
+        calls.append(action)
+        return False
+
+    monkeypatch.setattr("resolvate.api.allows_action", deny)
+    async with _client(app) as client:
+        path = f"/api/v1/tickets/{ticket.id}/messages"
+        assert (await client.post(path, content="invalid JSON")).status_code == 401
+        assert calls == []
+        response = await client.post(
+            path, content="invalid JSON", headers={"X-API-Token": API_TOKEN}
+        )
+        assert response.status_code == 403
+        assert calls == [Action.SEND]
+        assert (await client.get("/health", headers={"X-API-Token": API_TOKEN})).status_code == 200
+
+
 async def test_non_ascii_auth_token_is_rejected_and_rate_limited(api_context: Any) -> None:
     app, _, _, _ = api_context
     async with _client(app) as client:
