@@ -17,11 +17,13 @@ from starlette.datastructures import UploadFile
 from resolvate.archive_media_storage import ArchiveStorageFull
 from resolvate.config import Settings
 from resolvate.console_auth import COOKIE, SESSION_SECONDS, ConsoleAuth, account_view, digest
+from resolvate.console_commands import register_commands
 from resolvate.console_folders import ConsoleFolders
 from resolvate.console_service import ConsoleService, delta
 from resolvate.database import Database
 from resolvate.media_storage import LocalMediaStorage, MediaValidationError
 from resolvate.models import ConsoleAccount, ConsoleSession
+from resolvate.panel import PanelService
 from resolvate.project_branding import MAX_LOGO_BYTES
 from resolvate.quick_reply_catalog import QuickReplyCatalog
 from resolvate.service_types import TicketNotFoundError
@@ -115,6 +117,7 @@ def create_console(
     storage: LocalMediaStorage,
     client_key: Callable[[Request], str],
     assets: Path = ASSETS,
+    panel_service: PanelService | None = None,
 ) -> FastAPI:
     assert settings.console_origin is not None
     auth = ConsoleAuth(database, settings.console_origin)
@@ -126,6 +129,7 @@ def create_console(
     app.state.auth = auth
     app.state.service = service
     app.state.thumbnails = thumbnails
+    register_commands(app, auth, tickets, panel_service)
     Identity = Annotated[ConsoleAccount, Depends(auth.require)]
     Actor = Annotated[ConsoleAccount, Depends(auth.project_actor)]
     Admin = Annotated[ConsoleAccount, Depends(auth.admin)]
@@ -396,6 +400,8 @@ def create_console(
             ):
                 raise HTTPException(422, "Неверный формат сообщения.")
             content = text_value.strip()
+            if content.startswith("/"):
+                raise HTTPException(422, "Команды выполняются отдельно и не отправляются клиенту.")
             if not content and upload is None:
                 raise HTTPException(422, "Введите сообщение или прикрепите файл.")
             if len(content) > (800 if upload else 3900):

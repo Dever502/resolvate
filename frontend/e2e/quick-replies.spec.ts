@@ -2,7 +2,7 @@ import type { APIRequestContext, BrowserContext, Page } from "@playwright/test";
 import { SESSION_COOKIE, expect, scenario, stubLog, test } from "./fixtures";
 
 // The quick replies picker in the composer (components/composer/Composer.vue, QuickReplies.vue): one
-// picker with its own search, opened by "/" typed into an empty reply box or by the button. The search
+// picker with its own search, opened by "#" typed into an empty reply box or by the button. The search
 // never changes the draft; a reply goes where the cursor (or the selection) was. Real focus, keys,
 // scrolling and layout; every test also fails on a CSP violation or a console error.
 const composer = (page: Page) => page.getByRole("textbox", { name: "Текст ответа" });
@@ -26,13 +26,13 @@ const cursor = (page: Page) => composer(page).evaluate((element: HTMLTextAreaEle
 const sends = async (request: APIRequestContext) => (await stubLog(request)).filter((entry) => entry.path.endsWith("/send")).length;
 
 test.describe("one picker, two ways in", () => {
-  test("\"/\" in an empty reply box: the search takes the focus and the next keys, the draft stays empty; Esc gives the focus back to the box", async ({ page, context, request, consoleErrors }) => {
+  test("\"#\" in an empty reply box: the search takes the focus and the next keys, the draft stays empty; Esc gives the focus back to the box", async ({ page, context, request, consoleErrors }) => {
     void consoleErrors;
     await start(page, context, request);
-    await composer(page).pressSequentially("/опл");
+    await composer(page).pressSequentially("#опл");
     await expect(search(page)).toBeFocused();
     await expect(search(page)).toHaveValue("опл");
-    await expect(groups(page).getByRole("option")).toHaveText(["/оплата"]);
+    await expect(groups(page).getByRole("option")).toHaveText(["#оплата"]);
     await expect(composer(page)).toHaveValue("");
     await expect(search(page)).toHaveAttribute("aria-controls", (await groups(page).getAttribute("id"))!);
     await expect(search(page)).toHaveAttribute("aria-activedescendant", (await groups(page).getByRole("option").first().getAttribute("id"))!);
@@ -57,7 +57,7 @@ test.describe("one picker, two ways in", () => {
     // An icon on the button; "/" is the keyboard's way in.
     await expect(button(page).locator("svg.icon")).toBeVisible();
     await expect(button(page).locator('span[aria-hidden="true"]')).toHaveCount(0);
-    await expect(button(page)).toHaveAttribute("aria-keyshortcuts", "/");
+    await expect(button(page)).toHaveAttribute("aria-keyshortcuts", "#");
     await button(page).click();
     await expect(search(page)).toBeFocused();
     await expect(search(page)).toHaveAttribute("placeholder", "Найти группу…");
@@ -66,7 +66,7 @@ test.describe("one picker, two ways in", () => {
     await expect(button(page)).toHaveAttribute("aria-expanded", "true");
     await expect(groups(page).getByRole("option")).toHaveCount(2);
     await page.keyboard.type("опл");
-    await expect(groups(page).getByRole("option")).toHaveText(["/оплата"]);
+    await expect(groups(page).getByRole("option")).toHaveText(["#оплата"]);
     await expect(composer(page)).toHaveValue("Черновик оператора");
     await page.keyboard.press("Escape");
     await expect(popup(page)).toBeHidden();
@@ -83,8 +83,8 @@ test.describe("one picker, two ways in", () => {
     await expect(popup(page)).toBeHidden();
     await composer(page).fill(" ");
     await composer(page).press("End");
-    await page.keyboard.type("/");
-    await expect(composer(page)).toHaveValue(" /");
+    await page.keyboard.type("#");
+    await expect(composer(page)).toHaveValue(" #");
     await expect(popup(page)).toBeHidden();
   });
 
@@ -92,7 +92,7 @@ test.describe("one picker, two ways in", () => {
     void consoleErrors;
     await start(page, context, request);
     const before = await sends(request);
-    await composer(page).pressSequentially("/");
+    await composer(page).pressSequentially("#");
     await expect(groups(page).getByRole("option")).toHaveCount(2);
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("Enter");
@@ -123,7 +123,7 @@ test.describe("one picker, two ways in", () => {
     await composer(page).evaluate((element: HTMLTextAreaElement) => element.setSelectionRange(14, 14));
     await button(page).click();
     await page.keyboard.type("опл");
-    await expect(groups(page).getByRole("option")).toHaveText(["/оплата"]);
+    await expect(groups(page).getByRole("option")).toHaveText(["#оплата"]);
     await page.keyboard.press("Enter");
     await expect(replies(page).getByRole("option")).toHaveCount(1);
     await page.keyboard.press("Enter");
@@ -154,7 +154,7 @@ test.describe("one picker, two ways in", () => {
     await expect(popup(page)).toBeHidden();
     await expect(button(page)).toBeFocused();
     await composer(page).focus();
-    await page.keyboard.type("/");
+    await page.keyboard.type("#");
     await page.getByRole("button", { name: "Закрыть готовые ответы" }).focus();
     await page.keyboard.press("Escape");
     await expect(popup(page)).toBeHidden();
@@ -168,7 +168,7 @@ test.describe("failures and layout", () => {
     void consoleErrors;
     await start(page, context, request);
     await page.route("**/console/projects/p1/reply-groups?*", (route) => route.fulfill({ status: 503, json: { detail: "Сервис недоступен." } }), { times: 1 });
-    await composer(page).pressSequentially("/");
+    await composer(page).pressSequentially("#");
     await expect(popup(page).getByRole("alert")).toHaveText(/Не удалось загрузить готовые ответы\./);
     await expect(page.getByText("Ничего не найдено")).toBeHidden();
     await expect(search(page)).toBeFocused();
@@ -215,7 +215,7 @@ test.describe("failures and layout", () => {
       await page.setViewportSize({ width, height: 800 });
       // Fifty groups and more: the results scroll under a still header and search.
       await start(page, context, request, { catalog: "large" });
-      await composer(page).pressSequentially("/");
+      await composer(page).pressSequentially("#");
       await expect(groups(page).getByRole("option")).toHaveCount(50);
       await expect(search(page)).toBeFocused();
       const head = (await popup(page).locator(".reply-options-head").boundingBox())!;
@@ -274,7 +274,7 @@ test.describe("failures and layout", () => {
   test("a list with nothing to scroll has no fade", async ({ page, context, request, consoleErrors }) => {
     void consoleErrors;
     await start(page, context, request);
-    await composer(page).pressSequentially("/");
+    await composer(page).pressSequentially("#");
     await expect(groups(page).getByRole("option")).toHaveCount(2);
     expect(await results(page).evaluate((element) => element.scrollHeight <= element.clientHeight)).toBe(true);
     await results(page).hover();
@@ -291,7 +291,7 @@ test.describe("failures and layout", () => {
       void consoleErrors;
       await page.emulateMedia({ forcedColors: "active" });
       await start(page, context, request, { catalog: "large" });
-      await composer(page).pressSequentially("/");
+      await composer(page).pressSequentially("#");
       await expect(groups(page).getByRole("option")).toHaveCount(50);
       await results(page).hover();
       await page.mouse.wheel(0, 240);

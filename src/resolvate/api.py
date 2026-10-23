@@ -24,6 +24,7 @@ from resolvate.config import Settings
 from resolvate.database import Database
 from resolvate.media_storage import LocalMediaStorage
 from resolvate.metrics import MetricsRegistry
+from resolvate.panel import PanelService
 from resolvate.runtime_defaults import (
     API_AUTH_FAILURE_LIMIT,
     API_AUTH_FAILURE_WINDOW_SECONDS,
@@ -95,6 +96,7 @@ def create_app(
     metrics: MetricsRegistry | None = None,
     media_storage: LocalMediaStorage | None = None,
     user_message_limiter: UserMessageRateLimiter | None = None,
+    panel_service: PanelService | None = None,
 ) -> FastAPI:
     if runtime_health is None:
         runtime_health = RuntimeHealth()
@@ -402,7 +404,14 @@ def create_app(
 
         app.mount(
             "/console",
-            create_console(database, ticket_service, settings, media_storage, client_key),
+            create_console(
+                database,
+                ticket_service,
+                settings,
+                media_storage,
+                client_key,
+                panel_service=panel_service,
+            ),
         )
 
     def custom_openapi() -> dict[str, Any]:

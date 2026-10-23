@@ -74,6 +74,7 @@ TELEGRAM_ACTIONS = {
 # Endpoint names, not user-controlled URL substrings. New endpoints require an
 # explicit mapping. Authentication, CSRF, RLS and write-time checks stay in place.
 CONSOLE_ACTIONS = {
+    "command_list": Action.READ,
     "events": Action.READ,
     "ticket_list": Action.READ,
     "ticket_detail": Action.READ,

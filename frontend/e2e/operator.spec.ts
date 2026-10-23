@@ -144,11 +144,11 @@ test.describe("operator flow", () => {
     await expect(history(page).locator("article.outgoing").last()).toContainText("черновик для Бориса");
   });
 
-  test("quick replies: / opens them, arrows move, Enter inserts, Esc closes, the focus comes back to the text field", async ({ page, context, request, consoleErrors }) => {
+  test("quick replies: # opens them, arrows move, Enter inserts, Esc closes, the focus comes back to the text field", async ({ page, context, request, consoleErrors }) => {
     void consoleErrors;
     await start(page, context, request);
     await openAnna(page);
-    await composer(page).pressSequentially("/");
+    await composer(page).pressSequentially("#");
     const search = page.getByRole("combobox", { name: "Поиск готовых ответов" });
     await expect(search).toBeFocused();
     const groups = page.getByRole("listbox", { name: "Группы ответов" });
@@ -168,7 +168,7 @@ test.describe("operator flow", () => {
     await expect(composer(page)).toBeFocused();
 
     await composer(page).fill("");
-    await composer(page).pressSequentially("/нет такого");
+    await composer(page).pressSequentially("#нет такого");
     await expect(page.getByText("Ничего не найдено")).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(replies).toBeHidden();
@@ -185,7 +185,7 @@ test.describe("operator flow", () => {
     await page.locator(".composer").getByRole("button", { name: "Готовые ответы" }).click();
     await page.getByRole("combobox", { name: "Поиск готовых ответов" }).fill("опл");
     const groups = page.getByRole("listbox", { name: "Группы ответов" });
-    await expect(groups.getByRole("option")).toHaveText(["/оплата"]);
+    await expect(groups.getByRole("option")).toHaveText(["#оплата"]);
     await groups.getByRole("option").click();
     const replies = page.getByRole("listbox", { name: "Готовые ответы" });
     await expect(replies.getByRole("option")).toHaveCount(1);

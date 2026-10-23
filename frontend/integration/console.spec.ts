@@ -81,6 +81,35 @@ test("administrator creates an employee and a project via the actual API and see
   await expect(row).toContainText("Выключен");
 });
 
+test("commands use the project API, notes stay internal, retries do not duplicate", async ({ page, consoleErrors }) => {
+  void consoleErrors;
+  await signIn(page, "operator");
+  await page.goto(`/console/?project=${FIRST}&ticket=${TICKET}`);
+  const input = page.getByRole("textbox", { name: "Текст ответа" });
+  await expect(input).toBeEditable();
+  await input.fill("/note ");
+  await expect(page.getByText("/note <текст> — Добавить", { exact: false })).toBeVisible();
+  await input.fill("/note Browser internal note");
+  const response = page.waitForResponse(r => r.url().endsWith(`/tickets/${TICKET}/commands/note`));
+  await input.press("Enter");
+  const answer = await response;
+  expect(answer.status(), await answer.text()).toBe(200);
+  await expect(page.getByRole("status").filter({ hasText: "Заметка добавлена." })).toBeVisible();
+  await page.reload();
+  await expect(input).toHaveValue("/note Browser internal note");
+  await expect(page.getByText("/note <текст> — Добавить", { exact: false })).toBeVisible();
+  await input.press("Enter");
+  await expect(page.getByRole("status").filter({ hasText: "Заметка добавлена." })).toBeVisible();
+  const me = await (await page.request.get("/console/me")).json();
+  const headers = { Origin: new URL(page.url()).origin, "X-CSRF-Token": me.csrf,
+    "X-Idempotency-Key": crypto.randomUUID() };
+  const notes = await page.request.post(`/console/projects/${FIRST}/tickets/${TICKET}/commands/notes`, { headers, data: {} });
+  expect(notes.status()).toBe(200);
+  expect((await notes.json()).message.match(/Browser internal note/g)).toHaveLength(1);
+  const foreign = await page.request.get(`/console/projects/${SECOND}/commands`);
+  expect([403, 404]).toContain(foreign.status());
+});
+
 test("a real multipart image is stored, rendered under CSP and still available after reload", async ({ page, consoleErrors }) => {
   void consoleErrors;
   await signIn(page, "operator");

@@ -353,8 +353,8 @@ for (const screen of SCREENS) {
       const groupList = catalog.getByRole("listbox", { name: "Группы" });
       await expect(groupList.getByRole("option").first()).toBeVisible();
       // On a phone the catalog shows one level at a time: the group is opened from the list of groups.
-      if (narrow) await groupList.getByRole("option", { name: "/общее" }).click();
-      const general = catalog.getByRole("region", { name: "Группа /общее", exact: true });
+      if (narrow) await groupList.getByRole("option", { name: "#общее" }).click();
+      const general = catalog.getByRole("region", { name: "Группа #общее", exact: true });
       await expect(general.getByRole("article")).toHaveCount(3);
       await calm(page);
       const catalogClose = catalog.getByRole("button", { name: "Закрыть", exact: true });
@@ -383,7 +383,7 @@ for (const screen of SCREENS) {
 
       await press(actions, "top left", touch);
       await page.getByRole("menuitem", { name: "Перенести" }).click();
-      const moveBack = catalog.getByRole("button", { name: "Назад к /общее" });
+      const moveBack = catalog.getByRole("button", { name: "Назад к #общее" });
       await expect(moveBack).toBeVisible();
       await calm(page);
       await expectTarget("back from moving", moveBack);

@@ -23,7 +23,7 @@ QUICK_RESPONSE_DELETE_CALLBACK_PREFIX = "quick_response_delete"
 QUICK_RESPONSE_DELETED_TEXT = "🗑 Ответ удалён"
 QUICK_RESPONSE_INSTRUCTION_TEXT = (
     "⚡ Готовые ответы\n\n"
-    "Найдите группу (например, /оплата) или текст через лупу Telegram. "
+    "Найдите группу (например, #оплата) или текст через лупу Telegram. "
     "Скопируйте текст из блока ответа и вставьте клиенту.\n\n"
     "Создание, изменение и удаление ответов — в веб-панели проекта. "
     "Этот топик обновляется автоматически. Новые ответы появляются в конце."
@@ -31,7 +31,7 @@ QUICK_RESPONSE_INSTRUCTION_TEXT = (
 
 
 def publication(response: QuickResponseView) -> tuple[str, list[MessageEntity]]:
-    heading = f"/{response.group_name}\n\n"
+    heading = f"#{response.group_name}\n\n"
     # Entities preserve literal HTML, backticks and emoji without parsing user content.
     return heading + response.text, [
         MessageEntity(

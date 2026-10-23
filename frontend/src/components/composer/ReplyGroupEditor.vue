@@ -13,7 +13,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ save: [name: string]; cancel: [] }>();
 const id = useId();
 const field = useTemplateRef<HTMLInputElement>("field");
-const name = ref(props.initial ? `/${props.initial}` : "");
+const name = ref(props.initial ? `#${props.initial}` : "");
 const problem = ref("");
 
 onMounted(() => {
@@ -23,7 +23,7 @@ onMounted(() => {
 
 function save(): void {
   if (props.busy) return;
-  problem.value = name.value.replace(/^\//, "").trim() ? "" : "Введите название группы.";
+  problem.value = name.value.replace(/^[#/]/, "").trim() ? "" : "Введите название группы.";
   if (problem.value) {
     field.value?.focus();
     return;
@@ -49,7 +49,7 @@ function cancel(event?: KeyboardEvent): void {
       maxlength="49"
       autocomplete="off"
       spellcheck="false"
-      placeholder="/оплата"
+      placeholder="#оплата"
       :aria-invalid="problem || error ? 'true' : undefined"
       :aria-describedby="problem || error ? `${id}-error` : undefined"
       @input="problem = ''"

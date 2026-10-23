@@ -346,6 +346,7 @@ async def _run_project(
             metrics=metrics,
             user_message_limiter=user_message_limiter,
             media_storage=web_media_storage,
+            panel_service=panel_service,
         )
     )
     runtime_health.ready("api")

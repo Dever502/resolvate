@@ -32,8 +32,8 @@ async function openCatalog(page: Page): Promise<Locator> {
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const groupList = (catalog: Locator) => catalog.getByRole("listbox", { name: "Группы" });
 const groupNav = (catalog: Locator) => catalog.getByRole("navigation", { name: "Группы ответов" });
-const group = (catalog: Locator, name: string) => groupList(catalog).getByRole("option", { name: `/${name}`, exact: true });
-const detail = (catalog: Locator, name: string) => catalog.getByRole("region", { name: `Группа /${name}`, exact: true });
+const group = (catalog: Locator, name: string) => groupList(catalog).getByRole("option", { name: `#${name}`, exact: true });
+const detail = (catalog: Locator, name: string) => catalog.getByRole("region", { name: `Группа #${name}`, exact: true });
 const results = (catalog: Locator) => catalog.getByRole("region", { name: "Результаты поиска" });
 /** A reply card by the beginning of its text (its accessible name is "Ответ: " and the text on one line). */
 const card = (scope: Locator, text: string) => scope.getByRole("article", { name: new RegExp(`^Ответ: ${escape(text)}`) });
@@ -58,7 +58,7 @@ async function replyAction(page: Page, scope: Locator, text: string, action: "И
 }
 
 async function groupAction(page: Page, catalog: Locator, name: string, action: "Переименовать" | "Удалить группу"): Promise<void> {
-  await catalog.getByRole("button", { name: `Действия с группой /${name}` }).click();
+  await catalog.getByRole("button", { name: `Действия с группой #${name}` }).click();
   await page.getByRole("menuitem", { name: action, exact: true }).click();
 }
 
@@ -147,7 +147,7 @@ test.describe("quick replies catalog", () => {
     expect(nav.x + nav.width).toBeLessThanOrEqual(right.x + 1);
     expect(Math.abs(nav.y - right.y)).toBeLessThanOrEqual(1);
     await expectApart(search(catalog), catalog.locator(".catalog-body"));
-    await expectApart(catalog.getByRole("heading", { name: "/общее" }), catalog.getByRole("button", { name: "Действия с группой /общее" }),
+    await expectApart(catalog.getByRole("heading", { name: "#общее" }), catalog.getByRole("button", { name: "Действия с группой #общее" }),
       general.getByRole("button", { name: "Добавить ответ" }));
     await expectApart(...(await general.getByRole("article").all()).slice(0, 4));
     expect(await catalog.evaluate((element) => element.scrollHeight <= element.clientHeight + 1)).toBe(true);
@@ -217,49 +217,49 @@ test.describe("quick replies catalog", () => {
     await name.press("Enter");
     await expect(catalog.getByText("Группа: 1–48 букв, цифр или знаков подчёркивания, без пробелов.")).toBeVisible();
     await expect(name).toHaveValue("две группы");
-    await name.fill("/Общее");
+    await name.fill("#Общее");
     await name.press("Enter");
     await expect(catalog.getByText("Такая группа уже существует.")).toBeVisible();
-    await name.fill("/VPN");
+    await name.fill("#VPN");
     await name.press("Enter");
-    await expect(status(catalog)).toHaveText("Группа /vpn создана.");
+    await expect(status(catalog)).toHaveText("Группа #vpn создана.");
     await expect(group(catalog, "vpn")).toHaveAttribute("aria-selected", "true");
     const vpn = detail(catalog, "vpn");
-    await expect(vpn.getByRole("heading", { name: "/vpn" })).toBeVisible();
+    await expect(vpn.getByRole("heading", { name: "#vpn" })).toBeVisible();
     await expect(vpn.getByText("В группе пока нет ответов.")).toBeVisible();
     await expect(vpn.getByRole("button", { name: "Добавить ответ" })).toBeFocused();
 
     await groupAction(page, catalog, "vpn", "Переименовать");
     const rename = catalog.getByRole("textbox", { name: "Новое название группы" });
     await expect(rename).toBeFocused();
-    await expect(rename).toHaveValue("/vpn");
+    await expect(rename).toHaveValue("#vpn");
     await page.keyboard.press("Escape");
     await expect(rename).toBeHidden();
-    await expect(catalog.getByRole("button", { name: "Действия с группой /vpn" })).toBeFocused();
+    await expect(catalog.getByRole("button", { name: "Действия с группой #vpn" })).toBeFocused();
     await groupAction(page, catalog, "vpn", "Переименовать");
-    await rename.fill("/vpn_доступ");
+    await rename.fill("#vpn_доступ");
     await rename.press("Enter");
-    await expect(status(catalog)).toHaveText("Группа переименована: /vpn_доступ.");
+    await expect(status(catalog)).toHaveText("Группа переименована: #vpn_доступ.");
     await expect(group(catalog, "vpn_доступ")).toHaveAttribute("aria-selected", "true");
     await expect(group(catalog, "vpn")).toHaveCount(0);
-    await expect(catalog.getByRole("button", { name: "Действия с группой /vpn_доступ" })).toBeFocused();
+    await expect(catalog.getByRole("button", { name: "Действия с группой #vpn_доступ" })).toBeFocused();
 
     // A group with replies is not deleted: the server's reason is shown, nothing is judged by the page.
     await group(catalog, "общее").click();
     await groupAction(page, catalog, "общее", "Удалить группу");
-    const refuse = page.getByRole("alertdialog", { name: "Удалить группу /общее?" });
+    const refuse = page.getByRole("alertdialog", { name: "Удалить группу #общее?" });
     await expect(refuse.getByRole("button", { name: "Отмена" })).toBeFocused();
     await refuse.getByRole("button", { name: "Удалить группу" }).click();
     await expect(refuse.getByText("Сначала перенесите или удалите ответы из группы.")).toBeVisible();
     await refuse.getByRole("button", { name: "Отмена" }).click();
     await expect(refuse).toBeHidden();
-    await expect(catalog.getByRole("button", { name: "Действия с группой /общее" })).toBeFocused();
+    await expect(catalog.getByRole("button", { name: "Действия с группой #общее" })).toBeFocused();
     await expect(group(catalog, "общее")).toBeVisible();
 
     await group(catalog, "vpn_доступ").click();
     await groupAction(page, catalog, "vpn_доступ", "Удалить группу");
-    await page.getByRole("alertdialog", { name: "Удалить группу /vpn_доступ?" }).getByRole("button", { name: "Удалить группу" }).click();
-    await expect(status(catalog)).toHaveText("Группа /vpn_доступ удалена.");
+    await page.getByRole("alertdialog", { name: "Удалить группу #vpn_доступ?" }).getByRole("button", { name: "Удалить группу" }).click();
+    await expect(status(catalog)).toHaveText("Группа #vpn_доступ удалена.");
     await expect(group(catalog, "vpn_доступ")).toHaveCount(0);
     await expect(groupList(catalog).getByRole("option", { selected: true })).toBeFocused();
   });
@@ -273,7 +273,7 @@ test.describe("quick replies catalog", () => {
     await expect(editor(catalog)).toHaveCount(0);
 
     await general.getByRole("button", { name: "Добавить ответ" }).click();
-    await expect(catalog.getByRole("heading", { name: "Новый ответ в /общее" })).toBeVisible();
+    await expect(catalog.getByRole("heading", { name: "Новый ответ в #общее" })).toBeVisible();
     await expect(editor(catalog)).toBeFocused();
     const save = catalog.getByRole("button", { name: "Добавить ответ" });
     await save.click();
@@ -291,17 +291,17 @@ test.describe("quick replies catalog", () => {
     await editor(catalog).pressSequentially("Проверьте настройки.");
     await expect(editor(catalog)).toHaveValue("Здравствуйте!\nПроверьте настройки.");
     // Enter only started a line: nothing was sent.
-    await expect(catalog.getByRole("heading", { name: "Новый ответ в /общее" })).toBeVisible();
+    await expect(catalog.getByRole("heading", { name: "Новый ответ в #общее" })).toBeVisible();
     expect((await stubLog(request)).filter((entry) => entry.method === "POST" && entry.path === `${API}/replies`)).toHaveLength(0);
     await save.click();
-    await expect(status(catalog)).toHaveText("Ответ добавлен в /общее.");
+    await expect(status(catalog)).toHaveText("Ответ добавлен в #общее.");
     const created = card(general, "Здравствуйте! Проверьте настройки.");
     await expect(created.locator(".catalog-reply-text")).toHaveJSProperty("innerText", "Здравствуйте!\nПроверьте настройки.");
     await expect(cardMenu(general, "Здравствуйте! Проверьте настройки.")).toBeFocused();
     await expect(general.getByRole("article")).toHaveCount(3);
 
     await replyAction(page, general, "Здравствуйте! Проверьте", "Изменить");
-    await expect(catalog.getByRole("heading", { name: "Изменение ответа в /общее" })).toBeVisible();
+    await expect(catalog.getByRole("heading", { name: "Изменение ответа в #общее" })).toBeVisible();
     await expect(editor(catalog)).toBeFocused();
     await expect(editor(catalog)).toHaveValue("Здравствуйте!\nПроверьте настройки.");
     // The caret waits at the end of the text.
@@ -315,7 +315,7 @@ test.describe("quick replies catalog", () => {
     // A long reply is cut in its card and shown whole in the editor.
     const long = Array.from({ length: 12 }, (_, line) => `Строка ${line + 1} длинного ответа.`).join("\n");
     await other(page, "replies", { group_id: "g1", text: long });
-    await catalog.getByRole("button", { name: "Действия с группой /общее" }).focus();
+    await catalog.getByRole("button", { name: "Действия с группой #общее" }).focus();
     await group(catalog, "оплата").click();
     await group(catalog, "общее").click();
     const text = card(general, "Строка 1 длинного").locator(".catalog-reply-text");
@@ -428,7 +428,7 @@ test.describe("quick replies catalog", () => {
     await group(catalog, "общее").click();
     const general = detail(catalog, "общее");
     await replyAction(page, general, "Спасибо за обращение", "Перенести");
-    await expect(catalog.getByRole("heading", { name: "Перенос ответа из /общее" })).toBeVisible();
+    await expect(catalog.getByRole("heading", { name: "Перенос ответа из #общее" })).toBeVisible();
     await expect(catalog.getByRole("searchbox", { name: "Найти группу для переноса" })).toBeFocused();
     const targets = catalog.getByRole("group", { name: "Куда перенести" });
     // The reply's own group is not offered.
@@ -442,20 +442,20 @@ test.describe("quick replies catalog", () => {
     await replyAction(page, general, "Спасибо за обращение", "Перенести");
     await catalog.getByRole("button", { name: "Перенести", exact: true }).click();
     await expect(catalog.getByText("Выберите группу, куда перенести ответ.")).toBeVisible();
-    await targets.getByRole("radio", { name: "/оплата" }).check();
+    await targets.getByRole("radio", { name: "#оплата" }).check();
     const find = catalog.getByRole("searchbox", { name: "Найти группу для переноса" });
     await find.fill("дост");
     await find.press("Enter");
     await expect(targets.getByRole("radio")).toHaveCount(1);
-    await expect(catalog.getByRole("heading", { name: "Перенос ответа из /общее" })).toBeVisible();
+    await expect(catalog.getByRole("heading", { name: "Перенос ответа из #общее" })).toBeVisible();
     expect((await serverReply(page, "g1", "2"))?.text).toBe("Спасибо за обращение, хорошего дня.");
     await find.fill("");
     await expect(targets.getByRole("radio")).toHaveCount(2);
-    await expect(targets.getByRole("radio", { name: "/оплата" })).toBeChecked();
+    await expect(targets.getByRole("radio", { name: "#оплата" })).toBeChecked();
     const sent = page.waitForRequest((item) => item.url().endsWith(`${API}/replies/2/edit`));
-    await catalog.getByRole("button", { name: "Перенести в /оплата" }).click();
+    await catalog.getByRole("button", { name: "Перенести в #оплата" }).click();
     expect((await sent).postDataJSON()).toEqual({ group_id: "g2", text: "Спасибо за обращение, хорошего дня.", revision: 0 });
-    await expect(status(catalog)).toHaveText("Ответ перенесён в /оплата.");
+    await expect(status(catalog)).toHaveText("Ответ перенесён в #оплата.");
     await expect(general.getByRole("article")).toHaveCount(1);
     await expect(cardMenu(general, "Здравствуйте! Чем могу")).toBeFocused();
     await group(catalog, "оплата").click();
@@ -481,11 +481,11 @@ test.describe("quick replies catalog", () => {
     const found = results(catalog);
     await expect(found.getByRole("heading", { name: "Поиск: «спасибо»" })).toBeVisible();
     await expect(found.getByRole("article")).toHaveCount(1);
-    await expect(found.getByRole("button", { name: "Открыть группу /общее" })).toBeVisible();
+    await expect(found.getByRole("button", { name: "Открыть группу #общее" })).toBeVisible();
     expect(asked.sort()).toEqual(["replies:спасибо", "reply-groups:спасибо"]);
 
     await search(catalog).fill("опл");
-    await expect(found.getByRole("button", { name: "/оплата" })).toBeVisible();
+    await expect(found.getByRole("button", { name: "#оплата" })).toBeVisible();
     await expect(found.getByRole("article")).toHaveCount(0);
     await search(catalog).fill("нет такого");
     await expect(found.getByText("Ничего не найдено по запросу «нет такого». Измените запрос или очистите поиск.")).toBeVisible();
@@ -502,35 +502,35 @@ test.describe("quick replies catalog", () => {
     await expect(catalog).toBeVisible();
     // A reply's group opens from the result; the search is cleared.
     await search(catalog).fill("тариф");
-    await found.getByRole("button", { name: "Открыть группу /оплата" }).click();
+    await found.getByRole("button", { name: "Открыть группу #оплата" }).click();
     await expect(search(catalog)).toHaveValue("");
     await expect(group(catalog, "оплата")).toHaveAttribute("aria-selected", "true");
     await expect(detail(catalog, "оплата").getByRole("button", { name: "Добавить ответ" })).toBeFocused();
     await search(catalog).fill("опл");
-    await found.getByRole("button", { name: "/оплата" }).click();
+    await found.getByRole("button", { name: "#оплата" }).click();
     await expect(detail(catalog, "оплата")).toBeVisible();
 
     // Inside the open group only.
     await group(catalog, "общее").click();
-    const inGroup = catalog.getByRole("button", { name: "В /общее" });
+    const inGroup = catalog.getByRole("button", { name: "В #общее" });
     await inGroup.click();
     await expect(inGroup).toHaveAttribute("aria-pressed", "true");
-    await expect(search(catalog)).toHaveAttribute("placeholder", "Найти в /общее…");
+    await expect(search(catalog)).toHaveAttribute("placeholder", "Найти в #общее…");
     await search(catalog).fill("спасибо");
     const general = detail(catalog, "общее");
     await expect(general.getByRole("article")).toHaveCount(1);
     await expect(results(catalog)).toHaveCount(0);
     await search(catalog).fill("тариф");
-    await expect(general.getByText("В /общее ничего не найдено по запросу «тариф».")).toBeVisible();
+    await expect(general.getByText("В #общее ничего не найдено по запросу «тариф».")).toBeVisible();
     await catalog.getByRole("button", { name: "Весь каталог" }).click();
-    await expect(found.getByRole("button", { name: "Открыть группу /оплата" })).toBeVisible();
+    await expect(found.getByRole("button", { name: "Открыть группу #оплата" })).toBeVisible();
     await catalog.getByRole("button", { name: "Очистить поиск" }).click();
     await expect(general.getByRole("article")).toHaveCount(2);
 
     // Edit from the results: the reply keeps its own group.
     await search(catalog).fill("тариф");
     await replyAction(page, found, "Проверьте, пожалуйста", "Изменить");
-    await expect(catalog.getByRole("heading", { name: "Изменение ответа в /оплата" })).toBeVisible();
+    await expect(catalog.getByRole("heading", { name: "Изменение ответа в #оплата" })).toBeVisible();
     await expect(search(catalog)).toBeDisabled();
     await editor(catalog).fill("Проверьте, пожалуйста, настройки тарифа в профиле.");
     await catalog.getByRole("button", { name: "Сохранить ответ" }).click();
@@ -564,17 +564,17 @@ test.describe("quick replies catalog", () => {
     await expect(found.getByRole("heading", { name: "Поиск: «Ответ номер»" })).toBeVisible();
     await expect(found.getByRole("article")).toHaveCount(50);
     // Every result names its group, even one beyond the loaded page of groups.
-    await expect(found.getByRole("button", { name: "Открыть группу /общее" })).toHaveCount(50);
+    await expect(found.getByRole("button", { name: "Открыть группу #общее" })).toHaveCount(50);
     await found.getByRole("button", { name: "Ещё ответы" }).click();
     await expect(found.getByRole("article")).toHaveCount(55);
     await expect(found.getByRole("button", { name: "Ещё ответы" })).toHaveCount(0);
 
     await search(catalog).fill("группа");
-    await expect(found.getByRole("button", { name: /^\/группа_/ })).toHaveCount(50);
+    await expect(found.getByRole("button", { name: /^\#группа_/ })).toHaveCount(50);
     await found.getByRole("button", { name: "Ещё группы" }).click();
-    await expect(found.getByRole("button", { name: /^\/группа_/ })).toHaveCount(55);
+    await expect(found.getByRole("button", { name: /^\#группа_/ })).toHaveCount(55);
     // A group from the second page opens from the results.
-    await found.getByRole("button", { name: "/группа_55" }).click();
+    await found.getByRole("button", { name: "#группа_55" }).click();
     await expect(detail(catalog, "группа_55")).toBeVisible();
   });
 
@@ -607,7 +607,7 @@ test.describe("quick replies catalog", () => {
     await expect(catalog.getByText(/^Этого ответа больше нет: его удалил или перенёс другой оператор/)).toBeVisible();
     await expect(editor(catalog)).toHaveValue("Спасибо! Хорошего дня.");
     await catalog.getByRole("button", { name: "Добавить ответ" }).click();
-    await expect(status(catalog)).toHaveText("Ответ добавлен в /общее.");
+    await expect(status(catalog)).toHaveText("Ответ добавлен в #общее.");
     await expect(card(general, "Спасибо! Хорошего дня.")).toBeVisible();
 
     // Changed before the deletion was confirmed: the fresh text is shown and asked again.
@@ -627,12 +627,12 @@ test.describe("quick replies catalog", () => {
     await group(catalog, "оплата").click();
     await groupAction(page, catalog, "оплата", "Переименовать");
     const rename = catalog.getByRole("textbox", { name: "Новое название группы" });
-    await rename.fill("/счета");
+    await rename.fill("#счета");
     await rename.press("Enter");
-    await expect(catalog.getByText("Группу изменил другой оператор, сейчас она называется /платежи. Сохраните новое название ещё раз или отмените.")).toBeVisible();
-    await expect(rename).toHaveValue("/счета");
+    await expect(catalog.getByText("Группу изменил другой оператор, сейчас она называется #платежи. Сохраните новое название ещё раз или отмените.")).toBeVisible();
+    await expect(rename).toHaveValue("#счета");
     await rename.press("Enter");
-    await expect(status(catalog)).toHaveText("Группа переименована: /счета.");
+    await expect(status(catalog)).toHaveText("Группа переименована: #счета.");
     await expect(group(catalog, "счета")).toHaveAttribute("aria-selected", "true");
     // Renaming changed the replies' revisions: an edit right after it still saves.
     await replyAction(page, detail(catalog, "счета"), "Проверьте, пожалуйста", "Изменить");
@@ -644,7 +644,7 @@ test.describe("quick replies catalog", () => {
     await group(catalog, "общее").click();
     await search(catalog).fill("тариф");
     await replyAction(page, results(catalog), "Проверьте тариф", "Изменить");
-    await expect(catalog.getByRole("heading", { name: "Изменение ответа в /счета" })).toBeVisible();
+    await expect(catalog.getByRole("heading", { name: "Изменение ответа в #счета" })).toBeVisible();
     await editor(catalog).fill("Тариф меняется в настройках профиля.");
     await other(page, "replies/3/edit", { group_id: "g2", text: "Тариф — в разделе «Оплата».", revision: (await serverReply(page, "g2", "3"))!.revision });
     await catalog.getByRole("button", { name: "Сохранить ответ" }).click();
@@ -718,7 +718,7 @@ test.describe("quick replies catalog", () => {
     await expect(save).toHaveText("Сохраняем…");
     await save.click({ force: true });
     await save.click({ force: true });
-    await expect(status(catalog)).toHaveText("Ответ добавлен в /общее.");
+    await expect(status(catalog)).toHaveText("Ответ добавлен в #общее.");
     expect((await stubLog(request)).filter((entry) => entry.method === "POST" && entry.path === `${API}/replies`)).toHaveLength(1);
     await expect(general.getByText("Ошибка сервера.")).toBeVisible();
     await general.getByRole("button", { name: "Повторить" }).click();
@@ -737,13 +737,13 @@ test.describe("quick replies catalog", () => {
     await other(page, "replies/3/edit", { group_id: "g1", text: "Проверьте, пожалуйста, настройки тарифа.", revision: 0 });
     await other(page, "reply-groups/g2/delete", { revision: (await serverGroup(page, "оплата")).revision });
     await catalog.getByRole("button", { name: "Добавить ответ" }).click();
-    await expect(catalog.getByText(/^Группы \/оплата больше нет: её удалил другой оператор. Скопируйте текст/)).toBeVisible();
+    await expect(catalog.getByText(/^Группы #оплата больше нет: её удалил другой оператор. Скопируйте текст/)).toBeVisible();
     await expect.poll(() => page.evaluate(() => Boolean(document.activeElement?.closest("form")?.querySelector("textarea")))).toBe(true);
     await expect(editor(catalog)).toHaveValue("Новый ответ про оплату");
     await expect(group(catalog, "оплата")).toHaveCount(0);
     await catalog.getByRole("button", { name: "Отмена" }).click();
     await page.getByRole("alertdialog", { name: "Не сохранять изменения?" }).getByRole("button", { name: "Не сохранять" }).click();
-    await expect(groupList(catalog).getByRole("option")).toHaveText(["/общее"]);
+    await expect(groupList(catalog).getByRole("option")).toHaveText(["#общее"]);
     await expect(groupList(catalog).getByRole("option").first()).toBeFocused();
   });
 
@@ -786,7 +786,7 @@ test.describe("quick replies catalog", () => {
     await expect(detail(catalog, "оплата").getByRole("article")).toHaveCount(1);
 
     await page.keyboard.press("Tab");
-    const groupMenu = catalog.getByRole("button", { name: "Действия с группой /оплата" });
+    const groupMenu = catalog.getByRole("button", { name: "Действия с группой #оплата" });
     await expect(groupMenu).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(page.getByRole("menuitem", { name: "Переименовать" })).toBeFocused();
@@ -833,8 +833,8 @@ test.describe("quick replies catalog", () => {
     const general = detail(catalog, "общее");
     await expect(general).toBeVisible();
     await expect(nav).toBeHidden();
-    await expectApart(general.getByRole("button", { name: "К списку групп" }), general.getByRole("heading", { name: "/общее" }),
-      general.getByRole("button", { name: "Действия с группой /общее" }), general.getByRole("button", { name: "Добавить ответ" }));
+    await expectApart(general.getByRole("button", { name: "К списку групп" }), general.getByRole("heading", { name: "#общее" }),
+      general.getByRole("button", { name: "Действия с группой #общее" }), general.getByRole("button", { name: "Добавить ответ" }));
     await expectInside(general.getByRole("button", { name: "Добавить ответ" }), catalog);
     await expectInside(card(general, "Здравствуйте! Чем могу"), catalog);
     await expectNoSidewaysScroll(page, catalog, 375);
@@ -848,7 +848,7 @@ test.describe("quick replies catalog", () => {
 
     await general.getByRole("button", { name: "Добавить ответ" }).click();
     await expect(editor(catalog)).toBeInViewport();
-    await expectApart(catalog.getByRole("button", { name: "Назад к ответам группы" }), catalog.getByRole("heading", { name: "Новый ответ в /общее" }));
+    await expectApart(catalog.getByRole("button", { name: "Назад к ответам группы" }), catalog.getByRole("heading", { name: "Новый ответ в #общее" }));
     await expectApart(editor(catalog), catalog.getByRole("button", { name: "Отмена" }), catalog.locator('form button[type="submit"]'));
     await expect(catalog.locator('form button[type="submit"]')).toBeInViewport();
     await catalog.getByRole("button", { name: "Назад к ответам группы" }).click();
@@ -906,7 +906,7 @@ test.describe("quick replies catalog", () => {
     const catalog = await openCatalog(page);
     await expect(groupList(catalog).getByRole("option")).toHaveCount(50);
     await search(catalog).fill("ябл");
-    await results(catalog).getByRole("button", { name: "/яблоко" }).click();
+    await results(catalog).getByRole("button", { name: "#яблоко" }).click();
     await expect(detail(catalog, "яблоко")).toBeVisible();
     const apple = await serverGroup(page, "яблоко");
     await other(page, `reply-groups/${apple.id}/rename`, { name: "яблоки", revision: apple.revision });
@@ -915,17 +915,17 @@ test.describe("quick replies catalog", () => {
     const rename = catalog.getByRole("textbox", { name: "Новое название группы" });
     await rename.fill("/фрукты");
     await rename.press("Enter");
-    await expect(catalog.getByText("Группу изменил другой оператор, сейчас она называется /яблоки. Сохраните новое название ещё раз или отмените.")).toBeVisible();
+    await expect(catalog.getByText("Группу изменил другой оператор, сейчас она называется #яблоки. Сохраните новое название ещё раз или отмените.")).toBeVisible();
     await rename.press("Escape");
     await expect(detail(catalog, "яблоки")).toBeVisible();
 
     await other(page, `reply-groups/${apple.id}/rename`, { name: "груши", revision: (await serverGroup(page, "яблоки")).revision });
     await groupAction(page, catalog, "яблоки", "Удалить группу");
-    await page.getByRole("alertdialog", { name: "Удалить группу /яблоки?" }).getByRole("button", { name: "Удалить группу" }).click();
-    const again = page.getByRole("alertdialog", { name: "Удалить группу /груши?" });
+    await page.getByRole("alertdialog", { name: "Удалить группу #яблоки?" }).getByRole("button", { name: "Удалить группу" }).click();
+    const again = page.getByRole("alertdialog", { name: "Удалить группу #груши?" });
     await expect(again.getByText("Группу изменил другой оператор: проверьте её и подтвердите удаление снова.")).toBeVisible();
     await again.getByRole("button", { name: "Удалить группу" }).click();
-    await expect(status(catalog)).toHaveText("Группа /груши удалена.");
+    await expect(status(catalog)).toHaveText("Группа #груши удалена.");
     await expect.poll(async () => (await (await page.request.get(`${API}/reply-groups?q=груши`)).json()).length).toBe(0);
   });
 
@@ -1108,9 +1108,9 @@ test.describe("quick replies catalog", () => {
     await general.getByRole("button", { name: "Добавить ответ" }).click();
     await editor(catalog).fill("Новый ответ");
     await catalog.locator('form button[type="submit"]').click();
-    await expect(status(catalog)).toHaveText("Ответ добавлен в /общее.");
+    await expect(status(catalog)).toHaveText("Ответ добавлен в #общее.");
     await page.clock.runFor(2500);
-    await expect(status(catalog)).toHaveText("Ответ добавлен в /общее.");
+    await expect(status(catalog)).toHaveText("Ответ добавлен в #общее.");
     await page.clock.runFor(1200);
     await expect(status(catalog)).toHaveCount(0);
     expect((await box(area)).y).toBe(top);
@@ -1209,7 +1209,7 @@ test.describe("quick replies catalog", () => {
     await general.getByRole("button", { name: "Добавить ответ" }).click();
     await editor(catalog).fill("Спасибо, что написали!");
     await catalog.locator('form button[type="submit"]').click();
-    await expect(status(catalog)).toHaveText("Ответ добавлен в /общее.");
+    await expect(status(catalog)).toHaveText("Ответ добавлен в #общее.");
     await shoot("phone-notice");
   });
 

@@ -73,7 +73,7 @@ defineExpose({ focus: () => menu.value?.focus() });
 <template>
   <article ref="card" class="catalog-reply" :aria-label="`Ответ: ${excerpt}`">
     <div class="min-w-0 flex-1">
-      <button v-if="group" type="button" class="catalog-reply-group" :aria-label="`Открыть группу /${group}`" @click="emit('openGroup')">/{{ group }}</button>
+      <button v-if="group" type="button" class="catalog-reply-group" :aria-label="`Открыть группу #${group}`" @click="emit('openGroup')">#{{ group }}</button>
       <p :id="`${id}-text`" ref="text" class="catalog-reply-text" :data-expanded="expanded || undefined">{{ reply.text }}</p>
       <div v-if="long" class="catalog-reply-more">
         <button type="button" class="quiet catalog-reply-toggle" :aria-expanded="expanded" :aria-controls="`${id}-text`" @click="toggle">

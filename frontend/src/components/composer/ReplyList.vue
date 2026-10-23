@@ -68,7 +68,7 @@ defineExpose({
 </script>
 
 <template>
-  <section class="flex min-h-0 min-w-0 flex-1 flex-col" :aria-label="`Группа /${group.name}`">
+  <section class="flex min-h-0 min-w-0 flex-1 flex-col" :aria-label="`Группа #${group.name}`">
     <div class="catalog-pane-head">
       <!-- A 44×44 hit area in the 44×36 room the head has for it. -->
       <button type="button" class="quiet -my-1 hidden min-h-11 min-w-11 narrow:-ml-2 narrow:inline-flex" aria-label="К списку групп" @click="emit('back')">
@@ -79,8 +79,8 @@ defineExpose({
           @save="(name) => emit('rename', name)" @cancel="cancelRename" />
       </div>
       <template v-else>
-        <h3 class="m-0 min-w-0 flex-1 truncate text-base" :title="`/${group.name}`">/{{ group.name }}</h3>
-        <ActionMenu ref="group-menu" :label="`Действия с группой /${group.name}`" :actions="groupActions" :disabled="busy" @choose="groupAction" />
+        <h3 class="m-0 min-w-0 flex-1 truncate text-base" :title="`#${group.name}`">#{{ group.name }}</h3>
+        <ActionMenu ref="group-menu" :label="`Действия с группой #${group.name}`" :actions="groupActions" :disabled="busy" @choose="groupAction" />
         <button ref="add" type="button" class="primary" :aria-disabled="busy || undefined" @click="!busy && emit('add')">
           <Icon name="plus" class="size-4" />
           Добавить ответ
@@ -94,9 +94,9 @@ defineExpose({
       </p>
       <p v-else-if="loading && !replies.length" class="muted m-1" role="status">Загружаем ответы…</p>
       <div v-else-if="!replies.length" class="catalog-empty">
-        <p class="m-0">{{ query ? `В /${group.name} ничего не найдено по запросу «${query}».` : "В группе пока нет ответов." }}</p>
+        <p class="m-0">{{ query ? `В #${group.name} ничего не найдено по запросу «${query}».` : "В группе пока нет ответов." }}</p>
       </div>
-      <ul v-else class="m-0 grid list-none gap-2.5 p-0" :aria-label="`Ответы группы /${group.name}`">
+      <ul v-else class="m-0 grid list-none gap-2.5 p-0" :aria-label="`Ответы группы #${group.name}`">
         <li v-for="reply in replies" :key="reply.id">
           <ReplyCard :ref="(card) => bindCard(reply.id, card)" :reply="reply" :busy="busy" @action="(key) => emit('action', reply, key)" />
         </li>

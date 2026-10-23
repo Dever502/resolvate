@@ -56,7 +56,7 @@ defineExpose({
         <h4 id="catalog-found-groups" class="muted small m-0 mb-1.5 font-semibold">Группы</h4>
         <ul class="m-0 flex list-none flex-wrap gap-1.5 p-0">
           <li v-for="group in groups" :key="group.id" class="max-w-full">
-            <button type="button" class="secondary max-w-full truncate" @click="emit('openGroup', group.id)">/{{ group.name }}</button>
+            <button type="button" class="secondary max-w-full truncate" @click="emit('openGroup', group.id)">#{{ group.name }}</button>
           </li>
         </ul>
         <button v-if="moreGroups" type="button" class="quiet mt-1" :aria-disabled="loading || undefined"
