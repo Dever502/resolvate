@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 import subprocess
 import tomllib
 from hashlib import sha256
@@ -394,8 +396,8 @@ def test_ci_console_jobs_keep_isolation_real_backend_and_diagnostics() -> None:
     ci, _ = _ci()
     jobs = ci["jobs"]
     browser = jobs["console"]
-    assert browser["strategy"]["matrix"] == {"shard": [1, 2]}
-    assert "--shard=${{ matrix.shard }}/2" in str(browser)
+    assert browser["strategy"]["matrix"] == {"shard": [1, 2, 3, 4]}
+    assert "--shard=${{ matrix.shard }}/4" in str(browser)
     assert "workers: 1" in (ROOT / "frontend/playwright.config.ts").read_text()
     engines = jobs["console_engines"]
     assert engines["strategy"]["matrix"]["browser"] == ["firefox", "webkit"]
@@ -416,6 +418,34 @@ def test_ci_console_jobs_keep_isolation_real_backend_and_diagnostics() -> None:
     assert "validate_project_database(database)" in server
     assert "disposable_postgres_database()" in server
     assert 'host="127.0.0.1"' in server
+
+
+def test_ci_browser_runtime_is_preinstalled_pinned_and_matches_lockfile() -> None:
+    ci, _ = _ci()
+    lock = json.loads((ROOT / "frontend/package-lock.json").read_text())
+    version = lock["packages"]["node_modules/@playwright/test"]["version"]
+    package = json.loads((ROOT / "frontend/package.json").read_text())
+    assert package["devDependencies"]["@playwright/test"] == version
+    images = set()
+    for name in ("console", "console_engines", "console_integration"):
+        job = ci["jobs"][name]
+        image = job["container"]["image"]
+        assert re.fullmatch(
+            rf"mcr\.microsoft\.com/playwright:v{re.escape(version)}-noble@sha256:[0-9a-f]{{64}}",
+            image,
+        )
+        images.add(image)
+        assert job["container"]["options"] == "--init --shm-size=1g"
+        commands = "\n".join(step.get("run", "") for step in job["steps"])
+        assert "playwright install" not in commands
+        assert "apt-get" not in commands
+        assert "npm ci --ignore-scripts" in commands
+        assert "playwright test" in commands
+    assert len(images) == 1
+    integration = ci["jobs"]["console_integration"]
+    # Job and service containers share a Docker network, not loopback.
+    assert "@postgres:5432/" in integration["env"]["TEST_POSTGRES_DATABASE_URL"]
+    assert "ports" not in integration["services"]["postgres"]
 
 
 def test_ci_postgres_parallelism_keeps_role_provisioning_serial() -> None:

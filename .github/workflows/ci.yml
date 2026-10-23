@@ -54,10 +54,15 @@ jobs:
     name: Console Chromium (shard ${{ matrix.shard }})
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    # Browsers and system libraries are baked in: no per-job apt mirror dependency.
+    # Keep all three images in sync with frontend/package-lock.json (test_release.py).
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
+      options: --init --shm-size=1g
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3, 4]
     steps:
       - name: Check out source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -74,17 +79,14 @@ jobs:
         if: matrix.shard == 1
         working-directory: frontend
         run: npm run check
-      - name: Build console for the second browser shard
+      - name: Build console for the remaining browser shards
         if: matrix.shard != 1
         working-directory: frontend
         run: npm run build
-      - name: Install Chromium for operator console browser tests
-        working-directory: frontend
-        run: npx playwright install --with-deps chromium
       - name: Run operator console browser tests
         working-directory: frontend
         # Each job owns its stub server; increasing workers against one shared stub is unsafe.
-        run: npx playwright test --project=chromium --shard=${{ matrix.shard }}/2
+        run: npx playwright test --project=chromium --shard=${{ matrix.shard }}/4
       - name: Upload browser failure diagnostics
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -98,6 +100,9 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
+      options: --init --shm-size=1g
     strategy:
       fail-fast: false
       matrix:
@@ -116,7 +121,6 @@ jobs:
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
           npm run build
-          npx playwright install --with-deps ${{ matrix.browser }}
       - name: Run browser tests
         working-directory: frontend
         run: npx playwright test --project=${{ matrix.browser }}
@@ -132,6 +136,9 @@ jobs:
     name: Console with real API and PostgreSQL
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
+      options: --init --shm-size=1g
     services:
       postgres:
         image: postgres:16.14-alpine3.22@sha256:786dab398303b8ce7cb76b407bb21ef2e4dfbbbd4c6abcf3d29b3130467ffdbc
@@ -144,10 +151,8 @@ jobs:
           --health-interval 1s
           --health-timeout 5s
           --health-retries 60
-        ports:
-          - 5432:5432
     env:
-      TEST_POSTGRES_DATABASE_URL: postgresql+asyncpg://resolvate_test:resolvate-test-only-password@127.0.0.1:5432/resolvate_test
+      TEST_POSTGRES_DATABASE_URL: postgresql+asyncpg://resolvate_test:resolvate-test-only-password@postgres:5432/resolvate_test
       ALLOW_POSTGRES_TEST_DATABASE_CREATION: "yes"
     steps:
       - name: Check out source
@@ -177,7 +182,6 @@ jobs:
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
           npm run build
-          npx playwright install --with-deps chromium
       - name: Test browser against real backend and restricted runtime role
         working-directory: frontend
         run: npx playwright test --config=playwright.integration.config.ts

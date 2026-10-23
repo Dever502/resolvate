@@ -495,13 +495,18 @@ Docker на `127.0.0.1:55432` (`POSTGRES_TEST_PORT` меняет порт) и у
 ### CI и публикация
 
 GitHub Actions параллельно выполняет статические проверки, четыре изолированных шарда Python-тестов,
-PostgreSQL matrix, два шарда Chromium и интеграционную проверку Vue с настоящим API/PostgreSQL.
+PostgreSQL matrix, четыре шарда Chromium и интеграционную проверку Vue с настоящим API/PostgreSQL.
 Каждый Python-шард использует четыре pytest worker; отдельный gate требует все четыре файла coverage
 и проверяет общий порог 75%. Распределение файлов использует измерения `scripts/pytest_timings.json`,
 для новых файлов — оценку по числу тестов и размеру. В каждом worker схема мигрируется один раз;
 каждый сервисный тест получает отдельную БД-копию, а не общую БД с очисткой таблиц. Тесты самих миграций
 по-прежнему начинают с пустой БД. Изменяющие роли кластера PostgreSQL-тесты остаются последовательными.
 У браузерных шардов отдельные серверы заглушек: увеличивать workers у одного общего сервера нельзя.
+Все браузерные jobs (включая интеграцию с API) работают в официальном Playwright-образе Ubuntu Noble
+с готовыми браузерами и системными библиотеками: `apt` и установка браузеров при каждом запуске
+не нужны. Образ закреплён digest; при обновлении Playwright в `frontend/package-lock.json` нужно
+синхронно обновить его версию и digest во всех трёх jobs. Соответствие проверяет `test_release.py`.
+Интеграционная job обращается к сервисному контейнеру БД по имени `postgres`, не через loopback.
 Firefox/WebKit полностью проверяются еженедельно и при ручном `workflow_dispatch`. Зависимости,
 слои BuildKit и vulnerability DB Trivy кэшируются, устаревшие прогоны одной ветки и типа события
 отменяются. Плановая или ручная проверка не отменяет push с публикацией образа.
@@ -522,7 +527,7 @@ Workflow не развёртывает приложение: [deploy и внеш
 
 Если required checks перечислены в GitHub Ruleset вручную, сверяйте их с именами jobs текущего workflow:
 `Static quality and policy checks`, `Unit tests (shard 0)` … `Unit tests (shard 3)`,
-`Combined coverage gate`, `PostgreSQL 16 matrix`, `Console Chromium (shard 1)` и `(shard 2)`,
+`Combined coverage gate`, `PostgreSQL 16 matrix`, `Console Chromium (shard 1)` … `Console Chromium (shard 4)`,
 `Console with real API and PostgreSQL`, `Build and verify candidate image`.
 При переименовании заменяйте устаревшие имена: проверка, которую workflow больше не запускает,
 будет бесконечно ожидаться и блокировать merge. Не назначайте обязательными для PR jobs,
