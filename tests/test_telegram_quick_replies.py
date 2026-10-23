@@ -55,11 +55,11 @@ async def test_web_reply_published_as_copyable_block_without_metadata(catalog_ru
     topic, service, _, _, _, reply = catalog_runtime
     await topic.ensure_quick_response_topic()
     sent = topic.bot.send_message.await_args.kwargs
-    assert sent["text"] == "/оплата\n\n" + reply["text"]
+    assert sent["text"] == "#оплата\n\n" + reply["text"]
     assert sent["parse_mode"] is None and "reply_markup" not in sent
     (entity,) = sent["entities"]
     assert entity.type == "pre"
-    assert entity.offset == len("/оплата\n\n")
+    assert entity.offset == len("#оплата\n\n")
     assert entity.length == len(reply["text"]) + 1
     saved = await service.get(int(reply["id"]))
     assert saved.published_revision == saved.revision
@@ -73,11 +73,28 @@ async def test_edit_and_group_rename_keep_message_identity(catalog_runtime):
     await catalog.save(actor, group["id"], "Новый текст", reply_id=int(reply["id"]), revision=0)
     await topic.ensure_quick_response_topic()
     topic.bot.send_message.assert_awaited_once()
-    assert topic.bot.edit_message_text.await_args.kwargs["text"] == "/оплата\n\nНовый текст"
+    assert topic.bot.edit_message_text.await_args.kwargs["text"] == "#оплата\n\nНовый текст"
     await catalog.change_group(actor, group["id"], 0, "платежи")
     await topic.ensure_quick_response_topic()
-    assert topic.bot.edit_message_text.await_args.kwargs["text"] == "/платежи\n\nНовый текст"
+    assert topic.bot.edit_message_text.await_args.kwargs["text"] == "#платежи\n\nНовый текст"
     assert (await service.get(int(reply["id"]))).published_message_id == 501
+
+
+async def test_restart_refreshes_existing_publications_with_hash_without_new_messages(
+    catalog_runtime,
+):
+    topic, service, _, _, _, reply = catalog_runtime
+    await topic.ensure_quick_response_topic()
+    assert await service.list_publication_candidates() == []
+    topic.bot.edit_message_text.reset_mock()
+    topic.initialize_quick_reply_runtime()
+    await topic.ensure_quick_response_topic()
+    topic.bot.send_message.assert_awaited_once()
+    assert any(
+        call.kwargs.get("message_id") == 501
+        and call.kwargs.get("text", "").startswith("#оплата\n\n")
+        for call in topic.bot.edit_message_text.await_args_list
+    )
 
 
 @pytest.mark.parametrize("old", [False, True])
@@ -192,7 +209,7 @@ async def test_block_offset_handles_unicode_group(catalog_runtime):
     _, service, _, _, _, reply = catalog_runtime
     view = await service.get(int(reply["id"]))
     rendered, entities = publication(replace(view, group_name="𐐨"))
-    assert rendered.startswith("/𐐨\n\n")
+    assert rendered.startswith("#𐐨\n\n")
     assert entities[0].offset == 5
 
 

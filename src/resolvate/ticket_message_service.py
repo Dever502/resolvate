@@ -146,8 +146,8 @@ class TicketMessageService(TicketServiceBase):
         operator_display_name: str | None,
         operator_username: str | None,
         note: str,
-        source_chat_id: int,
-        source_message_id: int,
+        source_chat_id: int | None,
+        source_message_id: int | None,
         idempotency_key: str,
     ) -> bool:
         async with self.database.session() as session:

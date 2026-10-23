@@ -54,15 +54,15 @@ describe("quick replies picker", () => {
     await flushPromises();
   }
 
-  it("\"/\" in an empty reply box opens the picker: the search takes the focus and the next keys, the draft stays empty", async () => {
+  it("\"#\" in an empty reply box opens the picker: the search takes the focus and the next keys, the draft stays empty", async () => {
     serve();
     const wrapper = mountAttached();
     await flushPromises();
-    expect(await type(wrapper, "/")).toBe(true);
+    expect(await type(wrapper, "#")).toBe(true);
     expect(useChatStore().draft?.text).toBe("");
     expect(wrapper.get("textarea").element.value).toBe("");
     expect(document.activeElement).toBe(searchField(wrapper).element);
-    expect(optionTexts(wrapper)).toEqual(["/общее", "/оплата"]);
+    expect(optionTexts(wrapper)).toEqual(["#общее", "#оплата"]);
     await searchField(wrapper).setValue("опл");
     await settle();
     expect(vi.mocked(useSessionStore().api)).toHaveBeenLastCalledWith("reply-groups?q=%D0%BE%D0%BF%D0%BB&offset=0", {}, "p1");
@@ -73,33 +73,33 @@ describe("quick replies picker", () => {
     wrapper.unmount();
   });
 
-  it("a \"/\" inside text, a pasted one and one from an IME composition are text", async () => {
+  it("a \"#\" inside text, a pasted one and one from an IME composition are text", async () => {
     serve();
     const wrapper = mountAttached();
     await flushPromises();
-    expect(await type(wrapper, "/", "insertFromPaste")).toBe(false);
-    expect(useChatStore().draft?.text).toBe("/");
+    expect(await type(wrapper, "#", "insertFromPaste")).toBe(false);
+    expect(useChatStore().draft?.text).toBe("#");
     useChatStore().edit("");
     wrapper.get("textarea").element.value = "";
-    expect(await type(wrapper, "/", "insertCompositionText", true)).toBe(false);
-    expect(useChatStore().draft?.text).toBe("/");
+    expect(await type(wrapper, "#", "insertCompositionText", true)).toBe(false);
+    expect(useChatStore().draft?.text).toBe("#");
     useChatStore().edit("https:");
     await flushPromises();
     const field = wrapper.get("textarea").element as HTMLTextAreaElement;
     field.setSelectionRange(6, 6);
-    expect(await type(wrapper, "/")).toBe(false);
-    expect(useChatStore().draft?.text).toBe("https:/");
+    expect(await type(wrapper, "#")).toBe(false);
+    expect(useChatStore().draft?.text).toBe("https:#");
     expect(wrapper.find(".reply-options").exists()).toBe(false);
     wrapper.unmount();
   });
 
-  it("a keyboard whose \"/\" cannot be cancelled: it is taken back out of the box and the picker opens", async () => {
+  it("a keyboard whose \"#\" cannot be cancelled: it is taken back out of the box and the picker opens", async () => {
     serve();
     const wrapper = mountAttached();
     await flushPromises();
     const field = wrapper.get("textarea").element as HTMLTextAreaElement;
-    field.value = "/";
-    field.dispatchEvent(new InputEvent("input", { data: "/", inputType: "insertText", bubbles: true }));
+    field.value = "#";
+    field.dispatchEvent(new InputEvent("input", { data: "#", inputType: "insertText", bubbles: true }));
     await settle();
     expect(field.value).toBe("");
     expect(useChatStore().draft?.text).toBe("");
@@ -147,7 +147,7 @@ describe("quick replies picker", () => {
     chat.drafts.get("t1")!.files.push(new File(["%PDF"], "a.pdf", { type: "application/pdf" }));
     const wrapper = mountAttached();
     await flushPromises();
-    await type(wrapper, "/");
+    await type(wrapper, "#");
     await searchField(wrapper).trigger("keydown", { key: "Enter" });
     await settle();
     await searchField(wrapper).trigger("keydown", { key: "ArrowDown" });
@@ -169,7 +169,7 @@ describe("quick replies picker", () => {
     const chat = useChatStore();
     const wrapper = mountAttached();
     await flushPromises();
-    await type(wrapper, "/");
+    await type(wrapper, "#");
     await searchField(wrapper).setValue("общ");
     await searchField(wrapper).trigger("keydown", { key: "Escape" });
     await flushPromises();
@@ -190,7 +190,7 @@ describe("quick replies picker", () => {
     const api = serve();
     const wrapper = mountAttached();
     await flushPromises();
-    await type(wrapper, "/");
+    await type(wrapper, "#");
     await searchField(wrapper).setValue("опл");
     await settle();
     await wrapper.findAll('[role="option"]')[0]!.trigger("click");
@@ -211,7 +211,7 @@ describe("quick replies picker", () => {
     const send = vi.spyOn(useChatStore(), "send");
     const wrapper = mountAttached();
     await flushPromises();
-    await type(wrapper, "/");
+    await type(wrapper, "#");
     await searchField(wrapper).setValue("опл");
     await searchField(wrapper).trigger("keydown", { key: "Enter" });
     expect(send).not.toHaveBeenCalled();
@@ -263,7 +263,7 @@ describe("quick replies picker", () => {
     await settle();
     expect(api).toHaveBeenCalledTimes(2);
     expect(wrapper.find('.reply-options [role="alert"]').exists()).toBe(false);
-    expect(optionTexts(wrapper)).toEqual(["/общее"]);
+    expect(optionTexts(wrapper)).toEqual(["#общее"]);
     wrapper.unmount();
   });
 
@@ -282,12 +282,12 @@ describe("quick replies picker", () => {
     expect(search.attributes("aria-activedescendant")).toBe(wrapper.findAll('[role="option"]')[1]!.attributes("id"));
     const button = wrapper.get('[aria-label="Готовые ответы"]');
     expect(button.attributes("aria-controls")).toBe(list.attributes("id"));
-    expect(button.attributes("aria-keyshortcuts")).toBe("/");
-    // An icon, not a "/" drawn on the button: "/" is the keyboard's way in.
+    expect(button.attributes("aria-keyshortcuts")).toBe("#");
+    // An icon, not a "#" drawn on the button: "#" is the keyboard's way in.
     expect(button.find("svg.icon").exists()).toBe(true);
     expect(button.element.querySelector('span[aria-hidden="true"]')).toBeNull();
     expect(button.attributes("aria-describedby")).toBeDefined();
-    expect(wrapper.get(`#${button.attributes("aria-describedby")}`).text()).toBe("Или «/» в пустом поле ответа");
+    expect(wrapper.get(`#${button.attributes("aria-describedby")}`).text()).toBe("Или «#» в пустом поле ответа");
     wrapper.unmount();
   });
 
@@ -295,7 +295,7 @@ describe("quick replies picker", () => {
     serve();
     const wrapper = mountAttached();
     await flushPromises();
-    await type(wrapper, "/");
+    await type(wrapper, "#");
     await searchField(wrapper).trigger("keydown", { key: "Enter", isComposing: true });
     await searchField(wrapper).trigger("keydown", { key: "Enter", keyCode: 229 });
     expect(wrapper.get('[role="listbox"]').attributes("aria-label")).toBe("Группы ответов");

@@ -71,8 +71,8 @@ describe("quick replies catalog", () => {
     open();
     await flushPromises();
     await type("дальн");
-    const label = document.body.querySelector('[aria-label="Открыть группу /общее"]');
-    expect(label?.textContent).toBe("/общее");
+    const label = document.body.querySelector('[aria-label="Открыть группу #общее"]');
+    expect(label?.textContent).toBe("#общее");
     expect(api.mock.calls.map(([path]) => path)).toContain("reply-groups?q=&offset=50");
   });
 });

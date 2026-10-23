@@ -11,14 +11,15 @@ import IconButton from "../ui/IconButton.vue";
 import QuickReplies from "./QuickReplies.vue";
 import AttachmentPreview from "./AttachmentPreview.vue";
 import SendAttemptNotice from "./SendAttemptNotice.vue";
+import CommandPicker from "./CommandPicker.vue";
 
 // The reply box. Every dialogue keeps its own draft (text and up to five files, picked, dropped or
 // pasted). Each message of a send is an attempt of its own (stores/chat.ts): one whose answer never
 // came stays above the box until it is sent again under its key or given up, and editing the draft
 // never changes it. Several files go one after another, the text as the first one's caption; the box
 // says how far they got. Enter sends, Shift+Enter starts a new line, IME composition is left alone.
-// Quick replies are one picker (QuickReplies.vue), opened by "/" typed into an empty reply box or by
-// the button: its own search field takes the focus, the "/" never reaches the draft, and the search
+// Quick replies are one picker (QuickReplies.vue), opened by "#" typed into an empty reply box or by
+// the button: its own search field takes the focus, the "#" never reaches the draft, and the search
 // never changes it. Arrows move through the options, Enter chooses, Esc closes. A reply goes where the
 // cursor (or the selection) was when the picker opened, the cursor right after it, and the focus back
 // to the text field; a picker closed without a reply gives the focus back to where it was opened.
@@ -35,6 +36,7 @@ const picker = useTemplateRef<HTMLInputElement>("picker");
 const attemptNotice = useTemplateRef<{ focusRetry: () => void }>("attempt-notice");
 const repliesPicker = useTemplateRef<{ focusSearch: () => void }>("replies-picker");
 const listId = useId();
+const commands = useTemplateRef<InstanceType<typeof CommandPicker>>("commands");
 const repliesButtonId = useId();
 const limitId = useId();
 const repliesOpen = ref(false);
@@ -46,7 +48,7 @@ const loading = ref(false);
 /** The last lookup failed: said in the list, with a retry, apart from "nothing found". */
 const failed = ref(false);
 const hasMore = ref(false);
-const options = computed(() => group.value ? replies.value : groups.value.map(g => ({ id: g.id, text: '/' + g.name })));
+const options = computed(() => group.value ? replies.value : groups.value.map(g => ({ id: g.id, text: '#' + g.name })));
 /** The text field's selection when the picker opened: a reply takes its place. */
 let insertAt = 0;
 let insertEnd = 0;
@@ -183,20 +185,20 @@ async function openReplies(from: "field" | "button"): Promise<void> {
   repliesPicker.value?.focusSearch();
 }
 
-/** "/" typed into an empty reply box (not a "/" inside text, a paste or an IME composition). */
-const slashIntoEmpty = (event: InputEvent): boolean =>
-  !event.isComposing && event.inputType === "insertText" && event.data === "/" && text.value === "" && Boolean(chat.draft);
+/** "#" typed into an empty reply box (not a "#" inside text, a paste or an IME composition). */
+const hashIntoEmpty = (event: InputEvent): boolean =>
+  !event.isComposing && event.inputType === "insertText" && event.data === "#" && text.value === "" && Boolean(chat.draft);
 
 function onBeforeInput(event: InputEvent): void {
-  if (!slashIntoEmpty(event)) return;
+  if (!hashIntoEmpty(event)) return;
   event.preventDefault();
   void openReplies("field");
 }
 
 function onInput(event: Event): void {
   const element = event.target as HTMLTextAreaElement;
-  // A keyboard whose "/" could not be cancelled (some on-screen ones): it is taken back out of the box.
-  if (event instanceof InputEvent && element.value === "/" && slashIntoEmpty(event)) {
+  // A keyboard whose "#" could not be cancelled (some on-screen ones): it is taken back out of the box.
+  if (event instanceof InputEvent && element.value === "#" && hashIntoEmpty(event)) {
     element.value = "";
     void openReplies("field");
     return;
@@ -206,6 +208,7 @@ function onInput(event: Event): void {
 }
 
 function openByButton(): void {
+  commands.value?.dismiss();
   if (repliesOpen.value) void dismiss();
   else void openReplies("button");
 }
@@ -263,6 +266,7 @@ function onPickerKeyDown(event: KeyboardEvent): void {
 
 function onKeyDown(event: KeyboardEvent): void {
   if (event.isComposing || event.keyCode === 229) return;
+  if (commands.value?.keydown(event)) return;
   if (event.key === "Enter" && !event.shiftKey) {
     event.preventDefault();
     void submit();
@@ -271,6 +275,7 @@ function onKeyDown(event: KeyboardEvent): void {
 
 async function submit(): Promise<void> {
   if (chat.sending) return;
+  if (text.value.trimStart().startsWith("/")) { await commands.value?.execute(); return; }
   closeReplies();
   const outcome = await chat.send();
   await nextTick();
@@ -346,6 +351,8 @@ onUnmounted(closeReplies);
 
 <template>
   <div class="composer-area">
+    <CommandPicker ref="commands" :text="text" :has-files="withFiles" @focus="field?.focus()"
+      @insert="chat.edit($event); nextTick(() => { resize(); field?.focus(); })" />
     <QuickReplies v-if="repliesOpen" ref="replies-picker" :id="listId" :replies="options" :active="active"
       :group="group?.name ?? ''" :loading="loading" :failed="failed" :more="hasMore" :query="query"
       @choose="choose" @hover="active = $event" @back="back" @close="dismiss" @retry="search(query)"
@@ -378,8 +385,8 @@ onUnmounted(closeReplies);
         <Icon name="attach" />
       </IconButton>
       <input ref="picker" type="file" :accept="ACCEPT" multiple hidden @change="onFile" />
-      <IconButton :id="repliesButtonId" class="icon-button" label="Готовые ответы" description="Или «/» в пустом поле ответа"
-        :disabled="chat.sending || !chat.draft" aria-keyshortcuts="/" :aria-expanded="repliesOpen"
+      <IconButton :id="repliesButtonId" class="icon-button" label="Готовые ответы" description="Или «#» в пустом поле ответа"
+        :disabled="chat.sending || !chat.draft" aria-keyshortcuts="#" :aria-expanded="repliesOpen"
         :aria-controls="repliesOpen ? listId : undefined" @click="openByButton"><Icon name="chat" /></IconButton>
       <textarea
         ref="field"
@@ -387,6 +394,8 @@ onUnmounted(closeReplies);
         rows="1"
         :placeholder="chat.draft ? 'Написать ответ…' : 'Черновик загружается…'"
         aria-label="Текст ответа"
+        :aria-controls="commands?.visible ? commands.id : undefined"
+        :aria-activedescendant="commands?.activeId"
         :disabled="chat.sending"
         :readonly="!chat.draft"
         :aria-invalid="overLimit || undefined"
@@ -409,7 +418,7 @@ onUnmounted(closeReplies);
       </template>
     </p>
     <div class="composer-hint">
-      <span><kbd>/</kbd> в пустом поле — готовые ответы</span>
+      <span><kbd>#</kbd> — готовые ответы · <kbd>/</kbd> — команды</span>
       <span class="compact:hidden"><kbd>Enter</kbd> отправить · <kbd>Shift Enter</kbd> новая строка</span>
     </div>
   </div>

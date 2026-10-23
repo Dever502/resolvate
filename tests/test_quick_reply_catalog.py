@@ -23,7 +23,8 @@ installation = installation_fixture
 
 
 @pytest.mark.parametrize(
-    "value,expected", [("/ОПЛАТА", "оплата"), ("VPN", "vpn"), ("refund_1", "refund_1")]
+    "value,expected",
+    [("#ОПЛАТА", "оплата"), ("/ОПЛАТА", "оплата"), ("VPN", "vpn"), ("refund_1", "refund_1")],
 )
 def test_group_names(value, expected):
     assert group_name(value) == expected

@@ -40,7 +40,9 @@ def test_transport_actions_are_explicit_and_share_business_permissions() -> None
     assert CONSOLE_ACTIONS["send"] == OPERATOR_API_ACTIONS["send_message"]
     # Keep newly added console endpoints from silently bypassing the policy.
     root = Path(__file__).resolve().parents[1] / "src" / "resolvate"
-    console = ast.parse((root / "console.py").read_text())
+    console = ast.parse(
+        "\n".join((root / name).read_text() for name in ("console.py", "console_commands.py"))
+    )
     actor_endpoints = {
         node.name
         for node in ast.walk(console)
@@ -50,7 +52,7 @@ def test_transport_actions_are_explicit_and_share_business_permissions() -> None
             for arg in node.args.args
         )
     }
-    assert actor_endpoints == set(CONSOLE_ACTIONS) | {"lifecycle"}
+    assert actor_endpoints == set(CONSOLE_ACTIONS) | {"lifecycle", "command_execute"}
     api = ast.parse((root / "api_routes.py").read_text())
     operator_endpoints = {
         node.name

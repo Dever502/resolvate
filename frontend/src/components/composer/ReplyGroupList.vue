@@ -85,9 +85,9 @@ defineExpose({
             :value="group.id"
             :data-revision="`${group.revision}:${group.name}`"
             class="catalog-group"
-            :title="`/${group.name}`"
+            :title="`#${group.name}`"
           >
-            /{{ group.name }}
+            #{{ group.name }}
           </ListboxItem>
         </ListboxContent>
       </ListboxRoot>

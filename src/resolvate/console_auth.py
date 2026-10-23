@@ -11,7 +11,13 @@ from sqlalchemy import delete, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from resolvate.action_permissions import CONSOLE_ACTIONS, Action, ActionActor, allows_action
+from resolvate.action_permissions import (
+    CONSOLE_ACTIONS,
+    TELEGRAM_ACTIONS,
+    Action,
+    ActionActor,
+    allows_action,
+)
 from resolvate.api_security import InMemoryRateLimiter
 from resolvate.database import Database
 from resolvate.models import AccessAudit, ConsoleAccount, ConsoleSession, Project, utcnow
@@ -123,6 +129,8 @@ class ConsoleAuth:
         project = await membership(self.database, account)
         endpoint = request.scope["route"].name
         action = CONSOLE_ACTIONS.get(endpoint)
+        if endpoint == "command_execute":
+            action = TELEGRAM_ACTIONS.get("/" + str(request.path_params.get("command", "")))
         if endpoint == "lifecycle":
             # Invalid path values still reach FastAPI's existing Literal validation.
             action = {"close": Action.CLOSE, "reopen": Action.REOPEN}.get(

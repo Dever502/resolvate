@@ -59,7 +59,7 @@ function takeCurrent(): void {
       <!-- A 44×44 hit area in the 44×36 room the head has for it. -->
       <button type="button" class="quiet -my-1 min-h-11 min-w-11 narrow:-ml-2" :aria-disabled="busy || undefined"
         aria-label="Назад к ответам группы" @click="!busy && emit('cancel')"><Icon name="back" /></button>
-      <h3 class="m-0 min-w-0 flex-1 truncate text-base">{{ mode === "create" ? `Новый ответ в /${group}` : `Изменение ответа в /${group}` }}</h3>
+      <h3 class="m-0 min-w-0 flex-1 truncate text-base">{{ mode === "create" ? `Новый ответ в #${group}` : `Изменение ответа в #${group}` }}</h3>
     </div>
     <div class="catalog-scroll grid content-start gap-3 p-4">
       <div v-if="current !== null" class="grid gap-2" role="group" aria-label="Версия другого оператора">

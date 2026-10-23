@@ -341,7 +341,7 @@ async function openGroup(id: string): Promise<void> {
 
 function groupGone(group: QuickReplyGroup): void {
   if (selected.value?.id === group.id) {
-    warning(`Группы /${group.name} больше нет: её удалил другой оператор.`);
+    warning(`Группы #${group.name} больше нет: её удалил другой оператор.`);
     selected.value = null;
     replies.value = [];
     renamingGroup.value = false;
@@ -455,14 +455,14 @@ async function saveReply(text: string): Promise<void> {
   if (panel.value !== current) return;
   if (!result.ok) {
     if (result.status === 404 && result.message === GROUP_GONE) {
-      panelError.value = `Группы /${current.group.name} больше нет: её удалил другой оператор. Скопируйте текст, прежде чем закрыть редактор.`;
+      panelError.value = `Группы #${current.group.name} больше нет: её удалил другой оператор. Скопируйте текст, прежде чем закрыть редактор.`;
       groupGone(current.group);
     } else if (reply && result.status === 404) missing(current);
     else if (reply && result.status === 409) await showConflict(current, reply);
     else panelError.value = result.message;
     return;
   }
-  success(reply ? "Ответ сохранён." : `Ответ добавлен в /${current.group.name}.`);
+  success(reply ? "Ответ сохранён." : `Ответ добавлен в #${current.group.name}.`);
   closePanel();
   await refresh();
   await focusList({ reply: result.value.id });
@@ -471,7 +471,7 @@ async function saveReply(text: string): Promise<void> {
 function missing(current: Extract<Panel, { kind: "editor" }>): void {
   panel.value = { ...current, missing: true };
   conflict.value = null;
-  panelError.value = `Этого ответа больше нет: его удалил или перенёс другой оператор. «Добавить ответ» сохранит ваш текст новым ответом в /${current.group.name}.`;
+  panelError.value = `Этого ответа больше нет: его удалил или перенёс другой оператор. «Добавить ответ» сохранит ваш текст новым ответом в #${current.group.name}.`;
 }
 
 async function showConflict(current: Extract<Panel, { kind: "editor" }>, reply: QuickReply): Promise<void> {
@@ -502,7 +502,7 @@ async function moveReply(target: QuickReplyGroup): Promise<void> {
   if (panel.value !== current) return;
   if (!result.ok) {
     if (result.status === 404 && result.message === GROUP_GONE) {
-      panelError.value = `Группы /${target.name} больше нет: её удалил другой оператор. Выберите другую группу.`;
+      panelError.value = `Группы #${target.name} больше нет: её удалил другой оператор. Выберите другую группу.`;
     } else if (result.status === 404) {
       closePanel();
       warning("Этого ответа больше нет: его удалил или перенёс другой оператор.");
@@ -530,7 +530,7 @@ async function moveReply(target: QuickReplyGroup): Promise<void> {
     return;
   }
   remember([target]);
-  success(`Ответ перенесён в /${target.name}.`);
+  success(`Ответ перенесён в #${target.name}.`);
   closePanel();
   await refresh();
   await focusNear(index);
@@ -585,7 +585,7 @@ async function createGroup(name: string): Promise<void> {
   const group = result.value;
   creatingGroup.value = false;
   remember([group]);
-  success(`Группа /${group.name} создана.`);
+  success(`Группа #${group.name} создана.`);
   void loadGroups();
   // A reply being edited meanwhile is not dropped: opening the new group asks first.
   guard(() => {
@@ -618,7 +618,7 @@ async function renameGroup(name: string): Promise<void> {
         return;
       }
       if (!fresh) groupGone(group);
-      else groupError.value = `Группу изменил другой оператор, сейчас она называется /${fresh.name}. Сохраните новое название ещё раз или отмените.`;
+      else groupError.value = `Группу изменил другой оператор, сейчас она называется #${fresh.name}. Сохраните новое название ещё раз или отмените.`;
     } else groupError.value = result.message;
     return;
   }
@@ -630,7 +630,7 @@ async function renameGroup(name: string): Promise<void> {
     remember([fresh]);
   }
   renamingGroup.value = false;
-  success(`Группа переименована: /${selected.value?.name ?? group.name}.`);
+  success(`Группа переименована: #${selected.value?.name ?? group.name}.`);
   void loadGroups();
   // Renaming changes the revision of every reply in the group: their fresh revisions are needed.
   void loadReplies();
@@ -673,7 +673,7 @@ async function removeGroup(): Promise<void> {
     return;
   }
   removingGroup.value = null;
-  success(`Группа /${group.name} удалена.`);
+  success(`Группа #${group.name} удалена.`);
   if (selected.value?.id === group.id) {
     selected.value = null;
     replies.value = [];
@@ -745,7 +745,7 @@ const loadTargets = (q: string, offset: number, signal: AbortSignal) =>
           v-model="query"
           type="search"
           maxlength="100"
-          :placeholder="inGroup ? `Найти в /${selected?.name}…` : 'Найти группу или ответ…'"
+          :placeholder="inGroup ? `Найти в #${selected?.name}…` : 'Найти группу или ответ…'"
           aria-label="Поиск в каталоге"
           :disabled="editing"
           @keydown.esc="query && ($event.stopPropagation(), clearSearch())"
@@ -757,7 +757,7 @@ const loadTargets = (q: string, offset: number, signal: AbortSignal) =>
       <div v-if="selected" class="catalog-scope" role="group" aria-label="Где искать">
         <button type="button" :aria-pressed="!inGroup" :disabled="editing" @click="scope = 'catalog'">Весь каталог</button>
         <button type="button" :aria-pressed="inGroup" :disabled="editing" class="max-w-48 truncate" @click="scope = 'group'">
-          В /{{ selected.name }}
+          В #{{ selected.name }}
         </button>
       </div>
     </div>
@@ -872,7 +872,7 @@ const loadTargets = (q: string, offset: number, signal: AbortSignal) =>
   </ConfirmDialog>
   <ConfirmDialog
     v-model:open="removingGroupOpen"
-    :title="`Удалить группу /${removingGroup?.name ?? ''}?`"
+    :title="`Удалить группу #${removingGroup?.name ?? ''}?`"
     description="Удалить можно только пустую группу. Если в ней ещё есть ответы, сначала перенесите или удалите их."
     confirm-label="Удалить группу"
     busy-label="Удаляем…"

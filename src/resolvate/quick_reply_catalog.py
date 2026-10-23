@@ -21,7 +21,9 @@ def _valid_text(value: str) -> bool:
 
 
 def group_name(value: str) -> str:
-    name = unicodedata.normalize("NFKC", value).strip().removeprefix("/").casefold()
+    name = unicodedata.normalize("NFKC", value).strip().casefold()
+    if name.startswith(("#", "/")):
+        name = name[1:]
     if (
         not 1 <= len(name) <= 48
         or not any(c.isalnum() for c in name)
@@ -77,11 +79,10 @@ class QuickReplyCatalog:
             raise HTTPException(422, "Некорректный текст поиска.")
         statement = select(QuickResponseGroup)
         if q:
-            statement = statement.where(
-                QuickResponseGroup.name.contains(
-                    unicodedata.normalize("NFKC", q).casefold().removeprefix("/"), autoescape=True
-                )
-            )
+            query = unicodedata.normalize("NFKC", q).casefold()
+            if query.startswith(("#", "/")):
+                query = query[1:]
+            statement = statement.where(QuickResponseGroup.name.contains(query, autoescape=True))
         async with self.database.session() as session:
             rows = await session.scalars(
                 statement.order_by(QuickResponseGroup.name, QuickResponseGroup.id)
@@ -144,7 +145,7 @@ class QuickReplyCatalog:
                     )
                 )
                 if any(
-                    utf16_code_units(f"/{normalized}\n\n" + body) > 4096 for body in legacy_texts
+                    utf16_code_units(f"#{normalized}\n\n" + body) > 4096 for body in legacy_texts
                 ):
                     raise HTTPException(
                         409, "Сначала сократите длинные ответы в этой группе до 3900 символов."

@@ -79,8 +79,8 @@ onBeforeUnmount(() => {
     <div class="catalog-pane-head">
       <!-- A 44×44 hit area in the 44×36 room the head has for it. -->
       <button type="button" class="quiet -my-1 min-h-11 min-w-11 narrow:-ml-2" :aria-disabled="busy || undefined"
-        :aria-label="`Назад к /${from.name}`" @click="!busy && emit('cancel')"><Icon name="back" /></button>
-      <h3 class="m-0 min-w-0 flex-1 truncate text-base">Перенос ответа из /{{ from.name }}</h3>
+        :aria-label="`Назад к #${from.name}`" @click="!busy && emit('cancel')"><Icon name="back" /></button>
+      <h3 class="m-0 min-w-0 flex-1 truncate text-base">Перенос ответа из #{{ from.name }}</h3>
     </div>
     <div class="catalog-scroll grid content-start gap-3 p-4">
       <p class="catalog-version catalog-version-clamp">{{ reply.text }}</p>
@@ -108,7 +108,7 @@ onBeforeUnmount(() => {
           <div v-for="group in groups.filter((item) => item.id !== from.id)" :key="group.id" class="toggle-field">
             <input :id="`${id}-${group.id}`" type="radio" :name="id" :value="group.id" :checked="target?.id === group.id"
               @change="target = group; problem = ''" />
-            <label :for="`${id}-${group.id}`" class="min-w-0 [overflow-wrap:anywhere]">/{{ group.name }}</label>
+            <label :for="`${id}-${group.id}`" class="min-w-0 [overflow-wrap:anywhere]">#{{ group.name }}</label>
           </div>
           <p v-if="!groups.some((item) => item.id !== from.id)" class="muted m-0">
             {{ query.trim() ? "Таких групп нет." : "Других групп нет: сначала создайте группу." }}
@@ -122,7 +122,7 @@ onBeforeUnmount(() => {
     <div class="flex flex-wrap justify-end gap-2 border-t border-border px-4 py-3">
       <button type="button" class="quiet" :aria-disabled="busy || undefined" @click="!busy && emit('cancel')">Отмена</button>
       <button type="submit" class="primary" :aria-disabled="busy || undefined">
-        {{ busy ? "Переносим…" : target ? `Перенести в /${target.name}` : "Перенести" }}
+        {{ busy ? "Переносим…" : target ? `Перенести в #${target.name}` : "Перенести" }}
       </button>
     </div>
   </form>

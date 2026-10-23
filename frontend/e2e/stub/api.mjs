@@ -246,11 +246,11 @@ const isReplyBody = ({ group_id: groupId, text }) => typeof groupId === "string"
 const byNameAndId = (a, b) => Buffer.compare(Buffer.from(a.name), Buffer.from(b.name)) || Buffer.compare(Buffer.from(a.id), Buffer.from(b.id));
 
 /**
- * group_name(): NFKC, strip, one leading "/", lowercase; null when the result is not a valid name.
+ * group_name(): NFKC, strip, one leading "#" (legacy "/" accepted), lowercase; null if invalid.
  * toLowerCase() stands in for casefold(); they differ only for sharp s, Greek final sigma and Cherokee.
  */
 function groupName(value) {
-  const name = value.normalize("NFKC").replace(EDGES, "").replace(/^\//, "").toLowerCase();
+  const name = value.normalize("NFKC").replace(EDGES, "").replace(/^[#/]/, "").toLowerCase();
   return [...name].length <= 48 && /^[\p{L}\p{N}_]+$/u.test(name) && /[\p{L}\p{N}]/u.test(name) ? name : null;
 }
 
@@ -423,7 +423,7 @@ export async function handle(request, response, path, url, tools) {
     const offset = pageOffset(url);
     if ([...query].length > 100 || offset === null) return done(422, { detail: INVALID });
     if (!validText(query)) return done(422, { detail: BAD_QUERY });
-    const needle = query.normalize("NFKC").toLowerCase().replace(/^\//, "");
+    const needle = query.normalize("NFKC").toLowerCase().replace(/^[#/]/, "");
     return done(200, groups.filter((group) => group.name.includes(needle)).sort(byNameAndId).slice(offset, offset + PAGE));
   }
   if (rest === "reply-groups" && post) {
