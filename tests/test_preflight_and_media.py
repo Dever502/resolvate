@@ -1216,6 +1216,50 @@ async def test_only_admin_can_resolve_inconclusive_panel_action(
     assert message.replies == ["✅ Результат Remnawave зафиксирован; новые команды разблокированы."]
 
 
+async def test_synctopics_is_an_unknown_command_in_a_ticket_topic() -> None:
+    queued = AsyncMock(return_value=1)
+
+    class FakeTicketService:
+        queue_all_topic_reconciliations = queued
+
+        async def get_by_topic(self, topic_id: int) -> SimpleNamespace:
+            assert topic_id == 777
+            return SimpleNamespace(id="ticket-1", topic_id=777)
+
+    class FakeMessage:
+        def __init__(self) -> None:
+            self.from_user = SimpleNamespace(id=1, is_bot=False)
+            self.message_thread_id = 777
+            self.chat = SimpleNamespace(id=-100123)
+            self.message_id = 51
+            self.text = "/synctopics"
+            self.caption = None
+            self.replies: list[str] = []
+
+        async def reply(self, text: str) -> None:
+            self.replies.append(text)
+
+    adapter = object.__new__(TelegramSupportAdapter)
+    adapter.authorization = AuthorizationService(
+        Settings(
+            support_bot_token=SecretStr("test-token"),
+            support_group_id=-100123,
+            admin_telegram_ids={1},
+        )
+    )
+    adapter.ticket_service = FakeTicketService()  # type: ignore[assignment]
+    adapter.topic_archive = None
+    message = FakeMessage()
+
+    await adapter.handle_group_message(message)  # type: ignore[arg-type]
+
+    queued.assert_not_awaited()
+    assert message.replies == [
+        "❓ <b>Неизвестная команда</b>\n\n"
+        "<code>/synctopics</code> не выполнена. Сообщение не отправлено клиенту."
+    ]
+
+
 @pytest.mark.parametrize("edited", [False, True])
 async def test_blocked_customer_does_not_start_attachment_work(
     monkeypatch: pytest.MonkeyPatch, edited: bool

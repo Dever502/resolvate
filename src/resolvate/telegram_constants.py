@@ -36,7 +36,6 @@ TOPIC_COMMANDS = {
     "/note",
     "/notes",
     "/closeall",
-    "/synctopics",
     "/block",
     "/unblock",
 }

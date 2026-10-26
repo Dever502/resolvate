@@ -37,7 +37,6 @@ COMMANDS = {
     "block": ("Заблокировать клиента", ""),
     "unblock": ("Разблокировать клиента", ""),
     "closeall": ("Закрыть все тикеты проекта без уведомления", ""),
-    "synctopics": ("Синхронизировать темы проекта", ""),
 }
 PANEL = {"subinfo", "gift", "resetkey", "revokelink", "resetdevices", "resolvepanel"}
 READ = {"info", "subinfo", "notes"}
@@ -192,9 +191,6 @@ def register_commands(
         elif command == "closeall":
             closed = await tickets.close_all(operator_telegram_id=operator, idempotency_key=key)
             return f"Закрыто тикетов: {len(closed)}."
-        elif command == "synctopics":
-            queued = await tickets.queue_all_topic_reconciliations()
-            return f"Тем поставлено на синхронизацию: {queued}."
         return "Команда выполнена."
 
     @app.post("/tickets/{ticket_id}/commands/{command}")
