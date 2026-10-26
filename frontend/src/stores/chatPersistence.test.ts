@@ -15,7 +15,7 @@ import { useWorkspaceStore } from "./workspace";
 const operator = (id: string) => ({ id, login: id, name: id, role: "operator" as const, active: true, telegram_id: null });
 const anna: WorkScope = { account: "a1", project: "p1", ticket: "t1" };
 const detail = (id: string): TicketDetail => ({
-  id, display_name: id, username: null, channel: "telegram", status: "open", email: null, identity_value: null,
+  id, display_name: id, username: null, channel: "telegram", status: "open", email: null, identity_provider: "telegram", identity_value: null,
   remnawave_user_uuid: null, created_at: "2026-10-01T00:00:00Z", folder_id: null, folder_revision: 0,
 });
 const empty: MessagePage = { order: [], items: [], removed: [], reset: false, before: null, has_older: false };

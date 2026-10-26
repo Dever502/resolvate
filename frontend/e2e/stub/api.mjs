@@ -128,12 +128,21 @@ function view(item) {
   });
 }
 
+/** The ticket's identity as the server returns it: provider and value (ticket_service_base._ticket_view). */
+function identity(item) {
+  const telegram = item.channel === "telegram" ? 100000 + (Number.parseInt(item.id.replace(/\D/g, ""), 10) || 0) : null;
+  if (telegram !== null) return { email: item.email, telegram_user_id: telegram, identity_provider: "telegram", identity_value: String(telegram) };
+  if (item.email) return { email: item.email, telegram_user_id: null, identity_provider: "web_email", identity_value: item.email };
+  return { email: null, telegram_user_id: null, identity_provider: "web_external_id", identity_value: `site-customer-${item.id}` };
+}
+
 function detail(item) {
   return {
-    id: item.id, user_id: 1, telegram_user_id: item.channel === "telegram" ? 1000 : null, display_name: item.name,
+    id: item.id, user_id: 1, display_name: item.name,
     username: item.username, topic_id: null, status: item.status, created_at: item.created_at, updated_at: item.created_at,
     last_activity_at: history(item.id).at(-1).time, closed_at: null, close_cycle: 0, reopened: false, channel: item.channel,
-    email: item.email, identity_provider: item.channel, identity_value: item.channel === "web" ? `web-${item.id}` : null,
+    // As the server: a Telegram user's ID, else the site customer's email or own ID (UserIdentity.provider).
+    ...identity(item),
     remnawave_user_uuid: null, folder_id: item.folder_id, folder_revision: item.folder_revision,
   };
 }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from "vue";
-import { channelName } from "../../lib/format";
+import { customerFields } from "../../lib/customerFields";
 import { useChatStore } from "../../stores/chat";
 import Icon from "../ui/Icon.vue";
 import IconButton from "../ui/IconButton.vue";
@@ -10,19 +10,7 @@ import IconButton from "../ui/IconButton.vue";
 const open = defineModel<boolean>("open", { required: true });
 const chat = useChatStore();
 
-const fields = computed(() => {
-  const detail = chat.detail ?? chat.heading;
-  const all: [string, string | null | undefined][] = [
-    ["Имя", detail.display_name],
-    ["Канал", detail.channel ? channelName(detail.channel) : null],
-    ["Username", detail.username],
-    ["Email", chat.detail?.email],
-    ["Идентификатор", chat.detail?.identity_value],
-    ["Remnawave ID", chat.detail?.remnawave_user_uuid],
-    ["Первое обращение", chat.detail?.created_at ? new Date(chat.detail.created_at).toLocaleString("ru") : null],
-  ];
-  return all.filter((field): field is [string, string] => Boolean(field[1]));
-});
+const fields = computed(() => customerFields(chat.detail, chat.heading));
 
 function close(): void {
   open.value = false;
