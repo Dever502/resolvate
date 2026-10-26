@@ -101,10 +101,12 @@ test("commands use the project API, notes stay internal, retries do not duplicat
   await expect(page.getByText("/note <текст> — Добавить", { exact: false })).toBeVisible();
   await input.fill("/note Browser internal note");
   await input.press("Enter");
-  await expect(page.locator(".command-unknown")).toBeVisible();
+  await expect(page.locator(".command-unknown")).toContainText("Результат /note неизвестен");
   await page.reload();
+  await expect(page.locator(".command-unknown")).toContainText("Результат /note неизвестен");
   await expect(input).toHaveValue("/note Browser internal note");
   await expect(page.getByText("/note <текст> — Добавить", { exact: false })).toBeVisible();
+  // Repeated under the same key, the server answers as before and adds nothing.
   await input.press("Enter");
   await expect(page.locator('.command-toast-region[aria-live="polite"]')).toHaveText("Заметка добавлена.");
   await expect(input).toHaveValue("");
