@@ -57,12 +57,14 @@ test("lost command response and reload retain the key; invalid arguments and IME
   await input.dispatchEvent("keydown", { key: "Enter", isComposing: true });
   expect(keys).toHaveLength(0);
   await input.press("Enter");
-  await expect(page.getByRole("alert")).toContainText("прежний ключ");
+  await expect(page.locator(".command-unknown")).toContainText("Результат /note неизвестен");
   await page.reload();
+  // After the reload the receipt still says the outcome is unknown.
+  await expect(page.locator(".command-unknown")).toContainText("Результат /note неизвестен");
   await expect(input).toHaveValue("/note private text");
   await expect(page.getByText("/note <текст> — Добавить", { exact: false })).toBeVisible();
   await input.press("Enter");
-  await expect(page.getByRole("status").filter({ hasText: "Заметка добавлена" })).toBeVisible();
+  await expect(page.locator(".command-toast-region")).toHaveText("Заметка добавлена.");
   expect(keys).toHaveLength(2);
   expect(keys[0]).toBe(keys[1]);
   expect((await stubLog(request)).filter(item => item.path.endsWith("/send"))).toEqual([]);
