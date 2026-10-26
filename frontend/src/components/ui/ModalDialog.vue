@@ -38,8 +38,8 @@ const blocked = computed(() => props.locked || requests.value > 0);
       >
         <header class="flex items-start justify-between gap-4">
           <div class="min-w-0">
-            <DialogTitle class="m-0 text-xl [overflow-wrap:anywhere]">{{ title }}</DialogTitle>
-            <DialogDescription v-if="description" class="muted mt-2 mb-0 text-sm">{{ description }}</DialogDescription>
+            <DialogTitle class="m-0 text-xl text-balance [overflow-wrap:anywhere]">{{ title }}</DialogTitle>
+            <DialogDescription v-if="description" class="muted mt-2 mb-0 text-sm text-pretty">{{ description }}</DialogDescription>
           </div>
           <!-- A 44×44 hit area that takes no more room than the 38×36 button of the icon: the negative margins
                keep the title's width and the header's height, the extra reaches into the window's padding. -->

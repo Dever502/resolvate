@@ -34,8 +34,8 @@ const emit = defineEmits<{ confirm: []; closeAutoFocus: [event: Event] }>();
         @escape-key-down="(event: KeyboardEvent) => busy && event.preventDefault()"
         @close-auto-focus="(event: Event) => emit('closeAutoFocus', event)"
       >
-        <AlertDialogTitle class="m-0 text-xl">{{ title }}</AlertDialogTitle>
-        <AlertDialogDescription class="muted mt-2 mb-0 text-sm">{{ description }}</AlertDialogDescription>
+        <AlertDialogTitle class="m-0 text-xl text-balance">{{ title }}</AlertDialogTitle>
+        <AlertDialogDescription class="muted mt-2 mb-0 text-sm text-pretty">{{ description }}</AlertDialogDescription>
         <slot />
         <p v-if="error" class="error" role="alert">{{ error }}</p>
         <div class="mt-5 flex flex-wrap items-center justify-end gap-2">
