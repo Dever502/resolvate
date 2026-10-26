@@ -87,19 +87,34 @@ test("commands use the project API, notes stay internal, retries do not duplicat
   await page.goto(`/console/?project=${FIRST}&ticket=${TICKET}`);
   const input = page.getByRole("textbox", { name: "Текст ответа" });
   await expect(input).toBeEditable();
+  // The real server saves the first command, but its answer never reaches the UI.
+  // A reload must preserve that uncertain attempt; retry must use its original key.
+  const keys: string[] = [];
+  await page.route(`**/tickets/${TICKET}/commands/note`, async route => {
+    keys.push(route.request().headers()["x-idempotency-key"]!);
+    const answer = await route.fetch();
+    expect(answer.status(), await answer.text()).toBe(200);
+    if (keys.length === 1) await route.abort("connectionreset");
+    else await route.fulfill({ response: answer });
+  });
   await input.fill("/note ");
   await expect(page.getByText("/note <текст> — Добавить", { exact: false })).toBeVisible();
   await input.fill("/note Browser internal note");
-  const response = page.waitForResponse(r => r.url().endsWith(`/tickets/${TICKET}/commands/note`));
   await input.press("Enter");
-  const answer = await response;
-  expect(answer.status(), await answer.text()).toBe(200);
-  await expect(page.getByRole("status").filter({ hasText: "Заметка добавлена." })).toBeVisible();
+  await expect(page.locator(".command-unknown")).toBeVisible();
   await page.reload();
   await expect(input).toHaveValue("/note Browser internal note");
   await expect(page.getByText("/note <текст> — Добавить", { exact: false })).toBeVisible();
   await input.press("Enter");
-  await expect(page.getByRole("status").filter({ hasText: "Заметка добавлена." })).toBeVisible();
+  await expect(page.locator('.command-toast-region[aria-live="polite"]')).toHaveText("Заметка добавлена.");
+  await expect(input).toHaveValue("");
+  await expect(page.locator(".command-unknown")).toHaveCount(0);
+  expect(keys).toHaveLength(2);
+  expect(keys[0]).toBeTruthy();
+  expect(keys[1]).toBe(keys[0]);
+  await page.reload();
+  await expect(input).toBeEditable();
+  await expect(input).toHaveValue("");
   const me = await (await page.request.get("/console/me")).json();
   const headers = { Origin: new URL(page.url()).origin, "X-CSRF-Token": me.csrf,
     "X-Idempotency-Key": crypto.randomUUID() };
