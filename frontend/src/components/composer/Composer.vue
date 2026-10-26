@@ -208,7 +208,7 @@ function onInput(event: Event): void {
 }
 
 function openByButton(): void {
-  commands.value?.dismiss();
+  commands.value?.close();
   if (repliesOpen.value) void dismiss();
   else void openReplies("button");
 }

@@ -463,6 +463,15 @@
   .reply-option { width: 100%; padding: .75rem; border-radius: 7px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; cursor: pointer; }
   .reply-options-error { margin: .5rem; color: var(--danger); font-size: .875rem; }
   .reply-option[aria-selected="true"] { background: var(--accent-soft); }
+  /* Commands (CommandPicker.vue) use the same pop-up: their hint, error and result are inside it too, so no state of a
+     command takes room in the reply area. Long text wraps; a long result scrolls in the body, the buttons stay below. */
+  .command-status { margin: .25rem .5rem; color: var(--muted); font-size: .875rem; }
+  .command-hint { margin: .375rem .5rem; color: var(--muted); font-size: .8125rem; overflow-wrap: anywhere; }
+  .command-alert { margin: .5rem; padding: .5rem .75rem; border: 1px solid var(--warning-border); border-radius: var(--radius-control); background: var(--warning-bg); color: var(--warning-text); font-size: .875rem; overflow-wrap: anywhere; }
+  /* Kept in the page while empty (a live region added with its text is not always announced): room only with a result. */
+  .command-result { margin: 0; font-size: .875rem; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .command-result[data-filled] { margin: .5rem; padding: .625rem .75rem; border-radius: var(--radius-control); background: var(--subtle); }
+  .command-actions { display: flex; flex: none; flex-wrap: wrap; gap: .25rem; padding: .125rem .5rem; border-top: 1px solid var(--border); }
 
   /* Administration: the app bar menu, rows of projects, members and accounts, forms and the
      employee search (staff/StaffPicker.vue, a Reka combobox). */
