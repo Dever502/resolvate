@@ -339,10 +339,6 @@ class TelegramOperatorHandlers(
             )
             await message.reply(f"✅ Закрыто тикетов: <b>{len(closed)}</b>.")
             return
-        if command == "/synctopics":
-            queued = await self.ticket_service.queue_all_topic_reconciliations()
-            await message.reply(f"✅ Темы поставлены на синхронизацию: <b>{queued}</b>.")
-            return
         if command == "/block":
             changed = await self.ticket_service.block_ticket(
                 ticket_id=ticket.id,

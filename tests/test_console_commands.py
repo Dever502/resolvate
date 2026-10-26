@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from resolvate.action_permissions import TELEGRAM_ACTIONS
 from resolvate.console_commands import COMMANDS, plain, register_commands, validate_arguments
-from resolvate.models import OperatorAction
+from resolvate.models import OperatorAction, ReconciliationOutbox, WorkStatus
 from resolvate.panel import PanelActionResult, PanelService
 
 console = test_console.console
@@ -167,7 +167,6 @@ async def test_command_rechecks_membership_and_session(console):
         ("block", "block_ticket", None),
         ("unblock", "unblock_ticket", None),
         ("closeall", "close_all", []),
-        ("synctopics", "queue_all_topic_reconciliations", 1),
     ],
 )
 async def test_ticket_commands_dispatch_once(console, monkeypatch, command, method, value):
@@ -182,6 +181,40 @@ async def test_ticket_commands_dispatch_once(console, monkeypatch, command, meth
         )
         assert response.status_code == 200, response.text
     operation.assert_awaited_once()
+
+
+async def test_synctopics_is_neither_listed_nor_executable(console, monkeypatch):
+    client, _, tickets, _, _, _ = console
+    ticket = await customer(tickets)
+    operation = AsyncMock(return_value=1)
+    monkeypatch.setattr(tickets, "queue_all_topic_reconciliations", operation)
+    available = await client.get("/console/commands")
+    assert available.status_code == 200, available.text
+    assert "synctopics" not in {item["name"] for item in available.json()}
+    # A hand-made request is refused by the action policy, before any receipt or work.
+    denied = await client.post(
+        f"/console/tickets/{ticket}/commands/synctopics",
+        json={},
+        headers={"X-Idempotency-Key": str(uuid.uuid4())},
+    )
+    assert denied.status_code == 403, denied.text
+    operation.assert_not_awaited()
+
+
+async def test_internal_topic_synchronisation_still_requeues_topics(console):
+    _, database, tickets, _, _, _ = console
+    ticket = await customer(tickets)
+    assert await tickets.queue_all_topic_reconciliations() >= 1
+    async with database.session() as session:
+        job = await session.scalar(
+            select(ReconciliationOutbox).where(
+                ReconciliationOutbox.ticket_id == ticket,
+                ReconciliationOutbox.kind == "telegram_topic",
+            )
+        )
+    assert job is not None
+    assert job.status == WorkStatus.PENDING
+    assert job.payload == {"reason": "bulk_sync"}
 
 
 async def test_panel_reconciliation_requires_admin_and_read_commands_need_no_receipt(console):

@@ -819,6 +819,10 @@ class TicketLifecycleService(TicketTopicService):
         return True
 
     async def queue_all_topic_reconciliations(self) -> int:
+        """Internal maintenance only: requeues every ticket's topic in the installation.
+
+        Not an operator command in the console or in Telegram: it reaches all projects.
+        """
         async with self.database.session() as session:
             ticket_ids = list((await session.scalars(select(Ticket.id))).all())
             if not ticket_ids:

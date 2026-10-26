@@ -21,7 +21,6 @@ class Action(StrEnum):
     BLOCK = "customer.block"
     UNBLOCK = "customer.unblock"
     CLOSE_ALL = "ticket.close_all"
-    SYNC_TOPICS = "topic.sync"
     RETRY_TOPIC = "topic.retry"
     BIND_TOPIC = "topic.bind"
     SUBSCRIPTION = "subscription.read"
@@ -68,7 +67,6 @@ TELEGRAM_ACTIONS = {
     "/block": Action.BLOCK,
     "/unblock": Action.UNBLOCK,
     "/closeall": Action.CLOSE_ALL,
-    "/synctopics": Action.SYNC_TOPICS,
 }
 
 # Endpoint names, not user-controlled URL substrings. New endpoints require an
