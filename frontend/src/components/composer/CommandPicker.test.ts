@@ -67,3 +67,52 @@ it("an old command response cannot unlock a new account's send", async () => {
   expect(useChatStore().sending).toBe(true);
   expect(wrapper.text()).not.toContain("Private result");
 });
+
+it("every state of a command is inside the pop-up over the reply box, none in the reply area's flow", async () => {
+  vi.spyOn(useSessionStore(), "api").mockImplementation(async path => path === "commands" ? catalog : { status: "completed", message: "Готово" });
+  const wrapper = mount(CommandPicker, { props: { text: "/note private", hasFiles: false }, attachTo: document.body });
+  await flushPromises();
+  // The component renders the pop-up only: the hint, an error and a result are inside it.
+  const pop = () => wrapper.get(".reply-options");
+  expect(wrapper.html().trimStart()).toMatch(/^<div class="reply-options command-options"/);
+  expect(pop().get(".command-hint").text()).toContain("/note <текст> — Заметка");
+  await wrapper.vm.execute();
+  await flushPromises();
+  expect(pop().get('[role="status"][aria-label="Результат команды"]').text()).toBe("Готово");
+  await wrapper.setProps({ text: "/note" });
+  await wrapper.setProps({ text: "/note " });
+  await wrapper.vm.execute();
+  await flushPromises();
+  expect(pop().get('[role="alert"]').text()).toContain("Формат");
+});
+
+it("Escape without the list puts the pop-up away and keeps the text; a new error brings it back", async () => {
+  vi.spyOn(useSessionStore(), "api").mockResolvedValue(catalog);
+  const wrapper = mount(CommandPicker, { props: { text: "/note ", hasFiles: false } });
+  await flushPromises();
+  expect(wrapper.find(".reply-options").exists()).toBe(true);
+  const escape = new KeyboardEvent("keydown", { key: "Escape", cancelable: true });
+  expect(wrapper.vm.keydown(escape)).toBe(true);
+  expect(escape.defaultPrevented).toBe(true);
+  await flushPromises();
+  expect(wrapper.find(".reply-options").exists()).toBe(false);
+  expect(useChatStore().draft?.text).toBe("/note private");
+  await wrapper.vm.execute();
+  await flushPromises();
+  expect(wrapper.get('[role="alert"]').text()).toContain("Формат");
+});
+
+it("a tap outside puts the list away but keeps a result", async () => {
+  vi.spyOn(useSessionStore(), "api").mockImplementation(async path => path === "commands"
+    ? [{ name: "info", description: "Информация", arguments: "", mutation: false }]
+    : { status: "completed", message: "Только для оператора" });
+  const wrapper = mount(CommandPicker, { props: { text: "/info", hasFiles: false }, attachTo: document.body });
+  await flushPromises();
+  expect(wrapper.find('[role="listbox"]').exists()).toBe(true);
+  await wrapper.vm.execute();
+  await flushPromises();
+  document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+  await flushPromises();
+  expect(wrapper.find('[role="listbox"]').exists()).toBe(false);
+  expect(wrapper.get('[aria-label="Результат команды"]').text()).toBe("Только для оператора");
+});

@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, useId, watch } from "v
 import { useSessionStore } from "../../stores/session";
 import { useProjectsStore } from "../../stores/projects";
 import { useChatStore } from "../../stores/chat";
+import Icon from "../ui/Icon.vue";
 
 type Command = { name: string; description: string; arguments: string; mutation: boolean };
 type Receipt = { fingerprint: string; key: string };
@@ -16,6 +17,8 @@ const id = useId();
 const commands = ref<Command[]>([]);
 const active = ref(0);
 const dismissed = ref(false);
+/** The whole pop-up put away (Escape, its close button): the text stays, typing brings it back. */
+const closed = ref(false);
 const loading = ref(false);
 const error = ref("");
 const result = ref("");
@@ -23,12 +26,22 @@ const busy = ref(false);
 const scope = computed(() => `${session.account?.id}:${projects.currentId}:${chat.ticketId}`);
 const prefix = computed(() => /^\/[^\s]*$/.test(props.text.trimStart()));
 const visible = computed(() => prefix.value && !dismissed.value);
+// Everything the commands show (list, hint, error, result) is one pop-up over the reply box: it never takes room
+// in the reply area, so the history keeps its size whatever state the command is in.
+const open = computed(() => props.text.trimStart().startsWith("/") && !closed.value
+  && Boolean(visible.value || selected.value || error.value || result.value || busy.value));
 const options = computed(() => commands.value.filter(c => c.name.startsWith(props.text.trimStart().slice(1).toLowerCase())));
 const selected = computed(() => commands.value.find(c => c.name === props.text.trim().split(/\s/, 1)[0]?.slice(1)));
 const activeId = computed(() => visible.value && options.value[active.value] ? `${id}-${active.value}` : undefined);
 let generation = 0;
 
+// A new error or result is shown even if the pop-up was put away.
+watch([error, result], ([failure, answer]) => { if (failure || answer) closed.value = false; });
+
+/** Puts the list away; a hint, an error or a result stays (a tap on the history does not lose a result). */
 function dismiss(): void { dismissed.value = true; }
+/** Puts the whole pop-up away. */
+function close(): void { dismissed.value = true; closed.value = true; }
 function outside(event: PointerEvent): void {
   const target = event.target;
   if (target instanceof Node && !root.value?.parentElement?.contains(target)) dismiss();
@@ -57,11 +70,13 @@ watch(scope, () => {
   result.value = "";
   error.value = "";
   dismissed.value = false;
+  closed.value = false;
   if (props.text.trimStart().startsWith("/")) void load();
 });
 watch(() => props.text, (value, old) => {
   active.value = 0;
   dismissed.value = false;
+  closed.value = false;
   result.value = "";
   if (value.trimStart().startsWith("/") && !old?.trimStart().startsWith("/")) void load();
 }, { immediate: true });
@@ -74,7 +89,12 @@ function choose(index: number): void {
 }
 
 function keydown(event: KeyboardEvent): boolean {
-  if (!visible.value || event.isComposing || event.keyCode === 229) return false;
+  if (event.isComposing || event.keyCode === 229) return false;
+  // Without the list, Escape puts away what the pop-up still shows; the text stays.
+  if (!visible.value) {
+    if (event.key !== "Escape" || !open.value) return false;
+    event.preventDefault(); event.stopPropagation(); close(); return true;
+  }
   if (event.key === "Escape") {
     event.preventDefault(); event.stopPropagation(); dismissed.value = true; return true;
   }
@@ -136,6 +156,7 @@ async function execute(): Promise<void> {
   chat.sending = true;
   error.value = "";
   dismissed.value = true;
+  closed.value = false;
   try {
     const response = await session.api<{ status: string; message: string }>(
       `tickets/${ticket}/commands/${command.name}`,
@@ -159,33 +180,39 @@ function fresh(): void {
   result.value = ""; error.value = ""; emit("insert", "/");
 }
 
-defineExpose({ execute, keydown, dismiss, visible, activeId, id });
+defineExpose({ execute, keydown, dismiss, close, visible, activeId, id });
 </script>
 
 <template>
-  <div v-if="text.trimStart().startsWith('/')" ref="root" class="mb-2"
-    @keydown.esc.prevent.stop="dismiss(); emit('focus')">
-    <div v-if="visible" class="reply-options">
-      <div class="reply-options-head">
-        <span class="min-w-0 flex-1">Команды — отдельно от сообщений</span>
-        <button type="button" class="quiet min-h-11 min-w-11" aria-label="Закрыть команды"
-          @click="dismiss(); emit('focus')">×</button>
-      </div>
-      <p v-if="loading" role="status">Загрузка команд…</p>
-      <div :id="id" class="reply-options-body" role="listbox" aria-label="Доступные команды">
-        <div v-for="(command, index) in options" :id="`${id}-${index}`" :key="command.name"
-          class="reply-option" role="option" :aria-selected="active === index"
-          @mousedown.prevent @pointermove="active = index" @click="choose(index)">
-          <strong>/{{ command.name }}</strong> {{ command.arguments }} — {{ command.description }}
-        </div>
-        <p v-if="!loading && !options.length">Нет доступных команд</p>
-      </div>
-      <button v-if="error" type="button" class="quiet min-h-11" @click="load">Повторить загрузку команд</button>
+  <div v-if="open" ref="root" class="reply-options command-options" @keydown.esc.prevent.stop="close(); emit('focus')">
+    <!-- Positioned over the reply box (.reply-options, as the quick replies): nothing of it is in the reply area's flow. -->
+    <div class="reply-options-head">
+      <span class="min-w-0 flex-1 truncate">Команды — отдельно от сообщений</span>
+      <button type="button" class="quiet -ml-2 min-h-11 min-w-11" aria-label="Закрыть команды"
+        @click="close(); emit('focus')"><Icon name="close" /></button>
     </div>
-    <p v-if="selected" class="muted">/{{ selected.name }} {{ selected.arguments }} — {{ selected.description }}. Отправка выполнит команду, не сообщение клиенту.</p>
-    <p v-if="error" role="alert" class="notice">{{ error }}</p>
-    <p v-if="result" role="status" tabindex="0" aria-label="Результат команды"
-      class="max-h-[30dvh] overflow-auto whitespace-pre-wrap break-words">{{ result }}</p>
-    <button v-if="result || error" type="button" class="quiet min-h-11" :disabled="busy" @click="fresh">Новая команда</button>
+    <!-- One scrolling body: a long list, error or result scrolls inside the pop-up, its buttons stay below. -->
+    <div class="reply-options-body">
+      <template v-if="visible">
+        <p v-if="loading" class="command-status" role="status">Загрузка команд…</p>
+        <div :id="id" role="listbox" aria-label="Доступные команды">
+          <div v-for="(command, index) in options" :id="`${id}-${index}`" :key="command.name"
+            class="reply-option" role="option" :aria-selected="active === index"
+            @mousedown.prevent @pointermove="active = index" @click="choose(index)">
+            <strong>/{{ command.name }}</strong>{{ command.arguments ? ` ${command.arguments}` : "" }} — {{ command.description }}
+          </div>
+        </div>
+        <p v-if="!loading && !options.length" class="command-status">Нет доступных команд</p>
+      </template>
+      <p v-if="selected" class="command-hint">/{{ selected.name }}{{ selected.arguments ? ` ${selected.arguments}` : "" }} — {{ selected.description }}. Отправка выполнит команду, не сообщение клиенту.</p>
+      <p v-if="error" role="alert" class="command-alert">{{ error }}</p>
+      <!-- In the page while the pop-up is open, so the result is announced when it comes. -->
+      <p role="status" :tabindex="result ? 0 : undefined" :aria-label="result ? 'Результат команды' : undefined"
+        :data-filled="result ? '' : undefined" class="command-result">{{ result }}</p>
+    </div>
+    <div v-if="result || error" class="command-actions">
+      <button v-if="visible && error" type="button" class="quiet min-h-11" @click="load">Повторить загрузку команд</button>
+      <button v-if="result || error" type="button" class="quiet min-h-11" :disabled="busy" @click="fresh">Новая команда</button>
+    </div>
   </div>
 </template>
