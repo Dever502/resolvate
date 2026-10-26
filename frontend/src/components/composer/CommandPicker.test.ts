@@ -38,6 +38,41 @@ function api(answer: (path: string, options: { key?: string }) => unknown) {
 }
 const posts = (spy: ReturnType<typeof api>) => spy.mock.calls.filter(([path]) => path !== "commands");
 const dialog = () => document.querySelector<HTMLElement>('[role="alertdialog"]');
+it("a definitive retry rejection clears the unknown state and permits a new attempt", async () => {
+  let count = 0;
+  const spy = api(() => ++count === 1 ? new ApiError("Нет связи", 0) : new ApiError("Запрещено", 403));
+  const wrapper = mount(CommandPicker, { props: { text: "/note private", hasFiles: false } });
+  await flushPromises();
+  await wrapper.vm.execute();
+  await flushPromises();
+  expect(wrapper.find(".command-unknown").exists()).toBe(true);
+  await wrapper.vm.execute();
+  await flushPromises();
+  expect(sessionStorage.getItem(RECEIPT)).toBeNull();
+  expect(wrapper.find(".command-unknown").exists()).toBe(false);
+  expect(wrapper.get('[data-kind="rejected"]').text()).toContain("Запрещено");
+  await wrapper.vm.execute();
+  expect(posts(spy)[1]![1]?.key).toBe(posts(spy)[0]![1]?.key);
+  expect(posts(spy)[2]![1]?.key).not.toBe(posts(spy)[0]![1]?.key);
+});
+
+it.each(["completed", "rejected"])("a late %s response preserves a newer receipt in the same dialogue", async (outcome) => {
+  let finish!: (value: unknown) => void;
+  let reject!: (cause: unknown) => void;
+  api(() => new Promise((resolve, fail) => { finish = resolve; reject = fail; }));
+  const wrapper = mount(CommandPicker, { props: { text: "/note private", hasFiles: false } });
+  await flushPromises();
+  const request = wrapper.vm.execute();
+  await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+  // A component can go away while its request is pending; a later instance owns a new attempt.
+  wrapper.unmount();
+  const replacement = JSON.stringify({ key: "new-attempt", fingerprint: "new-fingerprint", command: "note", arguments: null });
+  sessionStorage.setItem(RECEIPT, replacement);
+  if (outcome === "completed") finish({ status: "completed", message: "Готово" });
+  else reject(new ApiError("Запрещено", 403));
+  await request;
+  expect(sessionStorage.getItem(RECEIPT)).toBe(replacement);
+});
 const button = (label: string) => [...document.querySelectorAll<HTMLButtonElement>("button")].find(item => item.textContent?.trim() === label);
 
 it("attachments prevent command execution without altering the draft", async () => {
@@ -157,7 +192,7 @@ it("two submits at once send one request", async () => {
   await flushPromises();
   const first = wrapper.vm.execute();
   const second = wrapper.vm.execute();
-  await flushPromises();
+  await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
   await wrapper.vm.execute();
   finish({ status: "completed", message: "Заметка добавлена." });
   await Promise.all([first, second]);
@@ -183,8 +218,10 @@ it("a change with consequences asks first: cancel sends nothing, confirm sends o
   await flushPromises();
   button("Продлить на 30 дней")!.click();
   button("Продлить на 30 дней")?.click();
-  await flushPromises();
-  expect(posts(spy)).toHaveLength(1);
+  await vi.waitFor(() => {
+    expect(posts(spy)).toHaveLength(1);
+    expect(dialog()).toBeNull();
+  });
   expect(posts(spy)[0]![1]).toMatchObject({ data: { arguments: "30" } });
   expect(sessionStorage.getItem(RECEIPT)).toBeNull();
 
@@ -205,7 +242,7 @@ it("an old command response cannot unlock a new account's send", async () => {
   const wrapper = mount(CommandPicker, { props: { text: "/note private", hasFiles: false } });
   await flushPromises();
   const running = wrapper.vm.execute();
-  await vi.waitFor(() => expect(useChatStore().sending).toBe(true));
+  await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
   useSessionStore().signOut();
   useSessionStore().signIn({ account: { ...account, id: "other" }, csrf: "new" });
   useChatStore().sending = true;

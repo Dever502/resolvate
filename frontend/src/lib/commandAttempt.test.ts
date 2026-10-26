@@ -24,6 +24,19 @@ describe("outcome", () => {
 });
 
 describe("receipts", () => {
+  it("settles only the expected key and preserves newer or unreadable receipts", () => {
+    const scope = "receipt-key-check";
+    writeReceipt(sessionStorage, scope, { fingerprint: "new", key: "new" });
+    removeReceipt(sessionStorage, scope, "old");
+    expect(readReceipt(sessionStorage, scope)?.key).toBe("new");
+    removeReceipt(sessionStorage, scope, "new");
+    expect(readReceipt(sessionStorage, scope)).toBeNull();
+    removeReceipt(sessionStorage, scope, "new");
+    sessionStorage.setItem(receiptKey(scope), "broken");
+    expect(() => removeReceipt(sessionStorage, scope, "old")).toThrow();
+    expect(sessionStorage.getItem(receiptKey(scope))).toBe("broken");
+    sessionStorage.removeItem(receiptKey(scope));
+  });
   it("keep the key and the arguments, never a note's text", () => {
     const gift = newReceipt("gift", "30", "f1");
     expect(gift).toMatchObject({ fingerprint: "f1", command: "gift", arguments: "30" });

@@ -47,7 +47,9 @@ export function writeReceipt(storage: Storage, scope: string, receipt: Receipt):
   storage.setItem(receiptKey(scope), JSON.stringify(receipt));
 }
 
-export function removeReceipt(storage: Storage, scope: string): void {
+/** A late response may settle only its own attempt, never a newer receipt in the same dialogue. */
+export function removeReceipt(storage: Storage, scope: string, expectedKey?: string): void {
+  if (expectedKey !== undefined && readReceipt(storage, scope)?.key !== expectedKey) return;
   storage.removeItem(receiptKey(scope));
 }
 

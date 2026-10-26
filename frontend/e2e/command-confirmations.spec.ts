@@ -290,6 +290,25 @@ test("a refusal, a server error, a lost answer and the deadline are told apart",
   await expect(popup(page).locator(".command-unknown")).toContainText("Ответ сервера не получен за минуту.");
 });
 
+test("a definitive refusal on retry clears the unknown banner and frees the next command", async ({ page, context, request, consoleErrors }) => {
+  void consoleErrors;
+  let lost = true;
+  const calls = await start(page, context, request, async (route) => {
+    if (lost) return route.abort("connectionreset");
+    return route.fulfill({ status: 403, json: { detail: "Нет права на это действие." } });
+  });
+  await enter(page, "/note контекст");
+  await expect(popup(page).locator(".command-unknown")).toBeVisible();
+  lost = false;
+  await enter(page, "/note контекст");
+  await expect(popup(page).locator('[data-kind="rejected"]')).toHaveText("Нет права на это действие.");
+  await expect(popup(page).locator(".command-unknown")).toHaveCount(0);
+  expect(calls[1]!.key).toBe(calls[0]!.key);
+  await enter(page, "/note другой контекст");
+  await expect.poll(() => calls.length).toBe(3);
+  expect(calls[2]!.key).not.toBe(calls[0]!.key);
+});
+
 for (const width of [375, 320]) {
   test(`at ${width} px the confirmation and an unknown outcome fit the screen`, async ({ page, context, request, consoleErrors }) => {
     void consoleErrors;

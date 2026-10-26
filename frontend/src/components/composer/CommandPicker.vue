@@ -252,7 +252,7 @@ async function start(attempt: Attempt): Promise<void> {
     preparing.value = false;
   }
   if (attempt.scope !== scope.value || attempt.generation !== session.generation) {
-    removeReceipt(sessionStorage, attempt.scope);
+    removeReceipt(sessionStorage, attempt.scope, receipt.key);
     return;
   }
   await run(attempt, receipt.key, receipt);
@@ -285,11 +285,13 @@ async function run(attempt: Attempt, key: string, receipt?: Receipt): Promise<vo
   const settled = outcome(answer, failure);
   const here = scope.value === attempt.scope && session.generation === attempt.generation;
   if (receipt && settled !== "unknown") {
-    try { removeReceipt(sessionStorage, attempt.scope); } catch { /* left: it shows as unknown next time, never runs twice */ }
+    try { removeReceipt(sessionStorage, attempt.scope, receipt.key); } catch { /* left: it shows as unknown next time, never runs twice */ }
   }
   if (!here) return;
+  if (settled !== "unknown" && unknown.value?.scope === attempt.scope && unknown.value.receipt?.key === key) {
+    unknown.value = null;
+  }
   if (settled === "completed" && answer) {
-    if (unknown.value?.scope === attempt.scope) unknown.value = null;
     // Done: the command leaves the box, unless the operator has typed something else meanwhile.
     if (props.text.trim() === attempt.text) emit("insert", "");
     if (attempt.command.mutation && fitsNotice(answer.message)) {
