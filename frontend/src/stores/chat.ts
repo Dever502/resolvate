@@ -157,7 +157,8 @@ export const useChatStore = defineStore("chat", () => {
   const lifecycleBusy = ref(false);
   /** The ticket answered 403 or 404: it is not polled again until it is opened again. */
   const unavailable = ref(false);
-  const folderMove = reactive({ busy: false, status: "" });
+  /** The open dialogue's folder change: running, its last word and whether that word is a failure. */
+  const folderMove = reactive({ busy: false, status: "", failed: false });
   const change = ref<{ kind: HistoryChange; count: number }>({ kind: "initial", count: 0 });
   /** Address of the image shown in the viewer; closed with the dialogue. */
   const viewer = ref<string | null>(null);
@@ -466,6 +467,7 @@ export const useChatStore = defineStore("chat", () => {
     unavailable.value = false;
     folderMove.busy = false;
     folderMove.status = "";
+    folderMove.failed = false;
     viewer.value = null;
     if (jump.value?.ticket !== id) jump.value = null;
     // Until the stored draft is read the reply box waits: it never shows empty and then fills.
@@ -1039,13 +1041,17 @@ export const useChatStore = defineStore("chat", () => {
     folderMove.busy = true;
     detailRequest++; // A detail answer already on its way would show the old folder.
     folderMove.status = "Сохраняем…";
+    folderMove.failed = false;
     try {
       await session.api<FolderAssignment>(`tickets/${id}/folder`, {
         method: "POST", data: { folder_id: folderId, revision },
       }, currentProject);
       if (at === epoch) folderMove.status = "Сохранено для команды";
     } catch (error) {
-      if (at === epoch) folderMove.status = error instanceof Error ? error.message : "Не удалось перенести диалог.";
+      if (at === epoch) {
+        folderMove.status = error instanceof Error ? error.message : "Не удалось перенести диалог.";
+        folderMove.failed = true;
+      }
     } finally {
       if (at === epoch && currentProject === project()) {
         folderMove.busy = false;
@@ -1081,6 +1087,7 @@ export const useChatStore = defineStore("chat", () => {
     unavailable.value = false;
     folderMove.busy = false;
     folderMove.status = "";
+    folderMove.failed = false;
     viewer.value = null;
     inFlight.value = null;
     drafts.clear();

@@ -6,7 +6,6 @@ import { useChatStore } from "../../stores/chat";
 import { useProjectsStore } from "../../stores/projects";
 import { useWorkspaceStore } from "../../stores/workspace";
 import Composer from "../composer/Composer.vue";
-import TicketFolderMenu from "../folders/TicketFolderMenu.vue";
 import ProjectsEmptyState from "../projects/ProjectsEmptyState.vue";
 import Icon from "../ui/Icon.vue";
 import CustomerCard from "./CustomerCard.vue";
@@ -86,7 +85,6 @@ watch(() => [chat.ticketId, projects.currentId], () => files.interrupt(DROP_SWIT
         <p v-if="workspace.notice && (projects.loaded || !projects.error)" class="notice" role="alert">{{ workspace.notice }}</p>
         <section v-if="chat.ticketId" class="flex min-h-0 flex-1 flex-col" aria-label="Диалог">
           <DialogueHeader v-model:card-open="cardOpen" />
-          <TicketFolderMenu />
           <MessageList />
           <Composer />
         </section>
