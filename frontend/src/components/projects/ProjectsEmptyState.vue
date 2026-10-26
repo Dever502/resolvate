@@ -65,8 +65,8 @@ async function retry(): Promise<void> {
 <template>
   <div class="m-auto max-w-md p-8 text-center text-muted">
     <Icon name="chat" class="mx-auto mb-6 block size-11 text-accent [stroke-width:1.25]" />
-    <h2 class="mb-2.5 text-[1.375rem] text-text">{{ state.title }}</h2>
-    <p v-if="state.text" class="m-0 text-[.9375rem]">{{ state.text }}</p>
+    <h2 class="mb-2.5 text-[1.375rem] text-text text-balance">{{ state.title }}</h2>
+    <p v-if="state.text" class="m-0 text-[.9375rem] text-pretty">{{ state.text }}</p>
     <button v-if="state.action" type="button" class="primary mt-6" :aria-disabled="retrying || undefined" @click="!retrying && state.action.run()">
       {{ retrying ? "Загружаем…" : state.action.label }}
     </button>

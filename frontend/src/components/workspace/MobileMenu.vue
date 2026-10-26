@@ -79,7 +79,7 @@ watch(() => projects.currentId, () => {
       </template>
     </DialogTrigger>
     <DialogPortal>
-      <DialogOverlay class="dialog-backdrop" />
+      <DialogOverlay class="dialog-backdrop drawer-backdrop" />
       <DialogContent class="drawer" :aria-describedby="undefined" @close-auto-focus="afterClose">
         <header class="chrome drawer-head">
           <DialogTitle class="brand m-0 text-lg">

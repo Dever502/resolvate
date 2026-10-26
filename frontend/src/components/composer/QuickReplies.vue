@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick, ref, useTemplateRef, watch } from "vue";
+import Icon from "../ui/Icon.vue";
 
 // The quick replies picker above the text field, the same however it was opened ("#" typed into an
 // empty reply box, or the button): its own search field holds the focus and points at the active
@@ -58,7 +59,7 @@ defineExpose({ focusSearch: () => field.value?.focus() });
     <div class="reply-options-head">
       <button v-if="group" class="quiet min-h-11" type="button" @mousedown.prevent @click="emit('back')">← Группы</button>
       <span class="min-w-0 flex-1 truncate">{{ group ? '#' + group : 'Группы ответов' }}</span>
-      <button class="quiet -ml-2 min-h-11 min-w-11" type="button" aria-label="Закрыть готовые ответы" @click="emit('close')">×</button>
+      <button class="quiet -ml-2 min-h-11 min-w-11" type="button" aria-label="Закрыть готовые ответы" @click="emit('close')"><Icon name="close" /></button>
     </div>
     <input
       ref="field"
