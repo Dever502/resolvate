@@ -90,16 +90,27 @@ test("commands use the project API, notes stay internal, retries do not duplicat
   await input.fill("/note ");
   await expect(page.getByText("/note <текст> — Добавить", { exact: false })).toBeVisible();
   await input.fill("/note Browser internal note");
-  const response = page.waitForResponse(r => r.url().endsWith(`/tickets/${TICKET}/commands/note`));
+  // The server adds the note, but its answer is lost on the way back: the outcome is unknown and the key is kept.
+  const keys: string[] = [];
+  await page.route(`**/tickets/${TICKET}/commands/note`, async route => {
+    keys.push(route.request().headers()["x-idempotency-key"]!);
+    if (keys.length > 1) return route.continue();
+    const answer = await route.fetch();
+    expect(answer.status(), await answer.text()).toBe(200);
+    await route.abort("connectionreset");
+  });
   await input.press("Enter");
-  const answer = await response;
-  expect(answer.status(), await answer.text()).toBe(200);
-  await expect(page.getByRole("status").filter({ hasText: "Заметка добавлена." })).toBeVisible();
+  await expect(page.locator(".command-unknown")).toContainText("Результат /note неизвестен");
   await page.reload();
+  await expect(page.locator(".command-unknown")).toContainText("Результат /note неизвестен");
   await expect(input).toHaveValue("/note Browser internal note");
   await expect(page.getByText("/note <текст> — Добавить", { exact: false })).toBeVisible();
+  // Repeated under the same key, the server answers as before and adds nothing.
   await input.press("Enter");
-  await expect(page.getByRole("status").filter({ hasText: "Заметка добавлена." })).toBeVisible();
+  await expect(page.locator(".command-toast-region")).toHaveText("Заметка добавлена.");
+  await expect(input).toHaveValue("");
+  expect(keys).toHaveLength(2);
+  expect(keys[1]).toBe(keys[0]);
   const me = await (await page.request.get("/console/me")).json();
   const headers = { Origin: new URL(page.url()).origin, "X-CSRF-Token": me.csrf,
     "X-Idempotency-Key": crypto.randomUUID() };
