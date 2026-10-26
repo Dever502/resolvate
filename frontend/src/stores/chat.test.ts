@@ -24,7 +24,7 @@ function message(id: string, minute: number, extra: Partial<Message> = {}): Mess
 function detail(id: string, status: "open" | "closed" = "open"): TicketDetail {
   return {
     id, display_name: `Клиент ${id}`, username: null, channel: "telegram", status, email: null,
-    identity_value: null, remnawave_user_uuid: null, created_at: "2026-10-01T00:00:00Z", folder_id: null, folder_revision: 0,
+    identity_provider: "telegram", identity_value: null, remnawave_user_uuid: null, created_at: "2026-10-01T00:00:00Z", folder_id: null, folder_revision: 0,
   };
 }
 

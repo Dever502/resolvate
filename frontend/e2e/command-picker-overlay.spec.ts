@@ -94,9 +94,18 @@ for (const [width, height] of [[1280, 800], [375, 812], [320, 640]] as const) {
       await same("a format error");
       await input(page).fill("/gift 30");
       await input(page).press("Enter");
-      await expect(popup(page).getByRole("alert")).toContainText("Remnawave не ответила");
+      // A change with consequences asks first: the confirmation is a window of its own, it moves nothing.
+      const ask = page.getByRole("alertdialog", { name: "Продлить подписку?" });
+      await expect(ask).toBeVisible();
+      await same("the confirmation");
+      await ask.getByRole("button", { name: "Продлить на 30 дней" }).click();
+      // A server error after the confirmation: the action may have run, its outcome is unknown.
+      await expect(popup(page).locator(".command-unknown")).toContainText("Remnawave не ответила");
       await expectPopupOnScreen(page, width);
-      await same("an error of the server");
+      await same("an unknown outcome");
+      await popup(page).getByRole("button", { name: "Отказаться от повтора" }).click();
+      await page.getByRole("alertdialog", { name: "Отказаться от повтора?" }).getByRole("button", { name: "Отказаться от повтора" }).click();
+      await expect(popup(page).locator(".command-unknown")).toHaveCount(0);
       await input(page).fill("/info");
       await input(page).press("Escape");
       await input(page).press("Enter");
@@ -114,10 +123,11 @@ for (const [width, height] of [[1280, 800], [375, 812], [320, 640]] as const) {
       expect(await body.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
       await body.evaluate((element) => { element.scrollTop = element.scrollHeight; });
       await expect(result.getByText("Строка результата 60", { exact: false })).toBeInViewport();
-      await expect(popup(page).getByRole("button", { name: "Новая команда" })).toBeInViewport({ ratio: 1 });
+      await expect(popup(page).getByRole("button", { name: "Скопировать" })).toBeInViewport({ ratio: 1 });
       await input(page).press("Escape");
       await expect(popup(page)).toHaveCount(0);
-      await expect(input(page)).toHaveValue("/subinfo");
+      // A completed command left the box.
+      await expect(input(page)).toHaveValue("");
       await same("the pop-up put away");
       // The pop-up never sent a read receipt: the operator's place did not change.
       expect((await stubLog(request)).filter((entry) => entry.at >= since && /\/read\//.test(entry.path))).toEqual([]);
@@ -167,10 +177,10 @@ test("keyboard and screen readers: focus stays in the reply box, the active opti
   await page.keyboard.press("Escape");
   await expect(popup(page)).toHaveCount(0);
   await expect(input(page)).toBeFocused();
-  await expect(input(page)).toHaveValue("/info");
+  await expect(input(page)).toHaveValue("");
 });
 
-test("a lost answer of a changing command keeps its warning in the pop-up, and the retry uses the same key", async ({ page, context, request, consoleErrors }) => {
+test("a lost answer of a changing command keeps its unknown outcome in the pop-up, and the retry uses the same key", async ({ page, context, request, consoleErrors }) => {
   void consoleErrors;
   await start(page, context, request);
   const keys: string[] = [];
@@ -183,10 +193,12 @@ test("a lost answer of a changing command keeps its warning in the pop-up, and t
   const before = await layout(page);
   await input(page).fill("/note передать бухгалтерии");
   await input(page).press("Enter");
-  await expect(popup(page).getByRole("alert")).toContainText("Повторная отправка использует прежний ключ");
+  await expect(popup(page).locator(".command-unknown")).toContainText("Результат /note неизвестен");
+  await expect(popup(page).locator(".command-unknown")).toContainText("с прежним ключом");
   expect(await layout(page)).toEqual(before);
   await input(page).press("Enter");
-  await expect(popup(page).getByRole("status", { name: "Результат команды" })).toHaveText("Заметка добавлена.");
+  await expect(page.locator(".command-toast-region")).toHaveText("Заметка добавлена.");
+  expect(await layout(page)).toEqual(before);
   expect(keys).toHaveLength(2);
   expect(keys[0]).toBe(keys[1]);
   expect((await stubLog(request)).filter((entry) => entry.path.endsWith("/send"))).toEqual([]);
@@ -208,7 +220,7 @@ test("a tap on the history puts the list away but keeps a result; another dialog
   await expect(input(page)).toBeEditable();
   await expect(popup(page)).toHaveCount(0);
   await page.getByRole("option", { name: /Анна Смирнова/ }).click();
-  await expect(input(page)).toHaveValue("/info");
+  await expect(input(page)).toHaveValue("");
   await expect(popup(page).locator(".command-result[data-filled]")).toHaveCount(0);
 });
 

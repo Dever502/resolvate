@@ -72,6 +72,9 @@ export interface TicketPage {
 }
 
 /** GET tickets/{id}. */
+/** Where the customer's identity comes from (UserIdentity.provider): what its identity_value is. */
+export type IdentityProvider = "telegram" | "web_external_id" | "web_email";
+
 export interface TicketDetail {
   id: string;
   display_name: string | null;
@@ -79,6 +82,7 @@ export interface TicketDetail {
   channel: TicketChannel;
   status: TicketStatus;
   email: string | null;
+  identity_provider: IdentityProvider;
   identity_value: string | null;
   remnawave_user_uuid: string | null;
   created_at: string;
