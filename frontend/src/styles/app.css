@@ -420,8 +420,15 @@
   /* Composer. Its buttons are 44×44 hit areas in the room that 40 px buttons had: with 3 px padding, 5 px gaps
      and the text field 2 px off the row's edges, the box keeps its height and the text field its width and place. */
   .composer-area { position: relative; padding: .875rem 1.75rem max(.875rem, env(safe-area-inset-bottom)); border-top: 1px solid var(--border); background: var(--surface); }
-  .composer { display: flex; align-items: flex-end; gap: .3125rem; padding: 3px; border: 1px solid var(--field-border); border-radius: 14px; background: var(--surface); }
-  .composer:focus-within { border-color: var(--accent); outline: 2px solid var(--focus-halo); outline-offset: 1px; }
+  .composer { --composer-radius: 14px; display: flex; align-items: flex-end; gap: .3125rem; padding: 3px; border: 1px solid var(--field-border); border-radius: var(--composer-radius); background: var(--surface); }
+  /* The box lights up for its text field; a focused button has its own ring, not a second one around the box. */
+  .composer:has(textarea:focus) { border-color: var(--accent); outline: 2px solid var(--focus-halo); outline-offset: 1px; }
+  /* Its buttons sit 4 px inside its corner (1 px border, 3 px padding): their corners follow it, 14 − 4 = 10 px. */
+  .composer .icon-button, .composer .send { border-radius: calc(var(--composer-radius) - 4px); }
+  /* The shared 3 px ring 3 px off a button needs 6 px; the box has 4 to its edge. The ring is drawn inside the
+     button instead, 2 px wide; on the filled «Отправить» in its text colour, 2 px in from its edge. */
+  .composer button:focus-visible { outline-width: 2px; outline-offset: -2px; }
+  .composer .send:focus-visible { outline-color: var(--on-accent); outline-offset: -4px; }
   .composer textarea { flex: 1; min-width: 0; min-height: 40px; max-height: 160px; margin: 2px 0; padding: .5rem .125rem; border: 0; background: none; color: inherit; font-size: 1rem; line-height: 1.5; resize: none; }
   .composer textarea:focus-visible { outline: none; }
   .icon-button { width: 44px; height: 44px; flex-shrink: 0; padding: .5rem; border: 0; background: transparent; color: var(--muted); }
