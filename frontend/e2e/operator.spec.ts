@@ -254,10 +254,10 @@ test.describe("operator flow", () => {
     await expect(page.getByRole("tab")).toHaveText(["Все", "VIP клиенты"]);
 
     await openAnna(page);
-    await page.getByRole("button", { name: "Папка диалога Без папки" }).click();
+    await page.getByRole("button", { name: "Папка диалога: Без папки" }).click();
     await page.getByRole("menuitemradio", { name: "VIP клиенты" }).click();
     await expect(page.getByRole("status")).toHaveText("Сохранено для команды");
-    await expect(page.getByRole("button", { name: "Папка диалога VIP клиенты" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Папка диалога: VIP клиенты" })).toBeVisible();
     await page.getByRole("tab", { name: "VIP клиенты" }).click();
     await expect(list(page).getByRole("option")).toHaveText([/Анна Смирнова/, /Борис Петров/]);
   });

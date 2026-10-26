@@ -274,6 +274,7 @@
   .project-emblem-skeleton { width: 2.375rem; height: 2.375rem; border-radius: 10px; }
   .header-action-skeleton { width: 7.5rem; height: 2.375rem; border-radius: var(--radius-control); }
   .folder-select-skeleton { width: 7rem; height: 2.25rem; margin-block: .25rem; border-radius: var(--radius-control); }
+  .folder-icon-skeleton { width: 2.25rem; height: 2.25rem; margin: .25rem; border-radius: var(--radius-control); }
   .list-empty { padding: 2rem 1rem; color: var(--muted); text-align: center; font-size: .875rem; }
 
   /* Workspace frame: the separator between the list and the conversation. */
@@ -287,6 +288,9 @@
   /* Choice menus (ui/MenuSelect.vue): the button and the Reka menu. */
   .menu-select { display: flex; align-items: center; gap: .375rem; width: 100%; min-height: 44px; padding: .375rem .625rem; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); color: var(--text); font-size: .8125rem; }
   .menu-select:hover:not(:disabled) { background: var(--hover); }
+  /* An icon-only menu button (a narrow header): a 44×44 hit area, quiet like the header's other icon. */
+  .menu-select-icon { justify-content: center; width: 44px; height: 44px; padding: 0; border-color: transparent; background: transparent; color: var(--muted); }
+  .menu-select-icon .icon { width: 22px; height: 22px; }
   /* The app bar: the chevron follows the name at a fixed gap and turns up while Reka marks the button
      open; the button keeps the full width of its column as the hit area. */
   .menu-select-chrome { gap: .5rem; min-height: 0; padding: .125rem 0; border: 0; border-radius: 4px; background: transparent; color: var(--text); font-size: .9375rem; font-weight: 600; }
@@ -365,6 +369,12 @@
   .count { display: grid; place-items: center; min-width: 20px; height: 20px; padding: 0 .3125rem; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-size: .6875rem; font-weight: 600; }
 
   /* Dialogue: header, history and messages. */
+  /* The dialogue's folder at the right of its header: as wide as its name up to a limit, so the customer's name keeps
+     the room; what saving says is a note under the header over the history, taking no room. A failure stays. */
+  .ticket-folder { display: flex; min-width: 0; max-width: 14rem; }
+  .folder-status { position: absolute; z-index: 4; top: calc(100% + .375rem); right: 1.75rem; max-width: min(20rem, calc(100% - 2rem)); margin: 0; padding: .375rem .625rem; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); color: var(--muted); font-size: .8125rem; line-height: 1.4; box-shadow: 0 6px 24px #15192224; overflow-wrap: anywhere; pointer-events: none; }
+  .folder-status:not([data-kind]) { padding: 0; border: 0; box-shadow: none; }
+  .folder-status[data-kind="error"] { border-color: var(--danger); background: var(--danger-soft); color: var(--danger); }
   /* The customer's name opens their card: a control with room around its avatar, name and icon; the negative margins
      keep the avatar where the header's padding puts it and the header as tall as before. */
   .customer-title { display: flex; align-items: center; gap: .75rem; min-width: 0; min-height: 44px; margin: -.5rem 0 -.5rem -.5rem; padding: .5rem .75rem .5rem .5rem; border: 0; border-radius: var(--radius-control); background: transparent; color: inherit; text-align: left; }
@@ -629,6 +639,8 @@
   to { opacity: 1; transform: translate(-50%, -50%); }
 }
 @media (max-width: 1100px) {
+  .ticket-folder { max-width: 10rem; }
+  .folder-status { right: 1rem; }
   .customer-card { position: absolute; z-index: 5; top: 0; right: 0; bottom: 0; box-shadow: -8px 0 32px #1d1d1f12; }
   .composer-area { padding-right: 1rem; padding-left: 1rem; }
   .reply-options { left: 1rem; right: 1rem; }
@@ -636,6 +648,8 @@
   .message { max-width: 90%; }
 }
 @media (max-width: 700px) {
+  .ticket-folder { max-width: none; }
+  .folder-status { right: .75rem; }
   .messages { padding: 1.25rem .875rem; scrollbar-gutter: auto; }
   .message { max-width: 92%; }
   .bubble { padding: .625rem .875rem; }

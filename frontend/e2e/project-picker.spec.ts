@@ -10,11 +10,11 @@ const SHORT = "TEST_1";
 // Eighty characters: more than the app bar shows at any width.
 const LONG = "Служба поддержки клиентов интернет-магазина бытовой техники и электроники Москвы";
 // A phone (700 px and less) has no picker in the bar: it chooses the project in the bar's drawer
-// (workspace/MobileMenu.vue, mobile-workspace.spec.ts); only the folder menu is checked there.
+// (workspace/MobileMenu.vue, mobile-workspace.spec.ts); a narrow dialogue header has the folder as an icon
+// (folder-header.spec.ts).
 const VIEWPORTS = [
   { device: "desktop", width: 1280, height: 800 },
   { device: "tablet", width: 768, height: 1024 },
-  { device: "phone", width: 375, height: 812 },
 ] as const;
 
 const project = (page: Page) => page.getByRole("button", { name: /^Текущий проект/ });
@@ -78,7 +78,7 @@ function turn(trigger: Locator): Promise<number> {
 for (const { device, width, height } of VIEWPORTS) {
   test.describe(`current project in the app bar, ${width}px`, () => {
     test.beforeEach(async ({ page }, testInfo) => {
-      test.skip(width <= 700 && !testInfo.title.startsWith("the folder menu"), "a phone has no project picker in the app bar");
+      test.skip(testInfo.title.startsWith("the folder menu") && width < 1100, "a narrow dialogue header has the folder as an icon");
       await page.setViewportSize({ width, height });
     });
 
@@ -212,7 +212,7 @@ for (const { device, width, height } of VIEWPORTS) {
       void consoleErrors;
       await start(page, context, request, SHORT);
       await page.getByRole("listbox", { name: "Диалоги" }).getByRole("option", { name: /Анна Смирнова/ }).click();
-      const folder = page.getByRole("button", { name: "Папка диалога Без папки" });
+      const folder = page.getByRole("button", { name: "Папка диалога: Без папки" });
       await expect(folder).toBeEnabled();
       const field = await folder.evaluate((button) => {
         const style = getComputedStyle(button);
