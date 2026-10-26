@@ -483,6 +483,18 @@
   .command-result { margin: 0; font-size: .875rem; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
   .command-result[data-filled] { margin: .5rem; padding: .625rem .75rem; border-radius: var(--radius-control); background: var(--subtle); }
   .command-actions { display: flex; flex: none; flex-wrap: wrap; gap: .25rem; padding: .125rem .5rem; border-top: 1px solid var(--border); }
+  /* Each kind of failure looks its own: a format is a warning to fix the text, a refusal of the server is an
+     error, a lost answer to a reading is plain information. An unknown outcome of a change is a block of its own. */
+  .command-alert[data-kind="rejected"] { border-color: var(--danger); background: var(--danger-soft); color: var(--danger); }
+  .command-alert[data-kind="connection"] { border-color: var(--border); background: var(--subtle); color: var(--text); }
+  .command-unknown { display: grid; gap: .375rem; margin: .5rem; padding: .625rem .75rem; border: 1px solid var(--warning-border); border-left: 3px solid var(--warning-text); border-radius: var(--radius-control); background: var(--warning-bg); color: var(--warning-text); font-size: .875rem; line-height: 1.5; overflow-wrap: anywhere; }
+  .command-unknown-title { margin: 0; color: var(--text); font-weight: 600; }
+  .command-result-title { margin: .5rem .5rem 0; color: var(--muted); font-size: .75rem; font-weight: 600; }
+  /* The commands' parts are positioned in the reply area (CommandPicker.vue): their wrapper has no box of its own. */
+  .command-layer { display: contents; }
+  /* A finished change: a notice over the reply box's top right corner that takes no room and no click. */
+  .command-toast-region { position: absolute; z-index: 3; right: 1.75rem; bottom: calc(100% + .375rem); display: flex; justify-content: flex-end; max-width: calc(100% - 3.5rem); pointer-events: none; }
+  .command-toast-region .catalog-toast { overflow-wrap: anywhere; }
 
   /* Administration: the app bar menu, rows of projects, members and accounts, forms and the
      employee search (staff/StaffPicker.vue, a Reka combobox). */
@@ -613,6 +625,7 @@
   .customer-card { position: absolute; z-index: 5; top: 0; right: 0; bottom: 0; box-shadow: -8px 0 32px #1d1d1f12; }
   .composer-area { padding-right: 1rem; padding-left: 1rem; }
   .reply-options { left: 1rem; right: 1rem; }
+  .command-toast-region { right: 1rem; max-width: calc(100% - 2rem); }
   .message { max-width: 90%; }
 }
 @media (max-width: 700px) {
