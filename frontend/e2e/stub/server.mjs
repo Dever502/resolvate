@@ -94,6 +94,7 @@ async function handle(request, response) {
   if (path === "/__stub/log") return json(response, 200, log);
   // Project API controls: a customer writes, the server revokes a stream, open streams are counted.
   if (path === "/__stub/incoming" && request.method === "POST") return api.incoming(await readJson(request)), json(response, 200, { ok: true });
+  if (path === "/__stub/note" && request.method === "POST") return api.note(await readJson(request)), json(response, 200, { ok: true });
   if (path === "/__stub/revoke" && request.method === "POST") return api.revoke(await readJson(request)), json(response, 200, { ok: true });
   if (path === "/__stub/lose-answer" && request.method === "POST") return api.loseAnswer(await readJson(request)), json(response, 200, { ok: true });
   if (path === "/__stub/streams") return json(response, 200, { open: api.openStreams(url.searchParams.get("project")) });

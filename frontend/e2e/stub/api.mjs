@@ -119,7 +119,9 @@ function view(item) {
   const last = all.at(-1);
   const read = state.reads.get(item.id);
   const unread = all.filter((entry) => entry.direction === "user_to_operator" && !entry.system && (!read || entry.time > read)).length;
-  const preview = last.rating ? "⭐ Оценка поддержки" : last.channel === "system" ? "Системное уведомление" : last.text || "Вложение";
+  // As the server: a row names an operator's note, never shows its text.
+  const preview = last.rating ? "⭐ Оценка поддержки" : last.channel === "system" ? "Системное уведомление"
+    : last.channel === "internal_note" && !last.system ? "Внутренняя заметка" : last.text || "Вложение";
   return withRevision({
     id: item.id, name: item.name, channel: item.channel, status: item.status, time: last.time,
     preview: preview.slice(0, 180), unread, folder_id: item.folder_id, folder_revision: item.folder_revision,
@@ -179,6 +181,13 @@ export function changed(project) {
 export function incoming({ ticket: id, text }) {
   const item = state.tickets.find((entry) => entry.id === id);
   state.messages.get(id).push(message({ channel: item.channel === "web" ? "web" : "telegram", text, time: new Date().toISOString() }));
+  changed(item.project);
+}
+
+/** Control: an operator's internal note, as the server serializes it (author resolved, "to the user"). */
+export function note({ ticket: id, text, author = "Оператор", time = new Date().toISOString() }) {
+  const item = state.tickets.find((entry) => entry.id === id);
+  state.messages.get(id).push(message({ direction: "operator_to_user", channel: "internal_note", author, text, time }));
   changed(item.project);
 }
 

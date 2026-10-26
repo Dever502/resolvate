@@ -27,6 +27,7 @@ export const iconPaths = {
   plus: "M12 5v14M5 12h14",
   minus: "M5 12h14",
   check: "m5 12 4 4L19 6",
+  note: "M5 4h14v10l-6 6H5ZM13 20v-6h6M9 9h6M9 13h3",
   star: "m12 3 2.78 5.63L21 9.53l-4.5 4.39 1.06 6.2L12 17.2l-5.56 2.92 1.06-6.2L3 9.53l6.22-.9Z",
   // Opens a menu of choices (project, folder of a dialogue).
   chevron: "m7 10 5 5 5-5",

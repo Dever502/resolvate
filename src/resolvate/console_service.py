@@ -43,6 +43,20 @@ def fingerprint(value: object) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()
 
 
+def note_author(media: dict[str, Any]) -> str:
+    """Who wrote an internal note, from the console or from Telegram: the name it was stored with.
+
+    Notes keep operator_display_name and operator_username (see add_internal_note); operator_name
+    is read for older records. Without any of them the author is not made up.
+    """
+    for key in ("operator_display_name", "operator_username", "operator_name"):
+        value = media.get(key)
+        if isinstance(value, str) and value.strip():
+            name = value.strip()
+            return f"@{name.lstrip('@')}" if key == "operator_username" else name
+    return "Оператор"
+
+
 def delta(items: list[dict[str, Any]], known: dict[str, str]) -> dict[str, Any]:
     for item in items:
         item["revision"] = fingerprint(item)
@@ -87,6 +101,13 @@ class ConsoleService:
                 case(
                     (TicketMessage.channel == "rating", "⭐ Оценка поддержки"),
                     (TicketMessage.channel == "system", "Системное уведомление"),
+                    # An operator's note is internal: the row names it, never shows its text.
+                    # A system notice on the same channel (system_event) keeps its own text.
+                    (
+                        (TicketMessage.channel == "internal_note")
+                        & (func.coalesce(TicketMessage.media["system_event"].astext, "") == ""),
+                        "Внутренняя заметка",
+                    ),
                     else_=TicketMessage.content,
                 )
             )
@@ -302,6 +323,8 @@ class ConsoleService:
                     "time": row.created_at.isoformat(),
                     "author": "Система"
                     if system
+                    else note_author(media)
+                    if row.channel == "internal_note"
                     else media.get("operator_name")
                     or (
                         "Оператор (Telegram)"
