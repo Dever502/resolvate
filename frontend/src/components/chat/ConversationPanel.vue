@@ -90,8 +90,8 @@ watch(() => [chat.ticketId, projects.currentId], () => files.interrupt(DROP_SWIT
         </section>
         <div v-else-if="projects.currentId" class="m-auto max-w-md p-8 text-center text-muted">
           <Icon name="chat" class="mx-auto mb-6 block size-11 text-accent [stroke-width:1.25]" />
-          <h2 class="mb-2.5 text-[1.375rem] text-text">Выберите диалог</h2>
-          <p class="m-0 text-[.9375rem]">Здесь появится история обращения.</p>
+          <h2 class="mb-2.5 text-[1.375rem] text-text text-balance">Выберите диалог</h2>
+          <p class="m-0 text-[.9375rem] text-pretty">Здесь появится история обращения.</p>
         </div>
         <ProjectsEmptyState v-else />
         <!-- Shown only while files are dragged over the panel; decoration that never takes the pointer. -->
